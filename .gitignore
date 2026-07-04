@@ -1,0 +1,12 @@
+# Arquivos temporários do Python
+__pycache__/
+*.pyc
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+
+# Pastas de ambiente virtual (caso crie um local)
+.venv/
+env/
+vinst/

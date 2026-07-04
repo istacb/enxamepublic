@@ -1,0 +1,92 @@
+version: "3.9"
+
+services:
+  ollama-agentes:
+    image: ollama/ollama:latest
+    container_name: ollama-agentes
+    volumes:
+      - ollama_agentes:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: always
+
+  agente-dyn-01:
+    build:
+      context: ..
+      dockerfile: agentes/Dockerfile
+    container_name: enxame-agente-dyn-01
+    environment:
+      NODE_ID: ag-dyn-01
+      ROLE: dynamic
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ${JUIZ_WS_URL:-ws://192.168.1.10:7700/exp}
+      OLLAMA_URL: http://ollama-agentes:11434
+      AGENT_MODEL: gemma2:2b-it-qat
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      WORKER_POOL_SIZE: 4
+      WORKER_MAX_QUEUE: 128
+      HEARTBEAT_INTERVAL: 5
+      PLUGIN_REFRESH_INTERVAL: 2
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    volumes:
+      - ../data/docs:/data/docs:ro
+      - ../data/zim:/data/zim:ro
+    depends_on:
+      - ollama-agentes
+    restart: always
+
+  agente-dyn-02:
+    build:
+      context: ..
+      dockerfile: agentes/Dockerfile
+    container_name: enxame-agente-dyn-02
+    environment:
+      NODE_ID: ag-dyn-02
+      ROLE: dynamic
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ${JUIZ_WS_URL:-ws://192.168.1.10:7700/exp}
+      OLLAMA_URL: http://ollama-agentes:11434
+      AGENT_MODEL: gemma2:2b-it-qat
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      WORKER_POOL_SIZE: 4
+      WORKER_MAX_QUEUE: 128
+      HEARTBEAT_INTERVAL: 5
+      PLUGIN_REFRESH_INTERVAL: 2
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    volumes:
+      - ../data/docs:/data/docs:ro
+      - ../data/zim:/data/zim:ro
+    depends_on:
+      - ollama-agentes
+    restart: always
+
+  agente-dyn-03:
+    build:
+      context: ..
+      dockerfile: agentes/Dockerfile
+    container_name: enxame-agente-dyn-03
+    environment:
+      NODE_ID: ag-dyn-03
+      ROLE: dynamic
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ${JUIZ_WS_URL:-ws://192.168.1.10:7700/exp}
+      OLLAMA_URL: http://ollama-agentes:11434
+      AGENT_MODEL: gemma2:2b-it-qat
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      WORKER_POOL_SIZE: 4
+      WORKER_MAX_QUEUE: 128
+      HEARTBEAT_INTERVAL: 5
+      PLUGIN_REFRESH_INTERVAL: 2
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    volumes:
+      - ../data/docs:/data/docs:ro
+      - ../data/zim:/data/zim:ro
+    depends_on:
+      - ollama-agentes
+    restart: always
+
+volumes:
+  ollama_agentes:

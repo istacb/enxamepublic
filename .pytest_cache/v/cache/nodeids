@@ -1,0 +1,12 @@
+[
+  "tests/test_agentes_plugin_manager.py::test_plugin_manager_loads_default_plugins",
+  "tests/test_agentes_plugin_manager.py::test_plugin_selection_by_keyword",
+  "tests/test_agentes_worker_pool.py::test_worker_pool_executes_item",
+  "tests/test_exp_envelope.py::test_envelope_defaults",
+  "tests/test_exp_envelope.py::test_envelope_priority_bounds",
+  "tests/test_exp_security.py::test_build_auth_headers",
+  "tests/test_exp_security.py::test_http_hmac_rejects_bad_signature",
+  "tests/test_exp_security.py::test_sign_and_verify_payload_ok",
+  "tests/test_juiz_api.py::test_cluster_requires_valid_hmac",
+  "tests/test_juiz_api.py::test_health_ok"
+]

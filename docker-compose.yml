@@ -1,0 +1,125 @@
+version: "3.9"
+
+# Ambiente de desenvolvimento/simulação dos 3 nós em uma única máquina.
+services:
+  ollama-juiz:
+    image: ollama/ollama:latest
+    volumes: ["ollama_juiz:/root/.ollama"]
+    restart: always
+
+  juiz:
+    build:
+      context: .
+      dockerfile: juiz/Dockerfile
+    environment:
+      NODE_ID: juiz-01
+      ROLE: juiz
+      OLLAMA_URL: http://ollama-juiz:11434
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    ports:
+      - "7700:7700"
+    depends_on: [ollama-juiz]
+    restart: always
+
+  ollama-worker:
+    image: ollama/ollama:latest
+    volumes: ["ollama_worker:/root/.ollama"]
+    restart: always
+
+  agente-dyn-01:
+    build:
+      context: .
+      dockerfile: agentes/Dockerfile
+    environment:
+      NODE_ID: ag-dyn-01
+      ROLE: dynamic
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ws://juiz:7700/exp
+      OLLAMA_URL: http://ollama-worker:11434
+      AGENT_MODEL: gemma2:2b-it-qat
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      WORKER_POOL_SIZE: 4
+      WORKER_MAX_QUEUE: 128
+      HEARTBEAT_INTERVAL: 5
+      PLUGIN_REFRESH_INTERVAL: 2
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    volumes:
+      - ./data/docs:/data/docs:ro
+      - ./data/zim:/data/zim:ro
+    depends_on: [juiz, ollama-worker]
+    restart: always
+
+  agente-dyn-02:
+    build:
+      context: .
+      dockerfile: agentes/Dockerfile
+    environment:
+      NODE_ID: ag-dyn-02
+      ROLE: dynamic
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ws://juiz:7700/exp
+      OLLAMA_URL: http://ollama-worker:11434
+      AGENT_MODEL: gemma2:2b-it-qat
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      WORKER_POOL_SIZE: 4
+      WORKER_MAX_QUEUE: 128
+      HEARTBEAT_INTERVAL: 5
+      PLUGIN_REFRESH_INTERVAL: 2
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    volumes:
+      - ./data/docs:/data/docs:ro
+      - ./data/zim:/data/zim:ro
+    depends_on: [juiz, ollama-worker]
+    restart: always
+
+  ollama-bibliotecario:
+    image: ollama/ollama:latest
+    volumes: ["ollama_bibliotecario:/root/.ollama"]
+    restart: always
+
+  redis-bibliotecario:
+    image: redis:7-alpine
+    restart: always
+
+  qdrant-bibliotecario:
+    image: qdrant/qdrant:v1.10.1
+    volumes: ["qdrant_bibliotecario:/qdrant/storage"]
+    restart: always
+
+  bibliotecario:
+    build:
+      context: .
+      dockerfile: bibliotecario/Dockerfile
+    environment:
+      NODE_ID: bib-01
+      ROLE: bibliotecario
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ws://juiz:7700/exp
+      OLLAMA_URL: http://ollama-bibliotecario:11434
+      BIB_MODEL: gemma2:9b
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+      REDIS_URL: redis://redis-bibliotecario:6379/0
+      QDRANT_URL: http://qdrant-bibliotecario:6333
+      BIB_DOCS_DIR: /data/docs
+      BIB_ZIM_DIR: /data/zim
+      TRANSLATION_ENABLED: "1"
+    ports:
+      - "7710:7710"
+    volumes:
+      - ./:/app
+      - ./data/docs:/data/docs
+      - ./data/zim:/data/zim
+      - qdrant_local_cache:/data/qdrant
+    depends_on: [juiz, ollama-bibliotecario, redis-bibliotecario, qdrant-bibliotecario]
+    restart: always
+
+volumes:
+  ollama_juiz:
+  ollama_worker:
+  ollama_bibliotecario:
+  qdrant_bibliotecario:
+  qdrant_local_cache:
