@@ -1,0 +1,19 @@
+# ENXAME v3 - inventário de máquinas
+# Formato: ip;usuario;senha;perfil
+# perfil: juiz | bibliotecario | worker_engenharia | worker_contabil | artista_midia
+#
+# Copie para inventory.yaml e ajuste. Rode:
+#   ./scripts/ssh_provision_cluster.sh --inventory inventory.yaml
+#
+# O Juiz normalmente NÃO entra nesta lista (ele é quem roda o script);
+# mas se quiser reprovisionar ele remotamente também, pode incluir.
+
+192.168.1.10;user;123;worker_engenharia
+192.168.1.20;user;123;worker_contabil
+192.168.1.40;user;123;artista_midia
+192.168.1.50;user;123;bibliotecario
+
+# Máquina nova chegando? Só adicione a linha aqui e rode o script de novo --
+# o bootstrap detecta hardware, instala só o que falta pro perfil escolhido,
+# baixa o modelo certo (inclusive modelo de visão se for artista_midia) e
+# já entra disponível no enxame.
