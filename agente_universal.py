@@ -70,31 +70,25 @@ async def gerar(p: PedidoGeracao):
     modelo = p.modelo or CONFIG["MODELO"]
     ollama_url = p.ollama_url or CONFIG["OLLAMA_URL"]
 
-    # 1) OFFLINE-FIRST: primeiro olha o catálogo local. Isso é usado como
-    # CONTEXTO ADICIONAL (grounding), não como bloqueio -- o modelo já traz
-    # conhecimento geral consigo (ex: o que é Simples Nacional é conhecimento
-    # comum, não depende de arquivo nenhum). O que exigimos é que ele NÃO
-    # invente números/citações específicas (NBR, artigo de lei, etc.) que
-    # não estejam confirmadas na base local.
+    # 1) OFFLINE-FIRST: catálogo local (já restrito à base_conhecimento_dir do perfil)
     conn = init_catalogo()
     achados = buscar_local(conn, p.prompt[:40])
     conn.close()
 
+    if not achados and not INTERNET_PERMITIDA:
+        # Nada local e este perfil não pode buscar na internet -> escala pro Juiz
+        return {
+            "response": "NAO_ENCONTRADO_LOCAL",
+            "node_id": CONFIG["NODE_ID"], "perfil": PERFIL["perfil"],
+            "usou_contexto_local": False,
+        }
+
     contexto_local = ""
     if achados:
-        contexto_local = ("Arquivos locais relevantes encontrados (use como fonte confirmada):\n" +
+        contexto_local = ("Arquivos locais relevantes encontrados:\n" +
                            "\n".join(f"- {a['titulo']} ({a['tipo']})" for a in achados[:3]) + "\n\n")
 
-    instrucao_honestidade = (
-        "Responda com seu conhecimento geral normalmente. "
-        "Só não cite números específicos de normas, leis, artigos ou "
-        "cláusulas exatas a menos que eles estejam nos arquivos locais acima "
-        "ou você tenha certeza absoluta -- nesse caso, avise que é uma "
-        "referência geral e recomende confirmar a fonte oficial.\n\n"
-    )
-
-    prompt_completo = (f"Você é um especialista em: {PERFIL.get('descricao', '')}\n\n"
-                        f"{instrucao_honestidade}{contexto_local}{p.prompt}")
+    prompt_completo = f"Você é um especialista em: {PERFIL.get('descricao', '')}\n\n{contexto_local}{p.prompt}"
 
     try:
         async with httpx.AsyncClient(timeout=180) as client:

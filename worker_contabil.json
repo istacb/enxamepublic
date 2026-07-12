@@ -3,24 +3,14 @@
   "papel_base": "agente",
   "internet_permitida": false,
   "base_conhecimento_dir": "data/kb_contabil",
-  "descricao": "Assessoria em administração de empresas, contabilidade e jurídico empresarial: RH e direito trabalhista geral, tributos e estratégias legais de redução de carga tributária, CNAEs, normas e portarias da Receita Federal (RFB), abertura e encerramento de empresas, gestão administrativa e documentação societária.",
-  "aviso_padrao": "Esta resposta é informativa e não substitui parecer de contador ou advogado habilitado. Para decisões que envolvam risco fiscal ou trabalhista, confirme com um profissional antes de agir.",
+  "descricao": "Contabilidade, administração de empresas, jurídico leve empresarial e direito do consumidor.",
+  "aviso_padrao": "Esta resposta é informativa e não substitui parecer de contador ou advogado habilitado.",
   "keywords_dominio": [
-    "contábil", "contabilidade", "imposto", "tributo", "tributário",
-    "nota fiscal", "cnpj", "cnae", "empresa", "sociedade", "societário",
-    "jurídico", "consumidor", "cdc", "direito do consumidor",
-    "contrato", "cláusula", "rescisão",
-    "balanço", "folha de pagamento", "simples nacional", "lucro presumido",
-    "lucro real", "mei", "elisão fiscal", "planejamento tributário",
-    "redução de impostos", "regime tributário",
-    "rfb", "receita federal", "portaria", "instrução normativa", "in rfb",
-    "abertura de empresa", "encerramento de empresa", "baixa de cnpj",
-    "alvará", "junta comercial",
-    "rh", "recursos humanos", "trabalhista", "clt", "admissão", "demissão",
-    "rescisão de contrato de trabalho", "férias", "13º salário", "fgts",
-    "gestão administrativa", "gestão de empresa", "documentação empresarial"
+    "contábil", "contabilidade", "imposto", "nota fiscal", "cnpj",
+    "empresa", "jurídico", "consumidor", "contrato", "cláusula",
+    "balanço", "folha de pagamento", "tributo", "simples nacional",
+    "cdc", "direito do consumidor", "rescisão"
   ],
   "regra_escalonamento": "Se não encontrar na base local, responder 'NAO_ENCONTRADO_LOCAL' para o Juiz decidir se escala ao Bibliotecário.",
-  "regra_aviso": "Incluir aviso_padrao sempre que a pergunta tiver natureza jurídica, trabalhista ou tributária.",
-  "papel_declarado": "Assessor inicial de administração, contabilidade e jurídico empresarial leve para a empresa do usuário."
+  "regra_aviso": "Incluir aviso_padrao sempre que a pergunta tiver natureza jurídica ou tributária."
 }

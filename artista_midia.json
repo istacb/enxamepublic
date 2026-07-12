@@ -1,0 +1,17 @@
+{
+  "perfil": "artista_midia",
+  "papel_base": "artista_ajudante",
+  "internet_permitida": true,
+  "internet_transitoria": true,
+  "descricao": "OCR, RAG sobre mídia, criação/organização de imagens, fotos, músicas e vídeos. Armazenamento de mídia do enxame.",
+  "base_conhecimento_dir": "data/kb_midia",
+  "aviso_padrao": null,
+  "keywords_dominio": [
+    "imagem", "foto", "ocr", "música", "video", "vídeo", "legenda",
+    "transcrever", "transcrição", "capa", "thumbnail", "áudio",
+    "converter mídia", "catalogar fotos"
+  ],
+  "capacidades": ["ocr_tesseract", "descricao_de_imagem_via_modelo_visao", "catalogacao_de_midia"],
+  "nota_transicao_offline": "Hoje usa internet para tarefas pesadas (ex: geração de imagem via serviço externo, se configurado). Todo fluxo que dependa disso precisa ter plano B 100% local documentado (ex: modelo de visão local via Ollama + tesseract para OCR), pois a internet deste nó pode ser cortada no futuro.",
+  "regra_escalonamento": "Se não encontrar/gerar localmente, responder 'NAO_ENCONTRADO_LOCAL' para o Juiz decidir."
+}

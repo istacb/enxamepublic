@@ -56,18 +56,8 @@ mkdir -p "$ENXAME_DIR"/{data/kb_geral,data/kb_engenharia,data/kb_contabil,data/k
 # 1) BENCHMARK DE HARDWARE (idempotente: só mede, não instala nada aqui)
 # ---------------------------------------------------------------------------
 log "[1/8] Medindo capacidade de hardware..."
-
-SO="$(uname -s)"
-EH_MACOS=0
-[ "$SO" = "Darwin" ] && EH_MACOS=1
-
-if [ "$EH_MACOS" = "1" ]; then
-  CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo 2)
-  RAM_MB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 2147483648) / 1024 / 1024 ))
-else
-  CPUS=$(nproc 2>/dev/null || echo 2)
-  RAM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}'); [ -z "$RAM_MB" ] && RAM_MB=2048
-fi
+CPUS=$(nproc 2>/dev/null || echo 2)
+RAM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}'); [ -z "$RAM_MB" ] && RAM_MB=2048
 
 TEM_GPU_NVIDIA=0; GPU_VRAM_MB=0
 if command -v nvidia-smi &>/dev/null; then
@@ -76,46 +66,20 @@ if command -v nvidia-smi &>/dev/null; then
 fi
 EH_WSL2=0; grep -qi microsoft /proc/version 2>/dev/null && EH_WSL2=1
 
-# Nota: Macs Intel (como este MacBookPro8,1) não têm GPU compatível com
-# Ollama -- ele roda 100% via CPU nessas máquinas. Macs Apple Silicon (M1+)
-# teriam aceleração via Metal, mas a detecção de GPU acima é só pra NVIDIA
-# (Linux/Windows); em Mac tratamos como CPU-only por segurança.
 SCORE=$(( CPUS*4 + RAM_MB/512 ))
 [ "$TEM_GPU_NVIDIA" = "1" ] && SCORE=$((SCORE + 40 + GPU_VRAM_MB/500))
-log "  SO: $SO | CPUs: $CPUS | RAM: ${RAM_MB}MB | GPU: $TEM_GPU_NVIDIA (VRAM ${GPU_VRAM_MB}MB) | WSL2: $EH_WSL2 | Score: $SCORE"
+log "  CPUs: $CPUS | RAM: ${RAM_MB}MB | GPU: $TEM_GPU_NVIDIA (VRAM ${GPU_VRAM_MB}MB) | WSL2: $EH_WSL2 | Score: $SCORE"
 
 # ---------------------------------------------------------------------------
 # 2) OLLAMA (idempotente: só instala se faltar)
 # ---------------------------------------------------------------------------
 log "[2/8] Verificando Ollama..."
-
 OLLAMA_URL_LOCAL="http://localhost:11434"
 
 if [ "$EH_WSL2" = "1" ]; then
   IP_WINDOWS=$(ip route | grep default | awk '{print $3}')
   warn "WSL2 detectado. Usando Ollama nativo do Windows em $IP_WINDOWS:11434 (rode windows_ollama_setup.ps1 lá se ainda não fez)."
   OLLAMA_URL_LOCAL="http://$IP_WINDOWS:11434"
-elif [ "$EH_MACOS" = "1" ]; then
-  if ! command -v brew &>/dev/null; then
-    log "Homebrew não encontrado. Instalando (precisa de internet e pode pedir confirmação)..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || \
-      warn "Instalação do Homebrew falhou ou precisou de interação manual. Rode manualmente se necessário: https://brew.sh"
-    # Homebrew em Mac Intel fica em /usr/local, em Apple Silicon em /opt/homebrew
-    eval "$(/usr/local/bin/brew shellenv 2>/dev/null || /opt/homebrew/bin/brew shellenv 2>/dev/null)"
-  else
-    ok "Homebrew já instalado."
-  fi
-
-  if ! command -v ollama &>/dev/null; then
-    log "Instalando Ollama via Homebrew..."
-    brew install ollama || warn "Falha ao instalar Ollama via brew. Instale manualmente: https://ollama.com/download/mac"
-  else
-    ok "Ollama já instalado."
-  fi
-
-  log "Iniciando Ollama como serviço (brew services -- reinicia sozinho no login)..."
-  brew services start ollama 2>/dev/null || nohup ollama serve > "$ENXAME_DIR/logs/ollama.log" 2>&1 &
-  sleep 2
 else
   if ! command -v ollama &>/dev/null; then
     log "Instalando Ollama..."
@@ -214,67 +178,32 @@ baixar_se_faltar "$MODELO"
 [ "$PERFIL" = "bibliotecario" ] && baixar_se_faltar "$MODELO_EMBEDDING"
 
 # ---------------------------------------------------------------------------
-# 4) PACOTES DE SISTEMA -- SÓ O QUE O PERFIL PRECISA (idempotente)
+# 4) PACOTES DE SISTEMA -- SÓ O QUE O PERFIL PRECISA (idempotente via dpkg -s)
 # ---------------------------------------------------------------------------
 log "[4/8] Instalando pacotes de sistema específicos do perfil..."
+sudo apt update -qq 2>/dev/null || true
 
-if [ "$EH_MACOS" = "1" ]; then
-  # macOS: curl/git/rsync/sqlite3/python3 já vêm com o sistema (via Xcode
-  # Command Line Tools) na grande maioria das instalações -- só avisamos se
-  # faltar algo, em vez de tentar instalar às cegas.
-  for cmd in curl git rsync sqlite3 python3; do
-    if command -v "$cmd" &>/dev/null; then
-      ok "  $cmd já disponível."
+instalar_apt_se_faltar() {
+  for pkg in "$@"; do
+    if dpkg -s "$pkg" &>/dev/null; then
+      ok "  $pkg já instalado."
     else
-      warn "  $cmd não encontrado. Rode 'xcode-select --install' nesta máquina e execute o bootstrap de novo."
+      log "  Instalando $pkg..."
+      sudo apt install -y -qq "$pkg" 2>/dev/null || warn "  Falha ao instalar $pkg."
     fi
   done
+}
 
-  instalar_brew_se_faltar() {
-    for pkg in "$@"; do
-      if brew list "$pkg" &>/dev/null; then
-        ok "  $pkg já instalado (brew)."
-      else
-        log "  Instalando $pkg via brew..."
-        brew install "$pkg" 2>/dev/null || warn "  Falha ao instalar $pkg via brew."
-      fi
-    done
-  }
+instalar_apt_se_faltar python3-venv python3-pip sqlite3 rsync curl git
 
-  case "$PERFIL" in
-    artista_midia)
-      instalar_brew_se_faltar tesseract tesseract-lang ffmpeg
-      ;;
-    # bibliotecario: não precisa de nada extra do sistema no macOS --
-    # RAG usa SQLite+numpy (Python puro), sem dependência de redis.
-  esac
-else
-  sudo apt update -qq 2>/dev/null || true
-
-  instalar_apt_se_faltar() {
-    for pkg in "$@"; do
-      if dpkg -s "$pkg" &>/dev/null; then
-        ok "  $pkg já instalado."
-      else
-        log "  Instalando $pkg..."
-        sudo apt install -y -qq "$pkg" 2>/dev/null || warn "  Falha ao instalar $pkg."
-      fi
-    done
-  }
-
-  instalar_apt_se_faltar python3-venv python3-pip sqlite3 rsync curl git
-
-  case "$PERFIL" in
-    artista_midia)
-      instalar_apt_se_faltar tesseract-ocr tesseract-ocr-por ffmpeg
-      ;;
-    bibliotecario)
-      # sshpass é usado pelo endpoint /api/v1/mover_para_worker, que empurra
-      # arquivos curados pra pasta certa do worker via rsync/SSH.
-      instalar_apt_se_faltar sshpass
-      ;;
-  esac
-fi
+case "$PERFIL" in
+  artista_midia)
+    instalar_apt_se_faltar tesseract-ocr tesseract-ocr-por ffmpeg
+    ;;
+  bibliotecario)
+    instalar_apt_se_faltar redis-server
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 5) PYTHON VENV + LIBS -- SÓ O QUE O PERFIL PRECISA
@@ -300,23 +229,11 @@ fi
 log "[6/8] Gerando configuração..."
 NODE_ID="$(hostname)-$(echo $RANDOM | md5sum | head -c4)"
 
-# Preserva valores já configurados manualmente em .env existente (ex: se você
-# ajustou KIWIX_URL/CADDY_URL/SSH_PASS depois do primeiro bootstrap, rodar de
-# novo não deve apagar isso).
-pegar_valor_existente() {
-  local chave="$1" padrao="$2"
-  if [ -f "$ENXAME_DIR/.env" ] && grep -q "^${chave}=" "$ENXAME_DIR/.env" 2>/dev/null; then
-    grep "^${chave}=" "$ENXAME_DIR/.env" | head -1 | cut -d= -f2-
-  else
-    echo "$padrao"
-  fi
-}
-
-ADMIN_TOKEN=$(pegar_valor_existente ADMIN_TOKEN "enxame-$(openssl rand -hex 8 2>/dev/null || echo $RANDOM$RANDOM)")
-KIWIX_URL=$(pegar_valor_existente KIWIX_URL "http://localhost:7001")
-CADDY_URL=$(pegar_valor_existente CADDY_URL "http://localhost:7002")
-SSH_USER=$(pegar_valor_existente SSH_USER "user")
-SSH_PASS=$(pegar_valor_existente SSH_PASS "123")
+if [ -f "$ENXAME_DIR/.env" ] && grep -q "ADMIN_TOKEN" "$ENXAME_DIR/.env" 2>/dev/null; then
+  ADMIN_TOKEN=$(grep ADMIN_TOKEN "$ENXAME_DIR/.env" | cut -d= -f2)
+else
+  ADMIN_TOKEN="enxame-$(openssl rand -hex 8 2>/dev/null || echo $RANDOM$RANDOM)"
+fi
 
 cat > "$ENXAME_DIR/.env" << EOF
 IP_JUIZ=${JUIZ_IP:-127.0.0.1}
@@ -332,10 +249,6 @@ OLLAMA_URL=$OLLAMA_URL_LOCAL
 PORTA=9000
 BIBLIOTECARIO_PORTA=7710
 IP_BIBLIOTECARIO=
-KIWIX_URL=$KIWIX_URL
-CADDY_URL=$CADDY_URL
-SSH_USER=$SSH_USER
-SSH_PASS=$SSH_PASS
 SCORE_HARDWARE=$SCORE
 TEM_GPU=$TEM_GPU_NVIDIA
 ADMIN_TOKEN=$ADMIN_TOKEN
@@ -383,35 +296,6 @@ EOF
   sudo systemctl enable "$NOME_SERVICO" 2>/dev/null || true
   sudo systemctl restart "$NOME_SERVICO"
   ok "Serviço systemd '$NOME_SERVICO' ativo."
-elif [ "$EH_MACOS" = "1" ]; then
-  PLIST="$HOME/Library/LaunchAgents/com.enxame.${NOME_SERVICO}.plist"
-  mkdir -p "$HOME/Library/LaunchAgents"
-  launchctl unload "$PLIST" 2>/dev/null || true
-  cat > "$PLIST" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.enxame.${NOME_SERVICO}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$ENXAME_DIR/venv/bin/python</string>
-    <string>$ENXAME_DIR/$SCRIPT_PRINCIPAL</string>
-  </array>
-  <key>WorkingDirectory</key><string>$ENXAME_DIR</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>$ENXAME_DIR/logs/${NOME_SERVICO}.log</string>
-  <key>StandardErrorPath</key><string>$ENXAME_DIR/logs/${NOME_SERVICO}.log</string>
-</dict>
-</plist>
-EOF
-  launchctl load "$PLIST" && ok "Serviço launchd '$NOME_SERVICO' ativo (reinicia sozinho, inclusive após reiniciar o Mac)." \
-    || warn "Falha ao carregar o launchd. Rodando via nohup como alternativa."
-  if ! launchctl list | grep -q "com.enxame.${NOME_SERVICO}"; then
-    nohup "$ENXAME_DIR/venv/bin/python" "$ENXAME_DIR/$SCRIPT_PRINCIPAL" \
-      > "$ENXAME_DIR/logs/${NOME_SERVICO}.log" 2>&1 &
-  fi
 else
   pkill -f "$SCRIPT_PRINCIPAL" 2>/dev/null || true
   nohup "$ENXAME_DIR/venv/bin/python" "$ENXAME_DIR/$SCRIPT_PRINCIPAL" \

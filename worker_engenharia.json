@@ -3,25 +3,13 @@
   "papel_base": "agente",
   "internet_permitida": false,
   "base_conhecimento_dir": "data/kb_engenharia",
-  "descricao": "Engenharia civil e gestão de obras em sentido amplo: técnica (BIM, CAD, normas, execução, acabamentos), gestão de pessoas em obra, segurança do trabalho, e as responsabilidades legais que recaem sobre o engenheiro e o responsável técnico -- trabalhista, ambiental, civil e criminal -- que frequentemente são ignoradas na prática do dia a dia.",
-  "aviso_padrao": "Esta resposta é informativa e não substitui parecer de engenheiro responsável técnico, advogado ou perito habilitado, especialmente em questões de responsabilidade civil, criminal ou ambiental.",
+  "descricao": "Engenharia civil, gestão de obras, BIM, CAD, normas técnicas e boas práticas de execução/fiscalização.",
+  "aviso_padrao": null,
   "keywords_dominio": [
     "obra", "engenharia", "bim", "cad", "norma", "nbr", "concreto",
     "estrutura", "fundação", "drywall", "gesso", "forro", "fiscalização",
     "cronograma de obra", "orçamento de obra", "licitação", "edital",
-    "acabamento", "impermeabilização", "argamassa",
-    "gestão de pessoas", "gestão de obra", "liderança de equipe",
-    "produtividade de equipe", "mão de obra",
-    "segurança do trabalho", "nr", "nr-18", "nr-35", "epi", "cipa",
-    "acidente de trabalho", "risco ocupacional", "laudo técnico",
-    "responsabilidade civil", "responsabilidade criminal",
-    "responsabilidade técnica", "art", "crea", "perícia",
-    "negligência", "imperícia", "imprudência", "acidente de obra",
-    "jurídico trabalhista", "clt na construção", "terceirização",
-    "ambiental", "licença ambiental", "impacto ambiental", "resíduo de obra",
-    "licenciamento ambiental", "outorga", "área de preservação"
+    "acabamento", "impermeabilização", "argamassa"
   ],
-  "regra_escalonamento": "Se não encontrar na base local, responder 'NAO_ENCONTRADO_LOCAL' para o Juiz decidir se escala ao Bibliotecário.",
-  "regra_aviso": "Incluir aviso_padrao sempre que a pergunta envolver responsabilidade civil, criminal, ambiental ou trabalhista do engenheiro/RT.",
-  "papel_declarado": "Assessor técnico e de responsabilidades (não só construtivas, mas legais/trabalhistas/ambientais) do engenheiro e do responsável técnico."
+  "regra_escalonamento": "Se não encontrar na base local, responder 'NAO_ENCONTRADO_LOCAL' para o Juiz decidir se escala ao Bibliotecário."
 }
