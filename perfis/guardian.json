@@ -1,0 +1,20 @@
+{
+  "perfil": "guardian",
+  "papel_base": "guardiao",
+  "internet_permitida": false,
+  "base_conhecimento_dir": "data/kb_seguranca",
+  "descricao": "Segurança do enxame: detecção de prompt injection, malware, ransomware, validação de integridade de mensagens e arquivos.",
+  "aviso_padrao": null,
+  "keywords_dominio": [
+    "segurança", "injection", "malware", "ransomware", "integridade",
+    "validação", "hash", "assinatura", "criptografia", "firewall",
+    "intrusão", "anomalia", "sandbox", "quarentena", "auditoria"
+  ],
+  "regra_escalonamento": "Sempre reporta ao Juiz qualquer anomalia detectada. Pode solicitar análise ao Bibliotecário para arquivos suspeitos.",
+  "permissoes_especiais": {
+    "analisar_mensagens": true,
+    "quarentenar_arquivos": true,
+    "bloquear_nos_comprometidos": false,
+    "solicitar_arquivos_treinamento": true
+  }
+}

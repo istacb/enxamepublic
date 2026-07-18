@@ -1,12 +1,55 @@
-# Arquivos temporários do Python
+```
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.ENV
+.ENV.*
+.venv/
+.envrc
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage/
 
-# Arquivos de sistema
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Thumbs.db:encryptable
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Build and distribution artifacts
+dist/
+build/
+*.egg-info/
+.tox/
+.coverage*
+
+# System files
 .DS_Store
 Thumbs.db
-
-# Pastas de ambiente virtual (caso crie um local)
-.venv/
-env/
-vinst/
+```

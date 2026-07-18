@@ -1,0 +1,16 @@
+{
+  "perfil": "auxiliar_vendas",
+  "papel_base": "agente",
+  "internet_permitida": false,
+  "base_conhecimento_dir": "data/kb_vendas",
+  "descricao": "Auxiliar de vendas: aprendizado com documentos do cliente, memória de interações, cotações com fornecedores, técnicas de persuasão e ajuste de texto para conversão.",
+  "aviso_padrao": "Esta resposta é uma sugestão comercial. A decisão final de negociação cabe ao usuário.",
+  "keywords_dominio": [
+    "vendas", "cliente", "cotação", "fornecedor", "proposta",
+    "orçamento", "persuasão", "negociação", "crm", "pipeline",
+    "follow-up", "objeção", "fechamento", "upsell", "cross-sell",
+    "produto", "serviço", "preço", "desconto", "condição"
+  ],
+  "regra_escalonamento": "Se não encontrar na base local (memória do cliente, histórico), responder 'NAO_ENCONTRADO_LOCAL' para o Juiz decidir se escala ao Bibliotecário.",
+  "regra_aviso": "Incluir aviso_padrao sempre que a pergunta envolver proposta comercial ou negociação."
+}
