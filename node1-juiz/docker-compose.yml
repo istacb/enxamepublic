@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  ollama-juiz:
+    image: ollama/ollama:latest
+    container_name: ollama-juiz
+    volumes:
+      - ollama_juiz:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: always
+
+  juiz:
+    build:
+      context: ..
+      dockerfile: juiz/Dockerfile
+    container_name: enxame-juiz
+    environment:
+      NODE_ID: juiz-01
+      ROLE: juiz
+      OLLAMA_URL: http://ollama-juiz:11434
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+    ports:
+      - "7700:7700"
+    depends_on:
+      - ollama-juiz
+    restart: always
+
+volumes:
+  ollama_juiz:

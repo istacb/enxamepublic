@@ -1,0 +1,16 @@
+{
+  "perfil": "rh_trabalhista",
+  "papel_base": "agente",
+  "internet_permitida": false,
+  "base_conhecimento_dir": "data/kb_rh_trabalhista",
+  "descricao": "Recursos Humanos e Direito Trabalhista: gestão de pessoal, folha de pagamento, compliance trabalhista, legislação CLT.",
+  "aviso_padrao": "Esta resposta é informativa e não substitui parecer de advogado trabalhista ou contador habilitado.",
+  "keywords_dominio": [
+    "rh", "recursos humanos", "trabalhista", "clt", "folha",
+    "admissão", "demissão", "férias", "13º", "inss", "fgts",
+    "sindicato", "convenção coletiva", "hora extra", "insalubridade",
+    "periculosidade", "rescisão", "aviso prévio", "estágio"
+  ],
+  "regra_escalonamento": "Se não encontrar na base local, responder 'NAO_ENCONTRADO_LOCAL' para o Juiz decidir se escala ao Bibliotecário.",
+  "regra_aviso": "Incluir aviso_padrao sempre que a pergunta tiver natureza jurídica trabalhista."
+}

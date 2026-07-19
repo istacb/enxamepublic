@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  ollama-bibliotecario:
+    image: ollama/ollama:latest
+    container_name: ollama-bibliotecario
+    volumes:
+      - ollama_bibliotecario:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: always
+
+  redis-bibliotecario:
+    image: redis:7-alpine
+    container_name: redis-bibliotecario
+    restart: always
+
+  qdrant-bibliotecario:
+    image: qdrant/qdrant:v1.10.1
+    container_name: qdrant-bibliotecario
+    volumes:
+      - qdrant_bibliotecario:/qdrant/storage
+    ports:
+      - "6333:6333"
+    restart: always
+
+  bibliotecario-core:
+    build:
+      context: ..
+      dockerfile: bibliotecario/Dockerfile
+    container_name: enxame-bibliotecario
+    environment:
+      NODE_ID: bib-01
+      ROLE: bibliotecario
+      CLUSTER_ROLE: agente
+      JUIZ_URL: ${JUIZ_WS_URL:-ws://192.168.1.10:7700/exp}
+      OLLAMA_URL: http://ollama-bibliotecario:11434
+      BIB_MODEL: gemma2:9b
+      NODE_DOCS_DIR: /data/docs
+      NODE_ZIM_DIR: /data/zim
+      EXP_SHARED_SECRET: ${EXP_SHARED_SECRET}
+      REDIS_URL: redis://redis-bibliotecario:6379/0
+      QDRANT_URL: http://qdrant-bibliotecario:6333
+      BIB_DOCS_DIR: /data/docs
+      BIB_ZIM_DIR: /data/zim
+      TRANSLATION_ENABLED: "1"
+    ports:
+      - "7710:7710"
+    volumes:
+      - ../data/docs:/data/docs
+      - ../data/zim:/data/zim
+      - qdrant_local_cache:/data/qdrant
+    depends_on:
+      - ollama-bibliotecario
+      - redis-bibliotecario
+      - qdrant-bibliotecario
+    restart: always
+
+volumes:
+  ollama_bibliotecario:
+  qdrant_bibliotecario:
+  qdrant_local_cache:

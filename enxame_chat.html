@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>ENXAME v3 - Chat do Cluster</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#1a1a2e; --card:#22223b; --accent:#4ecca3; --texto:#eaeaea; --erro:#e94560; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--texto); }
+  header { padding:16px 20px; background:var(--card); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  header h1 { margin:0; font-size:18px; }
+  #config { display:flex; gap:8px; align-items:center; font-size:13px; }
+  #config input { background:#111; border:1px solid #444; color:#fff; padding:6px 8px; border-radius:6px; width:130px; }
+  #status { font-size:12px; padding:4px 10px; border-radius:12px; background:#333; }
+  #status.online { background:var(--accent); color:#0a0a0a; }
+  #status.offline { background:var(--erro); }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  #workers { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .worker-chip { background:var(--card); border-radius:10px; padding:6px 12px; font-size:12px; border-left:3px solid var(--accent); }
+  #mensagens { display:flex; flex-direction:column; gap:10px; margin-bottom:90px; }
+  .msg { padding:12px 14px; border-radius:12px; max-width:85%; line-height:1.45; white-space:pre-wrap; }
+  .msg.user { background:var(--accent); color:#0a0a0a; align-self:flex-end; }
+  .msg.bot { background:var(--card); align-self:flex-start; }
+  .msg .meta { display:block; font-size:11px; opacity:.65; margin-top:6px; }
+  #barra { position:fixed; bottom:0; left:0; right:0; background:var(--card); padding:12px; display:flex; gap:8px; }
+  #barra input { flex:1; padding:12px; border-radius:10px; border:none; background:#111; color:#fff; font-size:15px; }
+  #barra button { padding:12px 20px; border:none; border-radius:10px; background:var(--accent); color:#0a0a0a; font-weight:bold; cursor:pointer; }
+  #barra button:disabled { opacity:.5; cursor:default; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🐝 ENXAME</h1>
+  <div id="config">
+    <span>Juiz:</span>
+    <input id="ipJuiz" placeholder="192.168.1.30" value="192.168.1.30">
+    <input id="portaJuiz" placeholder="7700" value="7700" style="width:60px">
+    <button onclick="testarConexao()" style="padding:6px 10px;border-radius:6px;border:none;cursor:pointer;">Conectar</button>
+    <span id="status" class="offline">offline</span>
+  </div>
+</header>
+
+<main>
+  <div id="workers"></div>
+  <div id="mensagens"></div>
+</main>
+
+<div id="barra">
+  <input id="entrada" placeholder="Pergunte algo ao enxame..." onkeydown="if(event.key==='Enter') enviar()">
+  <button id="btnEnviar" onclick="enviar()">Enviar</button>
+</div>
+
+<script>
+function urlJuiz() {
+  const ip = document.getElementById('ipJuiz').value.trim();
+  const porta = document.getElementById('portaJuiz').value.trim();
+  return `http://${ip}:${porta}`;
+}
+
+async function testarConexao() {
+  const status = document.getElementById('status');
+  try {
+    const r = await fetch(`${urlJuiz()}/api/v1/health`, { signal: AbortSignal.timeout(5000) });
+    const dados = await r.json();
+    status.textContent = `online (${dados.workers_ativos} nós)`;
+    status.className = 'online';
+    atualizarWorkers();
+  } catch (e) {
+    status.textContent = 'offline';
+    status.className = 'offline';
+  }
+}
+
+async function atualizarWorkers() {
+  try {
+    const r = await fetch(`${urlJuiz()}/api/v1/workers`);
+    const dados = await r.json();
+    const div = document.getElementById('workers');
+    div.innerHTML = '';
+    for (const [nid, w] of Object.entries(dados.workers || {})) {
+      const chip = document.createElement('div');
+      chip.className = 'worker-chip';
+      const internet = w.internet_permitida ? ' · 🌐' : ' · offline';
+      chip.textContent = `${nid} · ${w.perfil || w.papel} · ${w.modelo}${w.tem_gpu ? ' · GPU' : ''}${internet}`;
+      div.appendChild(chip);
+    }
+  } catch (e) { /* silencioso */ }
+}
+
+function adicionarMsg(texto, tipo, meta) {
+  const div = document.createElement('div');
+  div.className = `msg ${tipo}`;
+  div.textContent = texto;
+  if (meta) {
+    const m = document.createElement('span');
+    m.className = 'meta';
+    m.textContent = meta;
+    div.appendChild(m);
+  }
+  document.getElementById('mensagens').appendChild(div);
+  window.scrollTo(0, document.body.scrollHeight);
+  return div;
+}
+
+async function enviar() {
+  const input = document.getElementById('entrada');
+  const btn = document.getElementById('btnEnviar');
+  const texto = input.value.trim();
+  if (!texto) return;
+  adicionarMsg(texto, 'user');
+  input.value = '';
+  btn.disabled = true;
+  const carregando = adicionarMsg('Consultando o enxame...', 'bot');
+
+  try {
+    const r = await fetch(`${urlJuiz()}/api/v1/perguntar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: texto })
+    });
+    const dados = await r.json();
+    carregando.remove();
+    if (dados.erro) {
+      adicionarMsg(`Erro: ${dados.erro}`, 'bot');
+    } else {
+      let meta = dados.worker ? `nó: ${dados.worker}` : (dados.sintetizado_de ? `síntese de: ${dados.sintetizado_de.join(', ')}` : '');
+      if (dados.auditado_por) meta += ` · revisado por: ${dados.auditado_por}`;
+      if (dados.escalado_para) meta += ` · escalado para: ${dados.escalado_para}`;
+      if (dados.fonte_zim) meta += ' · usou biblioteca offline';
+      adicionarMsg(dados.resposta || '(sem resposta)', 'bot', meta);
+    }
+  } catch (e) {
+    carregando.remove();
+    adicionarMsg('Não consegui falar com o Juiz. Verifique o IP/porta e a rede.', 'bot');
+  }
+  btn.disabled = false;
+  atualizarWorkers();
+}
+
+testarConexao();
+setInterval(atualizarWorkers, 20000);
+</script>
+
+</body>
+</html>
