@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.ollama.client import OllamaClient, OllamaGenerateRequest
+from core.exp.secure_logger import setup_secure_logger, log_safe_query, log_safe_user_action
 
 from .embeddings import EmbeddingService
 from .indexer import IndexedChunk, LocalDocumentIndexer
@@ -16,7 +17,13 @@ from .translator import PTBRTranslator
 from .web_client import WebSearchClient
 from .zim_reader import ZimSearchClient
 
-logger = logging.getLogger(__name__)
+# Configurar logger seguro para o Bibliotecário
+logger = setup_secure_logger(
+    name="bibliotecario.search_service",
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    log_file=os.getenv("BIB_LOG_FILE", "/var/log/enxame/bibliotecario.log"),
+    console_output=True,
+)
 
 
 @dataclass(slots=True)
@@ -102,19 +109,35 @@ class SearchPipelineService:
         await self.indexer.auto_reindex_loop(self.reindex_callback)
 
     async def search(self, query: str, allow_internet: bool = True) -> SearchResult:
+        """
+        Pipeline de busca com logging seguro e controle de acesso à internet.
+        
+        Args:
+            query: Query de busca do usuário
+            allow_internet: Se True e apenas Bibliotecário/Juiz podem acessar internet
+        
+        Returns:
+            SearchResult com resposta e metadados
+        """
         started = time.perf_counter()
+        
+        # Log seguro da query (não loga conteúdo completo)
+        log_safe_query(logger, query, context="search_start")
+        log_safe_user_action(logger, action="search_query", details={"allow_internet": allow_internet})
+        
         query_pt = self.translator.to_pt_br(query)
         trace: list[dict[str, Any]] = []
 
-        logger.info("[pipeline] etapa=1 redis_cache query=%s", query_pt)
+        logger.info("[pipeline] etapa=1 redis_cache")
         # 1) Cache Redis
-        cache_key = f"bibliotecario:query:{query_pt.strip().lower()}"
+        cache_key = f"bibliotecario:query:{hash(query_pt.strip().lower())}"
         cached = await self._cache_get(cache_key)
         trace.append({"stage": "redis_cache", "hit": bool(cached)})
         if cached:
             payload = json.loads(cached)
             payload.setdefault("metadata", {}).setdefault("pipeline", trace)
             payload["metadata"]["latency_ms"] = int((time.perf_counter() - started) * 1000)
+            logger.info("[pipeline] cache_hit=true latency_ms=%d", payload["metadata"]["latency_ms"])
             return SearchResult(answer=str(payload.get("answer", "")), metadata=payload.get("metadata", {}))
 
         logger.info("[pipeline] etapa=2 qdrant")
@@ -134,6 +157,7 @@ class SearchPipelineService:
                 "latency_ms": int((time.perf_counter() - started) * 1000),
             }
             await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
+            logger.info("[pipeline] qdrant_success=true latency_ms=%d", metadata["latency_ms"])
             return SearchResult(answer=answer, metadata=metadata)
 
         logger.info("[pipeline] etapa=3 local_files")
@@ -151,6 +175,7 @@ class SearchPipelineService:
                 "latency_ms": int((time.perf_counter() - started) * 1000),
             }
             await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
+            logger.info("[pipeline] local_files_success=true latency_ms=%d", metadata["latency_ms"])
             return SearchResult(answer=answer, metadata=metadata)
 
         logger.info("[pipeline] etapa=4 zim")
@@ -170,11 +195,12 @@ class SearchPipelineService:
                 "latency_ms": int((time.perf_counter() - started) * 1000),
             }
             await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
+            logger.info("[pipeline] zim_success=true latency_ms=%d", metadata["latency_ms"])
             return SearchResult(answer=answer, metadata=metadata)
 
         if allow_internet:
-            logger.info("[pipeline] etapa=5 internet (último recurso)")
-            # 5) Internet (último recurso)
+            logger.warning("[pipeline] etapa=5 internet (último recurso) - permitido apenas para Bibliotecário/Juiz")
+            # 5) Internet (último recurso) - apenas Bibliotecário e Juiz têm permissão
             web_hits = await self.web.search(query_pt)
             trace.append({"stage": "internet", "hit": bool(web_hits), "count": len(web_hits), "last_resort": True})
             if web_hits:
@@ -189,9 +215,11 @@ class SearchPipelineService:
                     "internet_used": True,
                 }
                 await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
+                logger.info("[pipeline] internet_success=true latency_ms=%d", metadata["latency_ms"])
                 return SearchResult(answer=answer, metadata=metadata)
         else:
             trace.append({"stage": "internet", "skipped": True, "reason": "disabled_by_cluster_policy"})
+            logger.debug("[pipeline] internet bloqueado por política do cluster")
 
         fallback = "Não encontrei evidências suficientes nas etapas locais da busca distribuída."
         metadata = {
@@ -202,4 +230,5 @@ class SearchPipelineService:
             "latency_ms": int((time.perf_counter() - started) * 1000),
         }
         await self._cache_set(cache_key, json.dumps({"answer": fallback, "metadata": metadata}, ensure_ascii=False))
+        logger.info("[pipeline] fallback_result latency_ms=%d", metadata["latency_ms"])
         return SearchResult(answer=fallback, metadata=metadata)
