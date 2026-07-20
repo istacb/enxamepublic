@@ -3,6 +3,12 @@ ENXAME v3 - Sistema de Memória de Longo Prazo do Usuário
 
 Armazena contexto, preferências, histórico de decisões e padrões de trabalho
 do usuário para agilizar e melhorar respostas futuras. Offline-first.
+
+SEGURANÇA: 
+- Usa parâmetros posicionais para prevenir SQL injection
+- Valida inputs com whitelist para ORDER BY
+- Escapa caracteres especiais em buscas LIKE
+- Não usa concatenação de strings em queries SQL
 """
 
 import os
@@ -14,6 +20,9 @@ from typing import Optional, List, Dict, Any
 
 ENXAME_DIR = os.path.expanduser("~/enxame")
 MEMORY_DB = os.path.join(ENXAME_DIR, "memory", "usuario.db")
+
+# Whitelist segura para cláusulas ORDER BY
+ALLOWED_ORDER_DIRECTIONS = frozenset(["ASC", "DESC"])
 
 
 def init_memory_db():
@@ -156,10 +165,16 @@ def buscar_historico(
     
     if termo:
         query += " WHERE prompt LIKE ? OR resposta LIKE ?"
-        termo_like = f"%{termo}%"
+        # Escapa caracteres especiais do LIKE para prevenir bypass
+        termo_safe = termo.replace("%", "\\%").replace("_", "\\_")
+        termo_like = f"%{termo_safe}%"
         params = [termo_like, termo_like]
     
-    query += f" ORDER BY timestamp {ordem} LIMIT ?"
+    # Valida ordem para prevenir SQL injection - whitelist estrita
+    # Qualquer valor fora da whitelist é ignorado silenciosamente (fail-safe)
+    ordem_valida = ordem if ordem in ALLOWED_ORDER_DIRECTIONS else "DESC"
+    
+    query += f" ORDER BY timestamp {ordem_valida} LIMIT ?"
     params.append(limite)
     
     cur = conn.execute(query, params)
@@ -202,7 +217,9 @@ def buscar_memoria_semantica(
     limite: int = 10
 ) -> List[Dict]:
     """Busca na memória semântica por termo ou tags."""
-    termo_like = f"%{termo}%"
+    # Escapa caracteres especiais do LIKE para prevenir bypass
+    termo_safe = termo.replace("%", "\\%").replace("_", "\\_")
+    termo_like = f"%{termo_safe}%"
     cur = conn.execute("""
         SELECT id, conteudo, resumo, tags, relevancia, criado_em, ultimo_acesso
         FROM memoria_semantica

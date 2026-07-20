@@ -6,4 +6,10 @@ transformers==4.42.4
 torch==2.3.1
 PyMuPDF==1.24.7
 python-docx==1.1.2
+python-pptx==1.0.2
+openpyxl==3.1.5
+odfpy==1.4.1
+Pillow==10.4.0
+pytesseract==0.3.13
+mutagen==1.47.0
 zimply2==3.1.0

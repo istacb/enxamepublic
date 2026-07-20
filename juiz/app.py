@@ -13,6 +13,7 @@ from core.exp.http import EXP_SIGNATURE_HEADER, EXP_TIMESTAMP_HEADER
 from core.exp.security import EXPAuthError, EXPSecurity
 from core.exp.server import EXPServerAdapter
 from core.exp.types import EXPMessageType
+from core.exp.input_sanitizer import get_sanitizer
 from .service import JuizService
 
 
@@ -21,6 +22,7 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 EXP_SHARED_SECRET = os.getenv("EXP_SHARED_SECRET", "enxame-dev-secret")
 
 security = EXPSecurity(EXP_SHARED_SECRET)
+sanitizer = get_sanitizer(strict_mode=False)
 service = JuizService(node_id=NODE_ID, ollama_url=OLLAMA_URL, security=security)
 server_adapter = EXPServerAdapter(security=security)
 
@@ -54,7 +56,10 @@ async def submit_task(request: Request) -> dict:
     if not prompt:
         raise HTTPException(status_code=400, detail="Campo 'prompt' é obrigatório")
 
-    task = await service.submit_task(prompt)
+    # Sanitiza o prompt para prevenir prompt injection
+    safe_prompt = sanitizer.sanitize_for_llm(prompt)
+
+    task = await service.submit_task(safe_prompt)
     return {
         "task_id": task.task_id,
         "status": task.status,
