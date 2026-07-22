@@ -20,6 +20,7 @@ from fastapi import (
     applications,
     status,
 )
+from open_webui.enxame.main import router as enxame_router
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse
@@ -433,7 +434,20 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+# ========================================
+# ENXAME OS INTEGRATION
+# ========================================
+try:
+    from open_webui.enxame.main import router as enxame_router
+    app.include_router(enxame_router, prefix="/api/v1/enxame", tags=["enxame"])
+    logging.info("Enxame OS module loaded successfully at /api/v1/enxame")
+except ImportError as e:
+    logging.warning(f"Enxame OS module not found or failed to load: {e}")
+except Exception as e:
+    logging.error(f"Failed to initialize Enxame OS: {e}")
+# ========================================
 
+# ... (resto do código original do main.py continua aqui)
 # Used by readiness checks to gate traffic until startup work is done.
 app.state.startup_complete = False
 
