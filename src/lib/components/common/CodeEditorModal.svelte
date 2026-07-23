@@ -37,7 +37,8 @@
 			<button
 				class="self-center"
 				aria-label="Close"
-				onclick={() => {
+				on:click={(e) => {
+					e.stopPropagation();
 					show = false;
 				}}
 			>
