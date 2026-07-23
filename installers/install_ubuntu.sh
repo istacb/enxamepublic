@@ -153,11 +153,7 @@ systemctl enable enxame-guardian -q
 systemctl start enxame-juiz
 systemctl start enxame-guardian
 
-<<<<<<< HEAD
-# 7. Instalar Ollama (opcional mas recomendado)
-=======
 # 10. Instalar Ollama (opcional mas recomendado)
->>>>>>> 4f05cd4d444bc816d363af4224210cd8f5a018c7
 log_info "Verificando Ollama..."
 if ! command -v ollama &> /dev/null; then
     log_warn "Ollama não encontrado. Instalando..."
@@ -166,19 +162,10 @@ if ! command -v ollama &> /dev/null; then
     # Iniciar Ollama como serviço
     systemctl enable ollama -q
     systemctl start ollama
-<<<<<<< HEAD
-=======
-    
-    # Pull de modelos básicos
-    log_info "Baixando modelos de IA recomendados..."
-    su -c "ollama pull qwen2.5:1.5b" -s /bin/sh 2>/dev/null || true
-    su -c "ollama pull nomic-embed-text" -s /bin/sh 2>/dev/null || true
->>>>>>> 4f05cd4d444bc816d363af4224210cd8f5a018c7
 else
     log_info "Ollama já está instalado."
 fi
 
-<<<<<<< HEAD
 # 8. Verificar e instalar modelos mínimos (apenas se necessário)
 log_info "Verificando modelos de IA instalados..."
 
@@ -232,8 +219,6 @@ else
     log_info "Nota: Apenas modelos com >= 1.5B parâmetros são recomendados para produção."
 fi
 
-=======
->>>>>>> 4f05cd4d444bc816d363af4224210cd8f5a018c7
 # 11. Criar arquivo de configuração
 log_info "Criando arquivo de configuração..."
 cat > "$USER_ENXAME_DIR/.env" << EOF

@@ -298,7 +298,7 @@ while true; do
     
     # Se carga dos workers > threshold E consultor ocioso
     if (( $(echo "$worker_load > $IDLE_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
-        if is_idle; then
+        if is_consultor_idle; then
             log "📈 Carga alta dos workers ($worker_load%), consultor ocioso. Auxiliando..."
             
             # Solicitar tarefa pendente

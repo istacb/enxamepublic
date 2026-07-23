@@ -118,7 +118,6 @@ else
     log_info "Ollama ja esta instalado."
 fi
 
-<<<<<<< HEAD
 # 8. Verificar e instalar modelos mínimos (apenas se necessário)
 log_info "Verificando modelos de IA instalados..."
 
@@ -146,12 +145,6 @@ else
     log_info "Para adicionar modelos adicionais, execute: ollama pull <nome-do-modelo>"
     log_info "Nota: Apenas modelos com >= 1.5B parametros sao recomendados para producao."
 fi
-=======
-# Pull de modelos básicos
-log_info "Baixando modelos de IA recomendados..."
-ollama pull qwen2.5:1.5b 2>/dev/null || true
-ollama pull nomic-embed-text 2>/dev/null || true
->>>>>>> 4f05cd4d444bc816d363af4224210cd8f5a018c7
 
 # 8. Criar arquivo de configuração
 log_info "Criando arquivo de configuracao..."
