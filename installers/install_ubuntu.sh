@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-# ENXAME v3 - Instalador Automático para Ubuntu/Debian
+# ENXAME v5 - Instalador Automático para Ubuntu/Debian
 # Instalação "Next > Next > Finish" - sem perguntas ao usuário
 # =============================================================================
 
 set -e
 
 echo "============================================================"
-echo "  ENXAME v3 - Instalador Automático (Ubuntu/Debian)"
+echo "  ENXAME v5 - Instalador Automático (Ubuntu/Debian)"
 echo "  Sistema de comunicação descentralizada com IA"
 echo "============================================================"
 echo ""
@@ -40,7 +40,7 @@ fi
 ENXAME_DIR="/opt/enxame"
 USER_ENXAME_DIR="$HOME/.enxame"
 
-log_info "Instalando ENXAME v3 em $ENXAME_DIR..."
+log_info "Instalando ENXAME v5 em $ENXAME_DIR..."
 
 # 1. Atualizar repositórios
 log_info "Atualizando repositórios do sistema..."
@@ -110,7 +110,7 @@ pip install fastapi uvicorn pydantic httpx websockets zeroconf typer rich numpy 
 log_info "Configurando serviço systemd..."
 cat > /etc/systemd/system/enxame-juiz.service << 'EOF'
 [Unit]
-Description=ENXAME v3 - Serviço Juiz
+Description=ENXAME v5 - Serviço Juiz
 After=network.target
 
 [Service]
@@ -129,7 +129,7 @@ EOF
 # 8. Configurar serviço systemd para o Guardian
 cat > /etc/systemd/system/enxame-guardian.service << 'EOF'
 [Unit]
-Description=ENXAME v3 - Serviço Guardian (Segurança)
+Description=ENXAME v5 - Serviço Guardian (Segurança)
 After=network.target enxame-juiz.service
 
 [Service]
@@ -237,7 +237,7 @@ fi
 # 11. Criar arquivo de configuração
 log_info "Criando arquivo de configuração..."
 cat > "$USER_ENXAME_DIR/.env" << EOF
-# Configuração ENXAME v3
+# Configuração ENXAME v5
 NODE_ID=$(hostname)
 IP_JUIZ=$(hostname -I | awk '{print $1}' | head -1)
 JUIZ_PORTA=7700
@@ -250,7 +250,7 @@ EOF
 # 12. Criar script de inicialização rápida
 cat > /usr/local/bin/enxame << 'EOF'
 #!/bin/bash
-# Script de linha de comando do ENXAME v3
+# Script de linha de comando do ENXAME v5
 
 case "$1" in
     status)
@@ -300,7 +300,7 @@ echo "============================================================"
 echo -e "${GREEN}  INSTALAÇÃO CONCLUÍDA COM SUCESSO!${NC}"
 echo "============================================================"
 echo ""
-echo "📦 ENXAME v3 foi instalado em: $ENXAME_DIR"
+echo "📦 ENXAME v5 foi instalado em: $ENXAME_DIR"
 echo "📁 Diretório do usuário: $USER_ENXAME_DIR"
 echo ""
 echo "🚀 Serviços iniciados:"

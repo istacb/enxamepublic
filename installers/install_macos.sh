@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# ENXAME v3 - Instalador Automático para macOS
+# ENXAME v5 - Instalador Automático para macOS
 # Instalação "Next > Next > Finish" - sem perguntas ao usuário
 # Requer: macOS 10.15+ e Homebrew instalado (ou será instalado)
 # =============================================================================
@@ -8,7 +8,7 @@
 set -e
 
 echo "============================================================"
-echo "  ENXAME v3 - Instalador Automatico (macOS)"
+echo "  ENXAME v5 - Instalador Automatico (macOS)"
 echo "  Sistema de comunicacao descentralizada com IA"
 echo "============================================================"
 echo ""
@@ -41,7 +41,7 @@ fi
 ENXAME_DIR="/opt/enxame"
 USER_ENXAME_DIR="$HOME/.enxame"
 
-log_info "Instalando ENXAME v3 em $ENXAME_DIR..."
+log_info "Instalando ENXAME v5 em $ENXAME_DIR..."
 
 # 1. Verificar/Instalar Homebrew
 log_info "Verificando Homebrew..."
@@ -156,7 +156,7 @@ ollama pull nomic-embed-text 2>/dev/null || true
 # 8. Criar arquivo de configuração
 log_info "Criando arquivo de configuracao..."
 cat > "$USER_ENXAME_DIR/.env" << EOF
-# Configuração ENXAME v3
+# Configuração ENXAME v5
 NODE_ID=$(scutil --get HostName)
 IP_JUIZ=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost")
 JUIZ_PORTA=7700
@@ -169,7 +169,7 @@ EOF
 # 9. Criar script de inicialização rápida
 cat > /usr/local/bin/enxame << 'EOF'
 #!/bin/bash
-# Script de linha de comando do ENXAME v3 para macOS
+# Script de linha de comando do ENXAME v5 para macOS
 
 case "$1" in
     status)
@@ -281,7 +281,7 @@ echo "============================================================"
 echo -e "${GREEN}  INSTALACAO CONCLUIDA COM SUCESSO!${NC}"
 echo "============================================================"
 echo ""
-echo "📦 ENXAME v3 foi instalado em: $ENXAME_DIR"
+echo "📦 ENXAME v5 foi instalado em: $ENXAME_DIR"
 echo "📁 Diretorio do usuario: $USER_ENXAME_DIR"
 echo ""
 echo "🚀 Serviços configurados:"

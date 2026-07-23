@@ -1,4 +1,4 @@
-# ENXAME v4 - Sistema de Comunicação Descentralizada com IA
+# ENXAME v5 - Sistema de Comunicação Descentralizada com IA
 
 ## Visão Geral
 
@@ -219,4 +219,4 @@ Verifique o arquivo LICENSE no repositório original.
 
 ---
 
-**ENXAME v3** - Comunicação descentralizada inteligente para PCs antigos e modernos.
+**ENXAME v5** - Comunicação descentralizada inteligente para PCs antigos e modernos.
