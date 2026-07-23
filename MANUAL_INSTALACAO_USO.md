@@ -31,6 +31,7 @@ Antes de começar, certifique-se de ter instalado:
 - **Acesso à Internet** (para baixar dependências e modelos)
 
 ### Sistemas Operacionais Suportados
+
 - ✅ Linux (Ubuntu, Debian, CentOS)
 - ✅ Windows 10/11
 - ✅ macOS
@@ -69,12 +70,14 @@ cd enxame
 ### Passo 2: Criar Ambiente Virtual (Recomendado)
 
 **Linux/macOS:**
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
 **Windows:**
+
 ```bash
 python -m venv venv
 venv\Scripts\activate
@@ -83,6 +86,7 @@ venv\Scripts\activate
 ### Passo 3: Instalar Dependências
 
 Instale as dependências principais:
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -124,6 +128,7 @@ SECRET_KEY=sua-chave-secreta-aqui
 ### Configuração de Segurança
 
 O sistema já inclui módulos de segurança em `core/exp/`:
+
 - `input_sanitizer.py`: Sanitização de entradas
 - `secure_logger.py`: Logs seguros
 
@@ -136,12 +141,14 @@ Não é necessária configuração adicional para uso básico.
 ### Opção A: Usando Scripts Automáticos (Recomendado)
 
 **Linux/macOS:**
+
 ```bash
 chmod +x start_cluster.sh
 ./start_cluster.sh
 ```
 
 **Windows:**
+
 ```bash
 start_cluster.bat
 ```
@@ -151,13 +158,16 @@ start_cluster.bat
 Se preferir controle total, inicie cada serviço separadamente:
 
 1. **Iniciar o Juiz (Orquestrador Principal):**
+
    ```bash
    cd juiz
    python app.py
    ```
+
    O servidor iniciará em `http://0.0.0.0:8000`
 
 2. **Iniciar o Bibliotecário (Opcional - se usar busca de documentos):**
+
    ```bash
    cd bibliotecario
    python search_service.py
@@ -191,7 +201,7 @@ Após iniciar o servidor Juiz, acesse a interface gráfica:
 
 ### Exemplo de Uso:
 
-1. No campo de texto, digite: *"Liste os arquivos do diretório atual"*
+1. No campo de texto, digite: _"Liste os arquivos do diretório atual"_
 2. Clique em **"Enviar para o Enxame"**
 3. Acompanhe o processamento em tempo real
 4. Visualize o resultado formatado
@@ -207,6 +217,7 @@ Para integrações programáticas, use a API REST do Juiz.
 **POST** `/api/task`
 
 **Exemplo com cURL:**
+
 ```bash
 curl -X POST http://localhost:8000/api/task \
   -H "Content-Type: application/json" \
@@ -214,6 +225,7 @@ curl -X POST http://localhost:8000/api/task \
 ```
 
 **Exemplo com Python:**
+
 ```python
 import requests
 
@@ -235,11 +247,12 @@ Para receber respostas em tempo real:
 **Endpoint:** `/api/task/stream`
 
 **Exemplo com JavaScript (Frontend):**
+
 ```javascript
 const eventSource = new EventSource('/api/task/stream?prompt=Olá&user_id=user1');
 
 eventSource.onmessage = (event) => {
-    console.log('Resposta:', event.data);
+	console.log('Resposta:', event.data);
 };
 ```
 
@@ -248,27 +261,32 @@ eventSource.onmessage = (event) => {
 ## 8. Comandos Úteis
 
 ### Verificar Status do Cluster
+
 ```bash
 curl http://localhost:8000/api/cluster/status
 ```
 
 ### Listar Agentes Ativos
+
 ```bash
 curl http://localhost:8000/api/agents
 ```
 
 ### Limpar Cache/Memória
+
 ```bash
 curl -X POST http://localhost:8000/api/clear_memory
 ```
 
 ### Logs em Tempo Real
+
 ```bash
 # Se estiver usando logging em arquivo
 tail -f logs/juiz.log
 ```
 
 ### Parar o Servidor
+
 Pressione `Ctrl+C` no terminal onde o servidor está rodando.
 
 ---
@@ -276,14 +294,18 @@ Pressione `Ctrl+C` no terminal onde o servidor está rodando.
 ## 9. Solução de Problemas
 
 ### ❌ Erro: "ModuleNotFoundError"
+
 **Solução:** Certifique-se de que todas as dependências foram instaladas:
+
 ```bash
 pip install -r requirements.txt
 pip install -r juiz/requirements.txt
 ```
 
 ### ❌ Erro: "Port already in use"
+
 **Solução:** Altere a porta no arquivo `.env` ou encerre o processo usando a porta:
+
 ```bash
 # Linux/macOS
 lsof -i :8000
@@ -295,20 +317,26 @@ taskkill /PID <PID> /F
 ```
 
 ### ❌ Interface Web não carrega
+
 **Soluções:**
+
 1. Verifique se o servidor Juiz está rodando
 2. Confirme que o arquivo `juiz/static/index.html` existe
 3. Limpe o cache do navegador (Ctrl+Shift+R)
 4. Verifique o console do navegador (F12) por erros
 
 ### ❌ Agentes não respondem
+
 **Soluções:**
+
 1. Verifique os logs do Juiz para mensagens de erro
 2. Confirme que os agentes estão registrados corretamente
 3. Teste a conexão de rede entre os módulos
 
 ### ❌ Erros de Permissão (Linux)
+
 **Solução:**
+
 ```bash
 chmod +x start_cluster.sh
 chmod +x *.sh

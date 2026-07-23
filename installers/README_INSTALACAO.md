@@ -6,13 +6,13 @@ O ENXAME v5 agora possui um sistema de instalação modular que permite instalar
 
 ## Componentes Disponíveis
 
-| Componente | Descrição | Porta | Script |
-|------------|-----------|-------|--------|
-| **Juiz** | Coordenador do cluster, gerencia comunicação e distribuição de tarefas | 7700 | `install_juiz.sh` |
-| **Bibliotecário** | Sistema RAG (Retrieval-Augmented Generation) para base de conhecimento | 7710 | `install_bibliotecario.sh` |
-| **Workers** | Agentes/Workers especializados que executam tarefas | 9000-9999 | `install_worker.sh` |
-| **OpenWebUI** | Interface web integrada com frontend do Enxame | 3000 | `install_openwebui.sh` |
-| **Consultor** | Interface amigável + Monitoramento + Auxílio em ociosidade | 7720 | `install_consultor.sh` |
+| Componente        | Descrição                                                              | Porta     | Script                     |
+| ----------------- | ---------------------------------------------------------------------- | --------- | -------------------------- |
+| **Juiz**          | Coordenador do cluster, gerencia comunicação e distribuição de tarefas | 7700      | `install_juiz.sh`          |
+| **Bibliotecário** | Sistema RAG (Retrieval-Augmented Generation) para base de conhecimento | 7710      | `install_bibliotecario.sh` |
+| **Workers**       | Agentes/Workers especializados que executam tarefas                    | 9000-9999 | `install_worker.sh`        |
+| **OpenWebUI**     | Interface web integrada com frontend do Enxame                         | 3000      | `install_openwebui.sh`     |
+| **Consultor**     | Interface amigável + Monitoramento + Auxílio em ociosidade             | 7720      | `install_consultor.sh`     |
 
 ## Instalação Rápida (Tudo em Um)
 
@@ -55,6 +55,7 @@ sudo ./install_juiz.sh
 ```
 
 Variáveis de ambiente opcionais:
+
 - `NODE_ID`: ID do nó (padrão: juiz-hostname)
 - `JUIZ_PORT`: Porta do serviço (padrão: 7700)
 - `OLLAMA_URL`: URL do Ollama (padrão: http://localhost:11434)
@@ -66,6 +67,7 @@ sudo ./install_bibliotecario.sh
 ```
 
 Variáveis de ambiente opcionais:
+
 - `NODE_ID`: ID do nó (padrão: bibliotecario-hostname)
 - `BIB_PORT`: Porta do serviço (padrão: 7710)
 - `JUIZ_URL`: URL do Juiz (padrão: ws://localhost:7700/exp)
@@ -80,16 +82,16 @@ sudo ./install_worker.sh --role programador --pool-size 8
 
 #### Funções Disponíveis para Workers:
 
-| Função | Descrição |
-|--------|-----------|
-| `generic` | Worker genérico (pode ser reconfigurado depois) |
-| `programador` | Especialista em programação e código |
-| `medico` | Especialista em saúde e medicina |
-| `engenheiro` | Especialista em engenharia |
-| `tradutor` | Especialista em tradução de idiomas |
-| `matematico` | Especialista em matemática e cálculos |
-| `jurista` | Especialista em direito e legislação |
-| `redator` | Especialista em redação e conteúdo |
+| Função        | Descrição                                       |
+| ------------- | ----------------------------------------------- |
+| `generic`     | Worker genérico (pode ser reconfigurado depois) |
+| `programador` | Especialista em programação e código            |
+| `medico`      | Especialista em saúde e medicina                |
+| `engenheiro`  | Especialista em engenharia                      |
+| `tradutor`    | Especialista em tradução de idiomas             |
+| `matematico`  | Especialista em matemática e cálculos           |
+| `jurista`     | Especialista em direito e legislação            |
+| `redator`     | Especialista em redação e conteúdo              |
 
 #### Opções de Linha de Comando:
 
@@ -124,11 +126,13 @@ sudo ./install_openwebui.sh
 ```
 
 **Funcionalidades:**
+
 - Frontend personalizado do Enxame integrado
 - Backend atualizável do repositório original
 - Instalação conjunta com qualquer função
 
 **Opções:**
+
 ```bash
 --port <porta>        # Porta do OpenWebUI (padrão: 3000)
 --juiz-url <url>      # URL do Juiz para integração
@@ -141,17 +145,20 @@ sudo ./install_consultor.sh
 ```
 
 **Funcionalidades:**
+
 - 🎯 Interface amigável (frontend) do Enxame
 - 👁️ Monitoramento de heartbeats em tempo real
 - 🤖 Auxílio automático em períodos de ociosidade
 - 🦙 Ollama + modelo LLM >1.5B instalado automaticamente
 
 **O que o Consultor faz:**
+
 1. **Interface Principal**: Dashboard web moderno para acesso ao cluster
 2. **Monitoramento**: Verifica continuamente Juiz, Bibliotecário, Workers e OpenWebUI
 3. **Auxílio Inteligente**: Quando ocioso e workers sobrecarregados (>80%), ajuda processando tarefas pendentes
 
 **Opções de Configuração:**
+
 ```bash
 CONSULTOR_PORT=7720           # Porta da interface (padrão: 7720)
 OPENWEBUI_PORT=3000           # Porta do OpenWebUI (padrão: 3000)
@@ -161,6 +168,7 @@ IDLE_THRESHOLD=80             # Carga dos workers para ativar auxílio (%)
 ```
 
 **Exemplos:**
+
 ```bash
 # Instalação padrão
 sudo ./install_consultor.sh
@@ -176,6 +184,7 @@ JUIZ_URL=http://192.168.1.100:7700 sudo ./install_consultor.sh
 ```
 
 **Comandos de Gerenciamento:**
+
 ```bash
 # Systemd
 systemctl status enxame-consultor
@@ -188,11 +197,13 @@ enxame logs consultor
 ```
 
 **Acessos:**
+
 - Dashboard: http://localhost:7720
 - OpenWebUI: http://localhost:3000
 - Logs: /opt/enxame/consultor/logs/
 
 O OpenWebUI é instalado com:
+
 - Frontend customizado do Enxame integrado
 - Backend atualizável do repositório original
 - Conexão automática com o Juiz
@@ -284,12 +295,14 @@ Após a instalação, acesse:
 ## Requisitos do Sistema
 
 ### Mínimos:
+
 - Docker e Docker Compose
 - 4GB RAM (por worker)
 - 20GB disco
 - Ubuntu 20.04+ ou Debian 11+
 
 ### Recomendados:
+
 - 8GB+ RAM
 - 4+ CPUs
 - SSD 50GB+
@@ -326,6 +339,7 @@ Após a instalação, acesse:
 ## Troubleshooting
 
 ### Verificar logs:
+
 ```bash
 enxame logs workers
 docker logs enxame-juiz
@@ -333,17 +347,20 @@ docker logs enxame-openwebui
 ```
 
 ### Verificar status:
+
 ```bash
 enxame status all
 docker ps | grep enxame
 ```
 
 ### Reiniciar serviços:
+
 ```bash
 enxame restart all
 ```
 
 ### Rede Docker:
+
 ```bash
 # Recriar rede se necessário
 docker network create enxame-network

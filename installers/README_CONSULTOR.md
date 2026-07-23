@@ -7,18 +7,21 @@ O **Consultor** é a interface amigável e inteligente do Enxame, projetada para
 ## ✨ Funcionalidades Principais
 
 ### 1. 🎯 Interface Amigável (Frontend)
+
 - Dashboard web moderno e intuitivo
 - Visualização em tempo real do status do cluster
 - Acesso direto ao OpenWebUI personalizado
 - Monitoramento de carga dos workers
 
 ### 2. 👁️ Monitoramento de Heartbeats
+
 - Verificação contínua de todos os componentes
 - Juiz, Bibliotecário, Workers e OpenWebUI
 - Logs detalhados de status
 - Alertas visuais no dashboard
 
 ### 3. 🤖 Auxílio Inteligente em Ociosidade
+
 - Detecta automaticamente quando os workers estão sobrecarregados
 - Utiliza Ollama com modelo LLM >1.5B localmente
 - Processa tarefas pendentes quando ocioso
@@ -56,13 +59,13 @@ sudo ./install_all.sh
 
 ## 📦 Componentes Instalados
 
-| Componente | Descrição | Porta |
-|------------|-----------|-------|
-| Consultor Service | Interface web principal | 7720 |
-| Heartbeat Monitor | Monitor de saúde do cluster | - |
-| Idle Helper | Auxiliar de tarefas em ociosidade | - |
-| Ollama | Motor de IA local | 11434 |
-| Modelo LLM | llama3.2:3b (ou configurado) | - |
+| Componente        | Descrição                         | Porta |
+| ----------------- | --------------------------------- | ----- |
+| Consultor Service | Interface web principal           | 7720  |
+| Heartbeat Monitor | Monitor de saúde do cluster       | -     |
+| Idle Helper       | Auxiliar de tarefas em ociosidade | -     |
+| Ollama            | Motor de IA local                 | 11434 |
+| Modelo LLM        | llama3.2:3b (ou configurado)      | -     |
 
 ## 🔧 Gerenciamento de Serviços
 
@@ -105,12 +108,12 @@ enxame logs consultor
 
 ## 🌐 Acessos
 
-| Serviço | URL | Descrição |
-|---------|-----|-----------|
-| Consultor Dashboard | http://localhost:7720 | Interface principal |
-| OpenWebUI | http://localhost:3000 | Chat com IA |
-| Juiz API | http://localhost:7700 | Coordenador |
-| Ollama | http://localhost:11434 | Motor LLM |
+| Serviço             | URL                    | Descrição           |
+| ------------------- | ---------------------- | ------------------- |
+| Consultor Dashboard | http://localhost:7720  | Interface principal |
+| OpenWebUI           | http://localhost:3000  | Chat com IA         |
+| Juiz API            | http://localhost:7700  | Coordenador         |
+| Ollama              | http://localhost:11434 | Motor LLM           |
 
 ## ⚙️ Configuração
 
@@ -263,16 +266,19 @@ sudo ./install_consultor.sh
 ## 🎯 Casos de Uso
 
 ### Cenário 1: Escritório Corporativo
+
 - **Função**: Interface única para todos os usuários
 - **Vantagem**: Monitoramento centralizado + auxílio automático
 - **Configuração**: Modelo maior (llama3.2:8b) para tarefas complexas
 
 ### Cenário 2: Home Office
+
 - **Função**: Acesso remoto ao cluster
 - **Vantagem**: Dashboard simples e intuitivo
 - **Configuração**: Modelo leve (llama3.2:3b) para economia de recursos
 
 ### Cenário 3: Ambiente de Desenvolvimento
+
 - **Função**: Debug e monitoramento detalhado
 - **Vantagem**: Logs em tempo real + teste de carga
 - **Configuração**: Threshold mais baixo (60%) para mais auxílio

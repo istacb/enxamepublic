@@ -8,14 +8,14 @@ Foram criados instaladores separados para cada função do Enxame, permitindo in
 
 #### Scripts Criados:
 
-| Script | Função | Descrição |
-|--------|--------|-----------|
-| `install_all.sh` | **Instalador Principal** | Instala todos os componentes de uma vez (Next > Next > Finish) |
-| `install_juiz.sh` | Juiz/Coordenador | Instala o serviço coordenador do cluster |
-| `install_bibliotecario.sh` | Bibliotecário/RAG | Instala o serviço de base de conhecimento |
-| `install_worker.sh` | Workers/Agentes | Instala workers com função específica ou genérica |
-| `install_openwebui.sh` | OpenWebUI | Instala interface web integrada |
-| `install_consultor.sh` | **Consultor** ⭐ NOVO | Interface amigável + Monitoramento + Auxílio em ociosidade |
+| Script                     | Função                   | Descrição                                                      |
+| -------------------------- | ------------------------ | -------------------------------------------------------------- |
+| `install_all.sh`           | **Instalador Principal** | Instala todos os componentes de uma vez (Next > Next > Finish) |
+| `install_juiz.sh`          | Juiz/Coordenador         | Instala o serviço coordenador do cluster                       |
+| `install_bibliotecario.sh` | Bibliotecário/RAG        | Instala o serviço de base de conhecimento                      |
+| `install_worker.sh`        | Workers/Agentes          | Instala workers com função específica ou genérica              |
+| `install_openwebui.sh`     | OpenWebUI                | Instala interface web integrada                                |
+| `install_consultor.sh`     | **Consultor** ⭐ NOVO    | Interface amigável + Monitoramento + Auxílio em ociosidade     |
 
 ### 2. Workers com Função Primária ou Genérica
 
@@ -24,6 +24,7 @@ O instalador de workers (`install_worker.sh`) agora suporta:
 - **Funções Especializadas**: programador, medico, engenheiro, tradutor, matematico, jurista, redator
 - **Função Genérica**: worker pode ser configurado como genérico e reconfigurado depois via CLI ou script interativo
 - **Opções de Linha de Comando**:
+
   ```bash
   --role <funcao>       # Define função primária
   --pool-size <N>       # Tamanho do pool de workers
@@ -54,6 +55,7 @@ O instalador `install_consultor.sh` adiciona uma nova função ao Enxame:
 - **Logs Centralizados**: Dashboard mostra status em tempo real e links para logs
 
 **Funcionamento do Auxílio Inteligente:**
+
 1. Monitora carga dos workers via API do Juiz
 2. Se carga > 80% E consultor está ocioso (< 2 requisições ativas)
 3. Solicita tarefa pendente ao Juiz
@@ -61,6 +63,7 @@ O instalador `install_consultor.sh` adiciona uma nova função ao Enxame:
 5. Envia resultado de volta ao Juiz
 
 **Serviços Criados:**
+
 - `enxame-consultor.service` - Interface web principal
 - `enxame-consultor-heartbeat.service` - Monitor de health checks
 - `enxame-consultor-idle.service` - Auxiliar de tarefas em ociosidade
@@ -154,16 +157,19 @@ sudo ./install_openwebui.sh
 ## Integrações Implementadas
 
 ### OpenWebUI + Frontend Enxame
+
 - Componentes do `/src` copiados para `/opt/enxame/backend/static/custom`
 - Rotas customizadas integradas
 - CSS customizado aplicado
 
 ### OpenWebUI + Backend Original
+
 - Dockerfile baseado em `ghcr.io/open-webui/open-webui:main`
 - Script `update.sh` faz pull da imagem mais recente
 - Configurações preservadas em volumes Docker
 
 ### Workers + Plugins
+
 - Plugins específicos por função em `/opt/enxame/workers/plugins/`
 - Worker genérico carrega plugin base
 - Reconfiguração dinâmica via script
@@ -193,4 +199,3 @@ sudo ./install_openwebui.sh
 - Debian 11+
 - Requer Docker e Docker Compose
 - Root/sudo necessário
-
