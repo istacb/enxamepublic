@@ -193,13 +193,13 @@
         </button>
       </div>
       
-      {if errorMessage}
+      {#if errorMessage}
         <div class="result-box error-box fade-in">
           <p><strong>⚠️ {labels.error}:</strong> {errorMessage}</p>
         </div>
       {/if}
 
-      {if currentMission}
+      {#if currentMission}
         <div class="result-box fade-in">
           <div class="confidence">Confidence: {(currentMission.confidence * 100).toFixed(0)}%</div>
           <p>{currentMission.answer}</p>
