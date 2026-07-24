@@ -3,6 +3,7 @@
 # ENXAME v5 - Instalador Automático para macOS
 # Instalação "Next > Next > Finish" - sem perguntas ao usuário
 # Requer: macOS 10.15+ e Homebrew instalado (ou será instalado)
+# Inclui: Backend Python, Frontend Svelte/OpenWebUI, Ollama e configuração completa
 # =============================================================================
 
 set -e
@@ -40,6 +41,7 @@ fi
 # Diretório de instalação
 ENXAME_DIR="/opt/enxame"
 USER_ENXAME_DIR="$HOME/.enxame"
+OPENWEBUI_DIR="$ENXAME_DIR/openwebui"
 
 log_info "Instalando ENXAME v5 em $ENXAME_DIR..."
 
@@ -60,9 +62,10 @@ else
     eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null || true
 fi
 
-# 2. Instalar Python via Homebrew
-log_info "Instalando Python via Homebrew..."
+# 2. Instalar Python e Node.js via Homebrew
+log_info "Instalando Python e Node.js via Homebrew..."
 brew install python@3.11 --quiet || true
+brew install node --quiet || true
 
 # 3. Criar diretórios
 log_info "Criando estrutura de diretorios..."
@@ -77,19 +80,31 @@ mkdir -p "$USER_ENXAME_DIR/data/kb_rh_trabalhista"
 mkdir -p "$USER_ENXAME_DIR/data/kb_vendas"
 mkdir -p "$USER_ENXAME_DIR/data/kb_seguranca"
 mkdir -p "$USER_ENXAME_DIR/perfis"
+mkdir -p "$OPENWEBUI_DIR"
 
 # 4. Copiar arquivos do projeto
 log_info "Copiando arquivos do projeto..."
-cd "$(dirname "$0")"
-cp -r *.py "$ENXAME_DIR/" 2>/dev/null || true
-cp -r core/ "$ENXAME_DIR/" 2>/dev/null || true
-cp -r bibliotecario/ "$ENXAME_DIR/" 2>/dev/null || true
+cd "$(dirname "$0")/.."
+
+# Copiar backend Python
+cp -r backend/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r agentes/ "$ENXAME_DIR/" 2>/dev/null || true
+cp -r bibliotecario/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r juiz/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r guardian/ "$ENXAME_DIR/" 2>/dev/null || true
-cp -r perfis/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r scripts/ "$ENXAME_DIR/" 2>/dev/null || true
 cp requirements.txt "$ENXAME_DIR/" 2>/dev/null || true
+
+# Copiar frontend SvelteKit (OpenWebUI + Enxame)
+log_info "Copiando frontend SvelteKit (OpenWebUI + Enxame)..."
+cp -r src/ "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp package.json "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp package-lock.json "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp svelte.config.js "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp vite.config.ts "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp tsconfig.json "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp .npmrc "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp -r static/ "$OPENWEBUI_DIR/" 2>/dev/null || true
 
 # Copiar perfis JSON
 if [ -d "perfis" ]; then
@@ -106,7 +121,23 @@ source "$ENXAME_DIR/venv/bin/activate"
 pip install --upgrade pip -q
 pip install fastapi uvicorn pydantic httpx websockets zeroconf typer rich numpy -q
 
-# 7. Instalar Ollama
+# Instalar dependências do OpenWebUI backend
+log_info "Instalando dependencias do OpenWebUI backend..."
+cd "$ENXAME_DIR/backend"
+pip install -r requirements.txt -q 2>/dev/null || true
+
+# 7. Instalar Node.js dependencies e build do frontend
+log_info "Instalando dependencias Node.js e build do frontend..."
+cd "$OPENWEBUI_DIR"
+
+# Instalar dependências npm
+npm install --legacy-peer-deps -q 2>/dev/null || npm install -q 2>/dev/null || true
+
+# Build do frontend
+log_info "Compilando frontend SvelteKit..."
+npm run build -q 2>/dev/null || true
+
+# 8. Instalar Ollama
 log_info "Verificando Ollama..."
 if ! command -v ollama &> /dev/null; then
     log_warn "Ollama nao encontrado. Instalando..."
@@ -118,7 +149,7 @@ else
     log_info "Ollama ja esta instalado."
 fi
 
-# 8. Verificar e instalar modelos mínimos (apenas se necessário)
+# 9. Verificar e instalar modelos mínimos (apenas se necessário)
 log_info "Verificando modelos de IA instalados..."
 
 # Função para verificar modelos existentes
@@ -146,7 +177,7 @@ else
     log_info "Nota: Apenas modelos com >= 1.5B parametros sao recomendados para producao."
 fi
 
-# 8. Criar arquivo de configuração
+# 10. Criar arquivo de configuração
 log_info "Criando arquivo de configuracao..."
 cat > "$USER_ENXAME_DIR/.env" << EOF
 # Configuração ENXAME v5
@@ -156,10 +187,11 @@ JUIZ_PORTA=7700
 BIBLIOTECARIO_PORTA=7710
 GUARDIAN_PORTA=7720
 OLLAMA_URL=http://localhost:11434
+OPENWEBUI_URL=http://localhost:8080
 ENXAME_DIR=$USER_ENXAME_DIR
 EOF
 
-# 9. Criar script de inicialização rápida
+# 11. Criar script de inicialização rápida
 cat > /usr/local/bin/enxame << 'EOF'
 #!/bin/bash
 # Script de linha de comando do ENXAME v5 para macOS
@@ -168,6 +200,7 @@ case "$1" in
     status)
         echo "=== Status do ENXAME ==="
         launchctl list | grep enxame || echo "Nenhum servico ENXAME rodando"
+        launchctl list | grep openwebui || echo "Servico OpenWebUI nao listado"
         ;;
     start)
         echo "Iniciando servicos ENXAME..."
@@ -175,12 +208,15 @@ case "$1" in
         cd /opt/enxame && source venv/bin/activate && nohup python juiz.py > ~/.enxame/logs/juiz.log 2>&1 &
         # Iniciar Guardian em background
         cd /opt/enxame && source venv/bin/activate && nohup python guardian/guardian.py > ~/.enxame/logs/guardian.log 2>&1 &
+        # Iniciar OpenWebUI em background
+        cd /opt/enxame/openwebui && source ../venv/bin/activate && nohup python -m uvicorn backend.open_webui.main:app --host 0.0.0.0 --port 8080 > ~/.enxame/logs/openwebui.log 2>&1 &
         echo "Servicos iniciados."
         ;;
     stop)
         echo "Parando servicos ENXAME..."
         pkill -f "python.*juiz.py" || true
         pkill -f "python.*guardian.py" || true
+        pkill -f "uvicorn.*open_webui" || true
         echo "Servicos parados."
         ;;
     restart)
@@ -191,15 +227,23 @@ case "$1" in
     logs)
         tail -f ~/.enxame/logs/*.log
         ;;
+    rebuild-frontend)
+        echo "Recompilando frontend..."
+        cd /opt/enxame/openwebui
+        npm install --legacy-peer-deps
+        npm run build
+        $0 restart
+        echo "Frontend recompilado e servicos reiniciados."
+        ;;
     *)
-        echo "Uso: enxame {status|start|stop|restart|logs}"
+        echo "Uso: enxame {status|start|stop|restart|logs|rebuild-frontend}"
         exit 1
         ;;
 esac
 EOF
 chmod +x /usr/local/bin/enxame
 
-# 10. Criar LaunchAgents para inicialização automática
+# 12. Criar LaunchAgents para inicialização automática
 log_info "Configurando inicializacao automatica..."
 
 # LaunchAgent para o Juiz
@@ -256,11 +300,45 @@ cat > /Library/LaunchDaemons/com.enxame.guardian.plist << EOF
 </plist>
 EOF
 
+# LaunchAgent para o OpenWebUI
+cat > /Library/LaunchDaemons/com.enxame.openwebui.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.enxame.openwebui</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/enxame/venv/bin/python</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>backend.open_webui.main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8080</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/opt/enxame/openwebui</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$USER_ENXAME_DIR/logs/openwebui.log</string>
+    <key>StandardErrorPath</key>
+    <string>$USER_ENXAME_DIR/logs/openwebui.err</string>
+</dict>
+</plist>
+EOF
+
 # Carregar LaunchAgents
 launchctl load /Library/LaunchDaemons/com.enxame.juiz.plist 2>/dev/null || true
 launchctl load /Library/LaunchDaemons/com.enxame.guardian.plist 2>/dev/null || true
+launchctl load /Library/LaunchDaemons/com.enxame.openwebui.plist 2>/dev/null || true
 
-# 11. Configurar firewall do macOS
+# 13. Configurar firewall do macOS
 log_info "Configurando firewall do macOS..."
 if command -v /usr/libexec/ApplicationFirewall/socketfilterfw &> /dev/null; then
     # Adicionar Python ao firewall (necessário para os serviços aceitarem conexões)
@@ -268,7 +346,7 @@ if command -v /usr/libexec/ApplicationFirewall/socketfilterfw &> /dev/null; then
     /usr/libexec/ApplicationFirewall/socketfilterfw --unblock /opt/enxame/venv/bin/python 2>/dev/null || true
 fi
 
-# 12. Mostrar informações finais
+# 14. Mostrar informações finais
 echo ""
 echo "============================================================"
 echo -e "${GREEN}  INSTALACAO CONCLUIDA COM SUCESSO!${NC}"
@@ -276,18 +354,22 @@ echo "============================================================"
 echo ""
 echo "📦 ENXAME v5 foi instalado em: $ENXAME_DIR"
 echo "📁 Diretorio do usuario: $USER_ENXAME_DIR"
+echo "🌐 Frontend OpenWebUI: $OPENWEBUI_DIR"
 echo ""
 echo "🚀 Serviços configurados:"
 echo "   - Juiz (porta 7700)"
 echo "   - Guardian (porta 7720)"
+echo "   - OpenWebUI com Enxame (porta 8080)"
 echo ""
 echo "🔧 Comandos úteis:"
-echo "   enxame status    - Ver status dos serviços"
-echo "   enxame logs      - Ver logs em tempo real"
-echo "   enxame restart   - Reiniciar serviços"
+echo "   enxame status           - Ver status dos serviços"
+echo "   enxame logs             - Ver logs em tempo real"
+echo "   enxame restart          - Reiniciar serviços"
+echo "   enxame rebuild-frontend - Recompilar frontend após alterações"
 echo ""
 echo "🌐 Acesse o painel web:"
-echo "   http://localhost:7700"
+echo "   OpenWebUI + Enxame: http://localhost:8080"
+echo "   Mission Control:    http://localhost:8080/enxame"
 echo ""
 echo "📖 Documentação: https://github.com/istacb/enxamepublic"
 echo ""
