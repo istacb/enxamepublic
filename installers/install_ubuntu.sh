@@ -2,6 +2,7 @@
 # =============================================================================
 # ENXAME v5 - Instalador Automático para Ubuntu/Debian
 # Instalação "Next > Next > Finish" - sem perguntas ao usuário
+# Inclui: Backend Python, Frontend Svelte/OpenWebUI, Ollama e configuração completa
 # =============================================================================
 
 set -e
@@ -39,6 +40,7 @@ fi
 # Diretório de instalação
 ENXAME_DIR="/opt/enxame"
 USER_ENXAME_DIR="$HOME/.enxame"
+OPENWEBUI_DIR="$ENXAME_DIR/openwebui"
 
 log_info "Instalando ENXAME v5 em $ENXAME_DIR..."
 
@@ -62,6 +64,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     iproute2 \
     openssh-client \
     jq \
+    nodejs \
+    npm \
     > /dev/null 2>&1
 
 # 3. Criar diretórios
@@ -77,19 +81,31 @@ mkdir -p "$USER_ENXAME_DIR/data/kb_rh_trabalhista"
 mkdir -p "$USER_ENXAME_DIR/data/kb_vendas"
 mkdir -p "$USER_ENXAME_DIR/data/kb_seguranca"
 mkdir -p "$USER_ENXAME_DIR/perfis"
+mkdir -p "$OPENWEBUI_DIR"
 
 # 4. Copiar arquivos do projeto
 log_info "Copiando arquivos do projeto..."
-cd "$(dirname "$0")"
-cp -r *.py "$ENXAME_DIR/" 2>/dev/null || true
-cp -r core/ "$ENXAME_DIR/" 2>/dev/null || true
-cp -r bibliotecario/ "$ENXAME_DIR/" 2>/dev/null || true
+cd "$(dirname "$0")/.."
+
+# Copiar backend Python
+cp -r backend/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r agentes/ "$ENXAME_DIR/" 2>/dev/null || true
+cp -r bibliotecario/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r juiz/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r guardian/ "$ENXAME_DIR/" 2>/dev/null || true
-cp -r perfis/ "$ENXAME_DIR/" 2>/dev/null || true
 cp -r scripts/ "$ENXAME_DIR/" 2>/dev/null || true
 cp requirements.txt "$ENXAME_DIR/" 2>/dev/null || true
+
+# Copiar frontend SvelteKit (OpenWebUI + Enxame)
+log_info "Copiando frontend SvelteKit (OpenWebUI + Enxame)..."
+cp -r src/ "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp package.json "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp package-lock.json "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp svelte.config.js "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp vite.config.ts "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp tsconfig.json "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp .npmrc "$OPENWEBUI_DIR/" 2>/dev/null || true
+cp -r static/ "$OPENWEBUI_DIR/" 2>/dev/null || true
 
 # Copiar perfis JSON
 if [ -d "perfis" ]; then
@@ -106,8 +122,44 @@ log_info "Instalando dependências Python..."
 pip install --upgrade pip -q
 pip install fastapi uvicorn pydantic httpx websockets zeroconf typer rich numpy -q
 
-# 7. Configurar serviço systemd para o Juiz
-log_info "Configurando serviço systemd..."
+# Instalar dependências do OpenWebUI backend
+log_info "Instalando dependências do OpenWebUI backend..."
+cd "$ENXAME_DIR/backend"
+pip install -r requirements.txt -q 2>/dev/null || true
+
+# 7. Instalar Node.js dependencies e build do frontend
+log_info "Instalando dependências Node.js e build do frontend..."
+cd "$OPENWEBUI_DIR"
+
+# Instalar dependências npm
+npm install --legacy-peer-deps -q 2>/dev/null || npm install -q 2>/dev/null || true
+
+# Build do frontend
+log_info "Compilando frontend SvelteKit..."
+npm run build -q 2>/dev/null || true
+
+# 8. Configurar serviço systemd para o OpenWebUI
+log_info "Configurando serviços systemd..."
+cat > /etc/systemd/system/openwebui.service << 'EOF'
+[Unit]
+Description=OpenWebUI with Enxame Integration
+After=network.target enxame-juiz.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/enxame/openwebui
+Environment="PATH=/opt/enxame/venv/bin"
+Environment="PYTHONPATH=/opt/enxame/backend"
+ExecStart=/opt/enxame/venv/bin/python -m uvicorn backend.open_webui.main:app --host 0.0.0.0 --port 8080
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 9. Configurar serviço systemd para o Juiz
 cat > /etc/systemd/system/enxame-juiz.service << 'EOF'
 [Unit]
 Description=ENXAME v5 - Serviço Juiz
@@ -126,7 +178,7 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# 8. Configurar serviço systemd para o Guardian
+# 10. Configurar serviço systemd para o Guardian
 cat > /etc/systemd/system/enxame-guardian.service << 'EOF'
 [Unit]
 Description=ENXAME v5 - Serviço Guardian (Segurança)
@@ -145,15 +197,17 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# 9. Recarregar systemd e iniciar serviços
+# 11. Recarregar systemd e iniciar serviços
 log_info "Iniciando serviços do ENXAME..."
 systemctl daemon-reload
 systemctl enable enxame-juiz -q
 systemctl enable enxame-guardian -q
+systemctl enable openwebui -q
 systemctl start enxame-juiz
 systemctl start enxame-guardian
+systemctl start openwebui
 
-# 10. Instalar Ollama (opcional mas recomendado)
+# 12. Instalar Ollama (opcional mas recomendado)
 log_info "Verificando Ollama..."
 if ! command -v ollama &> /dev/null; then
     log_warn "Ollama não encontrado. Instalando..."
@@ -166,7 +220,7 @@ else
     log_info "Ollama já está instalado."
 fi
 
-# 8. Verificar e instalar modelos mínimos (apenas se necessário)
+# 13. Verificar e instalar modelos mínimos (apenas se necessário)
 log_info "Verificando modelos de IA instalados..."
 
 # Função para verificar tamanho do modelo (em bilhões de parâmetros)
@@ -219,7 +273,7 @@ else
     log_info "Nota: Apenas modelos com >= 1.5B parâmetros são recomendados para produção."
 fi
 
-# 11. Criar arquivo de configuração
+# 14. Criar arquivo de configuração
 log_info "Criando arquivo de configuração..."
 cat > "$USER_ENXAME_DIR/.env" << EOF
 # Configuração ENXAME v5
@@ -229,10 +283,11 @@ JUIZ_PORTA=7700
 BIBLIOTECARIO_PORTA=7710
 GUARDIAN_PORTA=7720
 OLLAMA_URL=http://localhost:11434
+OPENWEBUI_URL=http://localhost:8080
 ENXAME_DIR=$USER_ENXAME_DIR
 EOF
 
-# 12. Criar script de inicialização rápida
+# 15. Criar script de inicialização rápida
 cat > /usr/local/bin/enxame << 'EOF'
 #!/bin/bash
 # Script de linha de comando do ENXAME v5
@@ -243,43 +298,57 @@ case "$1" in
         systemctl status enxame-juiz --no-pager -l
         echo ""
         systemctl status enxame-guardian --no-pager -l
+        echo ""
+        systemctl status openwebui --no-pager -l
         ;;
     start)
         systemctl start enxame-juiz
         systemctl start enxame-guardian
+        systemctl start openwebui
         echo "Serviços iniciados."
         ;;
     stop)
         systemctl stop enxame-juiz
         systemctl stop enxame-guardian
+        systemctl stop openwebui
         echo "Serviços parados."
         ;;
     restart)
         systemctl restart enxame-juiz
         systemctl restart enxame-guardian
+        systemctl restart openwebui
         echo "Serviços reiniciados."
         ;;
     logs)
-        journalctl -u enxame-juiz -u enxame-guardian -f --no-pager
+        journalctl -u enxame-juiz -u enxame-guardian -u openwebui -f --no-pager
+        ;;
+    rebuild-frontend)
+        echo "Recompilando frontend..."
+        cd /opt/enxame/openwebui
+        npm install --legacy-peer-deps
+        npm run build
+        systemctl restart openwebui
+        echo "Frontend recompilado e serviço reiniciado."
         ;;
     *)
-        echo "Uso: enxame {status|start|stop|restart|logs}"
+        echo "Uso: enxame {status|start|stop|restart|logs|rebuild-frontend}"
         exit 1
         ;;
 esac
 EOF
 chmod +x /usr/local/bin/enxame
 
-# 13. Configurar firewall (se ufw estiver ativo)
+# 16. Configurar firewall (se ufw estiver ativo)
 if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
     log_info "Configurando regras de firewall..."
     ufw allow 7700/tcp comment "ENXAME Juiz" 2>/dev/null || true
     ufw allow 7710/tcp comment "ENXAME Bibliotecário" 2>/dev/null || true
     ufw allow 7720/tcp comment "ENXAME Guardian" 2>/dev/null || true
     ufw allow 9000:9999/tcp comment "ENXAME Workers" 2>/dev/null || true
+    ufw allow 8080/tcp comment "OpenWebUI" 2>/dev/null || true
 fi
 
-# 14. Mostrar informações finais
+# 17. Mostrar informações finais
 echo ""
 echo "============================================================"
 echo -e "${GREEN}  INSTALAÇÃO CONCLUÍDA COM SUCESSO!${NC}"
@@ -287,18 +356,22 @@ echo "============================================================"
 echo ""
 echo "📦 ENXAME v5 foi instalado em: $ENXAME_DIR"
 echo "📁 Diretório do usuário: $USER_ENXAME_DIR"
+echo "🌐 Frontend OpenWebUI: $OPENWEBUI_DIR"
 echo ""
 echo "🚀 Serviços iniciados:"
 echo "   - Juiz (porta 7700)"
 echo "   - Guardian (porta 7720)"
+echo "   - OpenWebUI com Enxame (porta 8080)"
 echo ""
 echo "🔧 Comandos úteis:"
-echo "   enxame status    - Ver status dos serviços"
-echo "   enxame logs      - Ver logs em tempo real"
-echo "   enxame restart   - Reiniciar serviços"
+echo "   enxame status           - Ver status dos serviços"
+echo "   enxame logs             - Ver logs em tempo real"
+echo "   enxame restart          - Reiniciar serviços"
+echo "   enxame rebuild-frontend - Recompilar frontend após alterações"
 echo ""
 echo "🌐 Acesse o painel web:"
-echo "   http://$(hostname -I | awk '{print $1}' | head -1):7700"
+echo "   OpenWebUI + Enxame: http://$(hostname -I | awk '{print $1}' | head -1):8080"
+echo "   Mission Control:    http://$(hostname -I | awk '{print $1}' | head -1):8080/enxame"
 echo ""
 echo "📖 Documentação: https://github.com/istacb/enxamepublic"
 echo ""
