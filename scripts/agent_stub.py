@@ -13,12 +13,12 @@ from core.ollama.client import OllamaClient, OllamaGenerateRequest
 
 
 async def main() -> None:
-    node_id = os.getenv("NODE_ID", "ag-stub-01")
-    role = os.getenv("ROLE", "dynamic")
-    juiz_url = os.getenv("JUIZ_URL", "ws://localhost:7700/exp")
-    secret = os.getenv("EXP_SHARED_SECRET", "enxame-dev-secret")
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-    model = os.getenv("AGENT_MODEL", "gemma2:2b-it-qat")
+    node_id = os.getenv('NODE_ID', 'ag-stub-01')
+    role = os.getenv('ROLE', 'dynamic')
+    juiz_url = os.getenv('JUIZ_URL', 'ws://localhost:7700/exp')
+    secret = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
+    ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+    model = os.getenv('AGENT_MODEL', 'gemma2:2b-it-qat')
 
     security = EXPSecurity(secret)
     ollama = OllamaClient(ollama_url)
@@ -27,7 +27,7 @@ async def main() -> None:
     while True:
         try:
             async with websockets.connect(juiz_url, ping_interval=15, ping_timeout=15) as ws:
-                hello = EXPEnvelope(source=source, type=EXPMessageType.HELLO, payload={"models": [model]})
+                hello = EXPEnvelope(source=source, type=EXPMessageType.HELLO, payload={'models': [model]})
                 hello.signature = security.sign_payload(hello.as_signable_dict())
                 await ws.send(hello.model_dump_json())
 
@@ -42,19 +42,19 @@ async def main() -> None:
                 try:
                     async for raw in ws:
                         data = json.loads(raw)
-                        signature = data.get("signature")
-                        signable = {k: v for k, v in data.items() if k != "signature"}
+                        signature = data.get('signature')
+                        signable = {k: v for k, v in data.items() if k != 'signature'}
                         if not signature or not security.verify_payload(signable, signature):
                             continue
                         msg = EXPEnvelope.model_validate(data)
                         if msg.type != EXPMessageType.TASK_DISPATCH:
                             continue
 
-                        subtask = str(msg.payload.get("subtask", ""))
+                        subtask = str(msg.payload.get('subtask', ''))
                         answer = await ollama.generate(
                             OllamaGenerateRequest(
                                 model=model,
-                                prompt=f"Resolva em português brasileiro com objetividade:\n{subtask}",
+                                prompt=f'Resolva em português brasileiro com objetividade:\n{subtask}',
                                 temperature=0.4,
                                 num_ctx=2048,
                             )
@@ -64,7 +64,7 @@ async def main() -> None:
                             target=msg.source,
                             correlation_id=msg.correlation_id,
                             type=EXPMessageType.TASK_RESULT,
-                            payload={"task_id": msg.payload.get("task_id"), "result": answer},
+                            payload={'task_id': msg.payload.get('task_id'), 'result': answer},
                         )
                         result.signature = security.sign_payload(result.as_signable_dict())
                         await ws.send(result.model_dump_json())
@@ -74,5 +74,5 @@ async def main() -> None:
             await asyncio.sleep(3)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())

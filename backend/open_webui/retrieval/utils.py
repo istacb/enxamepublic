@@ -6,9 +6,8 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Awaitable, Optional, Union
-from urllib.parse import quote
 
 import aiohttp
 import requests
@@ -23,7 +22,6 @@ from open_webui.config import (
     RAG_EMBEDDING_CONTENT_PREFIX,
     RAG_EMBEDDING_PREFIX_FIELD_NAME,
     RAG_EMBEDDING_QUERY_PREFIX,
-    VECTOR_DB,
 )
 from open_webui.env import (
     AIOHTTP_CLIENT_ALLOW_REDIRECTS,
@@ -36,14 +34,14 @@ from open_webui.env import (
 )
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.chats import Chats
+from open_webui.models.config import Config
 from open_webui.models.files import Files
 from open_webui.models.knowledge import Knowledges
 from open_webui.models.notes import Notes
-from open_webui.models.config import Config
 from open_webui.models.users import UserModel
+from open_webui.retrieval.external import retrieve_external_knowledge
 from open_webui.retrieval.loaders.youtube import YoutubeLoader
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
-from open_webui.retrieval.external import retrieve_external_knowledge
 from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
 from open_webui.retrieval.vector.main import GetResult, SearchResult
 from open_webui.retrieval.web.utils import get_web_loader
@@ -201,7 +199,7 @@ async def get_content_from_url(request, url: str) -> str:
 
 
 def _get_content_from_url_sync(request, url: str, loader_config):
-    from open_webui.retrieval.web.utils import validate_url, _SSRFSafeAdapter
+    from open_webui.retrieval.web.utils import _SSRFSafeAdapter, validate_url
 
     # Validate URL before making any request (blocks private IPs, non-HTTP, filter list)
     validate_url(url)
@@ -391,7 +389,7 @@ async def query_doc_with_native_hybrid_search(
     k_reranker: int,
     r: float,
     hybrid_bm25_weight: float,
-) -> Optional[dict]:
+) -> dict | None:
     try:
         if not _supports_native_hybrid_search():
             return None
@@ -447,7 +445,7 @@ async def query_doc_with_native_hybrid_search(
 
 async def query_doc_with_hybrid_search(
     collection_name: str,
-    collection_result: Optional[GetResult],
+    collection_result: GetResult | None,
     query: str,
     embedding_function,
     k: int,
@@ -1164,8 +1162,8 @@ def get_embedding_function(
 async def generate_embeddings(
     engine: str,
     model: str,
-    text: Union[str, list[str]],
-    prefix: Union[str, None] = None,
+    text: str | list[str],
+    prefix: str | None = None,
     **kwargs,
 ):
     url = kwargs.get('url', '')
@@ -1658,10 +1656,10 @@ def get_model_path(model: str, update_model: bool = False):
 
 
 import operator
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 from langchain_core.callbacks import Callbacks
-from langchain_core.documents import BaseDocumentCompressor, Document
+from langchain_core.documents import BaseDocumentCompressor
 
 
 class RerankCompressor(BaseDocumentCompressor):

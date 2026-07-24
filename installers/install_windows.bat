@@ -1,13 +1,13 @@
 @echo off
 REM =============================================================================
-REM ENXAME v3 - Instalador Automático para Windows
+REM ENXAME v5 - Instalador Automático para Windows
 REM Instalação "Next > Next > Finish" - sem perguntas ao usuário
 REM =============================================================================
 
 setlocal EnableDelayedExpansion
 
 echo ============================================================
-echo   ENXAME v3 - Instalador Automatico (Windows)
+echo   ENXAME v5 - Instalador Automatico (Windows)
 echo   Sistema de comunicacao descentralizada com IA
 echo ============================================================
 echo.
@@ -21,7 +21,7 @@ if %errorLevel% neq 0 (
 )
 
 REM Configurar diretórios
-set ENXAME_DIR=C:\ProgramData\ENXAME
+set ENXAME_DIR=D:\ENXAME
 set USER_ENXAME_DIR=%USERPROFILE%\.enxame
 set PYTHON_EXE=
 

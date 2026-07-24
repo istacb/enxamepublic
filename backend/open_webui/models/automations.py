@@ -1,11 +1,10 @@
 import logging
 import time
-from typing import Optional
 from uuid import uuid4
 
 from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import JSON, BigInteger, Boolean, Column, Index, String, Text, cast, delete, func, or_, select, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, Index, String, Text, cast, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -57,14 +56,14 @@ class AutomationRun(Base):
 
 class AutomationTerminalConfig(BaseModel):
     server_id: str
-    cwd: Optional[str] = None
+    cwd: str | None = None
 
 
 class AutomationData(BaseModel):
     prompt: str
     model_id: str
     rrule: str
-    terminal: Optional[AutomationTerminalConfig] = None
+    terminal: AutomationTerminalConfig | None = None
 
 
 class AutomationModel(BaseModel):
@@ -74,10 +73,10 @@ class AutomationModel(BaseModel):
     user_id: str
     name: str
     data: dict
-    meta: Optional[dict] = None
+    meta: dict | None = None
     is_active: bool
-    last_run_at: Optional[int] = None
-    next_run_at: Optional[int] = None
+    last_run_at: int | None = None
+    next_run_at: int | None = None
 
     created_at: int
     updated_at: int
@@ -88,22 +87,22 @@ class AutomationRunModel(BaseModel):
 
     id: str
     automation_id: str
-    chat_id: Optional[str] = None
+    chat_id: str | None = None
     status: str
-    error: Optional[str] = None
+    error: str | None = None
     created_at: int
 
 
 class AutomationForm(BaseModel):
     name: str
     data: AutomationData
-    meta: Optional[dict] = None
-    is_active: Optional[bool] = True
+    meta: dict | None = None
+    is_active: bool | None = True
 
 
 class AutomationResponse(AutomationModel):
-    last_run: Optional[AutomationRunModel] = None
-    next_runs: Optional[list[int]] = None
+    last_run: AutomationRunModel | None = None
+    next_runs: list[int] | None = None
 
 
 class AutomationListResponse(BaseModel):
@@ -122,7 +121,7 @@ class AutomationTable:
         user_id: str,
         form: AutomationForm,
         next_run_at: int,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> AutomationModel:
         async with get_async_db_context(db) as db:
             now = int(time.time_ns())
@@ -142,17 +141,17 @@ class AutomationTable:
             await db.refresh(row)
             return AutomationModel.model_validate(row)
 
-    async def count_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> int:
+    async def count_by_user(self, user_id: str, db: AsyncSession | None = None) -> int:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(func.count()).select_from(Automation).filter_by(user_id=user_id))
             return result.scalar()
 
-    async def get_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationModel]:
+    async def get_by_id(self, id: str, db: AsyncSession | None = None) -> AutomationModel | None:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
             return AutomationModel.model_validate(row) if row else None
 
-    async def get_active_by_user(self, user_id: str, db: Optional[AsyncSession] = None) -> list[AutomationModel]:
+    async def get_active_by_user(self, user_id: str, db: AsyncSession | None = None) -> list[AutomationModel]:
         """Get active automations for a user (for calendar RRULE expansion)."""
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -163,11 +162,11 @@ class AutomationTable:
     async def search_automations(
         self,
         user_id: str,
-        query: Optional[str] = None,
-        status: Optional[str] = None,
+        query: str | None = None,
+        status: str | None = None,
         skip: int = 0,
         limit: int = 30,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> 'AutomationListResponse':
         async with get_async_db_context(db) as db:
             stmt = select(Automation).filter_by(user_id=user_id)
@@ -210,8 +209,8 @@ class AutomationTable:
         id: str,
         form: AutomationForm,
         next_run_at: int,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[AutomationModel]:
+        db: AsyncSession | None = None,
+    ) -> AutomationModel | None:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
             if not row:
@@ -230,9 +229,9 @@ class AutomationTable:
     async def toggle(
         self,
         id: str,
-        next_run_at: Optional[int],
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[AutomationModel]:
+        next_run_at: int | None,
+        db: AsyncSession | None = None,
+    ) -> AutomationModel | None:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
             if not row:
@@ -244,7 +243,7 @@ class AutomationTable:
             await db.refresh(row)
             return AutomationModel.model_validate(row)
 
-    async def delete(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete(self, id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
             if not row:
@@ -253,7 +252,7 @@ class AutomationTable:
             await db.commit()
             return True
 
-    async def claim_due(self, now_ns: int, limit: int = 10, db: Optional[AsyncSession] = None) -> list[AutomationModel]:
+    async def claim_due(self, now_ns: int, limit: int = 10, db: AsyncSession | None = None) -> list[AutomationModel]:
         """
         Atomically claim due automations for execution.
 
@@ -283,7 +282,7 @@ class AutomationTable:
             # Batch-fetch user timezones so rescheduling respects each
             # user's local timezone instead of falling back to server time.
             user_ids = list({row.user_id for row in rows})
-            timezone_by_user_id: dict[str, Optional[str]] = {}
+            timezone_by_user_id: dict[str, str | None] = {}
             if user_ids:
                 from open_webui.models.users import User
 
@@ -309,9 +308,9 @@ class AutomationRunTable:
         self,
         automation_id: str,
         status: str,
-        chat_id: Optional[str] = None,
-        error: Optional[str] = None,
-        db: Optional[AsyncSession] = None,
+        chat_id: str | None = None,
+        error: str | None = None,
+        db: AsyncSession | None = None,
     ) -> AutomationRunModel:
         async with get_async_db_context(db) as db:
             row = AutomationRun(
@@ -327,7 +326,7 @@ class AutomationRunTable:
             await db.refresh(row)
             return AutomationRunModel.model_validate(row)
 
-    async def get_latest(self, automation_id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationRunModel]:
+    async def get_latest(self, automation_id: str, db: AsyncSession | None = None) -> AutomationRunModel | None:
         async with get_async_db_context(db) as db:
             result = await db.execute(
                 select(AutomationRun)
@@ -339,7 +338,7 @@ class AutomationRunTable:
             return AutomationRunModel.model_validate(row) if row else None
 
     async def get_latest_batch(
-        self, automation_ids: list[str], db: Optional[AsyncSession] = None
+        self, automation_ids: list[str], db: AsyncSession | None = None
     ) -> dict[str, AutomationRunModel]:
         """Fetch the latest run for each automation in a single query."""
         if not automation_ids:
@@ -370,7 +369,7 @@ class AutomationRunTable:
         automation_id: str,
         skip: int = 0,
         limit: int = 50,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[AutomationRunModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -383,7 +382,7 @@ class AutomationRunTable:
             rows = result.scalars().all()
             return [AutomationRunModel.model_validate(r) for r in rows]
 
-    async def delete_by_automation(self, automation_id: str, db: Optional[AsyncSession] = None) -> int:
+    async def delete_by_automation(self, automation_id: str, db: AsyncSession | None = None) -> int:
         async with get_async_db_context(db) as db:
             result = await db.execute(delete(AutomationRun).filter_by(automation_id=automation_id))
             await db.commit()
@@ -395,7 +394,7 @@ class AutomationRunTable:
         start_ns: int,
         end_ns: int,
         limit: int = 500,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[tuple['AutomationRunModel', 'AutomationModel']]:
         """Get runs within a date range for a user, joined with parent automation."""
         async with get_async_db_context(db) as db:

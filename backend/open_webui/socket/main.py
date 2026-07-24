@@ -5,7 +5,6 @@ import logging
 import random
 import sys
 import time
-from typing import Dict
 
 import pycrdt as Y
 import socketio
@@ -16,7 +15,6 @@ from open_webui.env import (
     ENABLE_WEBSOCKET_SUPPORT,
     GLOBAL_LOG_LEVEL,
     REDIS_KEY_PREFIX,
-    VERSION,
     WEBSOCKET_EVENT_CALLER_TIMEOUT,
     WEBSOCKET_MANAGER,
     WEBSOCKET_REDIS_CLUSTER,
@@ -44,7 +42,6 @@ from open_webui.utils.redis import (
     get_redis_connection,
     get_sentinels_from_env,
 )
-from redis import asyncio as aioredis
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
@@ -205,7 +202,7 @@ async def periodic_usage_pool_cleanup():
     try:
         while True:
             if not renew_func():
-                log.error(f'Unable to renew cleanup lock. Exiting usage pool cleanup.')
+                log.error('Unable to renew cleanup lock. Exiting usage pool cleanup.')
                 raise Exception('Unable to renew usage pool cleanup lock.')
 
             now = int(time.time())

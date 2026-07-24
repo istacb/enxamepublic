@@ -9,18 +9,16 @@ Create Date: 2025-12-02 06:54:19.401334
 import json
 import time
 import uuid
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-import open_webui.internal.db
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = '3e0e00844bb0'
-down_revision: Union[str, None] = '90ef40d4714e'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '90ef40d4714e'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

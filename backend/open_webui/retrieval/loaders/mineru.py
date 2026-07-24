@@ -3,7 +3,6 @@ import os
 import tempfile
 import time
 import zipfile
-from typing import List, Optional
 
 import requests
 from fastapi import HTTPException, status
@@ -27,8 +26,8 @@ class MinerULoader:
         api_url: str = 'http://localhost:8000',
         api_key: str = '',
         params: dict = None,
-        timeout: Optional[int] = 300,
-        max_markdown_bytes: Optional[int] = None,
+        timeout: int | None = 300,
+        max_markdown_bytes: int | None = None,
     ):
         self.file_path = file_path
         self.api_mode = api_mode.lower()
@@ -55,7 +54,7 @@ class MinerULoader:
         if self.api_mode == 'cloud' and not self.api_key:
             raise ValueError('API key is required for Cloud API mode')
 
-    def load(self) -> List[Document]:
+    def load(self) -> list[Document]:
         """
         Main entry point for loading and parsing the document.
         Routes to Cloud or Local API based on api_mode.
@@ -69,7 +68,7 @@ class MinerULoader:
             log.error(f'Error loading document with MinerU: {e}')
             raise
 
-    def _load_local_api(self) -> List[Document]:
+    def _load_local_api(self) -> list[Document]:
         """
         Load document using Local API (synchronous).
         Posts file to /file_parse endpoint and gets immediate response.
@@ -175,7 +174,7 @@ class MinerULoader:
 
         return [Document(page_content=markdown_content, metadata=metadata)]
 
-    def _load_cloud_api(self) -> List[Document]:
+    def _load_cloud_api(self) -> list[Document]:
         """
         Load document using Cloud API (asynchronous).
         Uses batch upload endpoint to avoid need for public file URLs.
@@ -292,7 +291,7 @@ class MinerULoader:
         """
         Upload file to presigned URL (no authentication needed).
         """
-        log.info(f'Uploading file to presigned URL')
+        log.info('Uploading file to presigned URL')
 
         try:
             with open(self.file_path, 'rb') as f:

@@ -5,7 +5,7 @@ import os
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List
+from typing import Any
 
 import aiohttp
 import requests
@@ -93,7 +93,7 @@ class MistralLoader:
         if self.debug:
             log.debug(message, *args)
 
-    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
+    def _handle_response(self, response: requests.Response) -> dict[str, Any]:
         """Checks response status and returns JSON content."""
         try:
             response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
@@ -111,7 +111,7 @@ class MistralLoader:
             log.error(f'JSON decode error: {json_err} - Response: {response.text}')
             raise  # Re-raise after logging
 
-    async def _handle_response_async(self, response: aiohttp.ClientResponse) -> Dict[str, Any]:
+    async def _handle_response_async(self, response: aiohttp.ClientResponse) -> dict[str, Any]:
         """Async version of response handling with better error info."""
         try:
             response.raise_for_status()
@@ -350,7 +350,7 @@ class MistralLoader:
         self._debug_log('Signed URL received successfully')
         return signed_url
 
-    def _process_ocr(self, signed_url: str) -> Dict[str, Any]:
+    def _process_ocr(self, signed_url: str) -> dict[str, Any]:
         """Sends the signed URL to the OCR endpoint for processing (sync version)."""
         log.info('Processing OCR via Mistral API')
         url = f'{self.base_url}/ocr'
@@ -381,7 +381,7 @@ class MistralLoader:
             log.error(f'Failed during OCR processing: {e}')
             raise
 
-    async def _process_ocr_async(self, session: aiohttp.ClientSession, signed_url: str) -> Dict[str, Any]:
+    async def _process_ocr_async(self, session: aiohttp.ClientSession, signed_url: str) -> dict[str, Any]:
         """Async OCR processing with timing metrics."""
         url = f'{self.base_url}/ocr'
 
@@ -488,7 +488,7 @@ class MistralLoader:
         ) as session:
             yield session
 
-    def _process_results(self, ocr_response: Dict[str, Any]) -> List[Document]:
+    def _process_results(self, ocr_response: dict[str, Any]) -> list[Document]:
         """Process OCR results into Document objects with enhanced metadata and memory efficiency."""
         pages_data = ocr_response.get('pages')
         if not pages_data:
@@ -562,7 +562,7 @@ class MistralLoader:
 
         return documents
 
-    def load(self) -> List[Document]:
+    def load(self) -> list[Document]:
         """
         Executes the full OCR workflow: upload, get URL, process OCR, delete file.
         Synchronous version for backward compatibility.
@@ -619,7 +619,7 @@ class MistralLoader:
                     # Log deletion error, but don't overwrite original error if one occurred
                     log.error(f'Cleanup error: Could not delete file ID {file_id}. Reason: {del_e}')
 
-    async def load_async(self) -> List[Document]:
+    async def load_async(self) -> list[Document]:
         """
         Asynchronous OCR workflow execution with optimized performance.
 
@@ -678,9 +678,9 @@ class MistralLoader:
 
     @staticmethod
     async def load_multiple_async(
-        loaders: List['MistralLoader'],
+        loaders: list['MistralLoader'],
         max_concurrent: int = 5,  # Limit concurrent requests
-    ) -> List[List[Document]]:
+    ) -> list[list[Document]]:
         """
         Process multiple files concurrently with controlled concurrency.
 
@@ -700,7 +700,7 @@ class MistralLoader:
         # Use semaphore to control concurrency
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def process_with_semaphore(loader: 'MistralLoader') -> List[Document]:
+        async def process_with_semaphore(loader: 'MistralLoader') -> list[Document]:
             async with semaphore:
                 return await loader.load_async()
 

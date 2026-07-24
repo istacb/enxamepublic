@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import time
-from typing import List, Optional
 
 import requests
 from fastapi import HTTPException, status
@@ -17,7 +16,7 @@ class DatalabMarkerLoader:
         file_path: str,
         api_key: str,
         api_base_url: str,
-        additional_config: Optional[str] = None,
+        additional_config: str | None = None,
         use_llm: bool = False,
         skip_cache: bool = False,
         force_ocr: bool = False,
@@ -83,7 +82,7 @@ class DatalabMarkerLoader:
             log.error(f'Invalid JSON checking Marker request: {e}')
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f'Invalid JSON: {e}')
 
-    def load(self) -> List[Document]:
+    def load(self) -> list[Document]:
         filename = os.path.basename(self.file_path)
         mime_type = self._get_mime_type(filename)
         headers = {'X-Api-Key': self.api_key}

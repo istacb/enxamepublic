@@ -3,7 +3,6 @@ NOTE: This vector database integration is community-supported and maintained on 
 """
 
 import logging
-from typing import Optional
 from urllib.parse import urlparse
 
 from open_webui.config import (
@@ -145,9 +144,9 @@ class QdrantClient(VectorDBBase):
         self,
         collection_name: str,
         vectors: list[list[float | int]],
-        filter: Optional[dict] = None,
+        filter: dict | None = None,
         limit: int = 10,
-    ) -> Optional[SearchResult]:
+    ) -> SearchResult | None:
         # Search for the nearest neighbor items based on the vectors and return 'limit' number of results.
         if limit is None:
             limit = NO_LIMIT  # otherwise qdrant would set limit to 10!
@@ -166,7 +165,7 @@ class QdrantClient(VectorDBBase):
             distances=[[(point.score + 1.0) / 2.0 for point in query_response.points]],
         )
 
-    def query(self, collection_name: str, filter: dict, limit: Optional[int] = None):
+    def query(self, collection_name: str, filter: dict, limit: int | None = None):
         # Construct the filter string for querying
         if not self.has_collection(collection_name):
             return None
@@ -190,7 +189,7 @@ class QdrantClient(VectorDBBase):
             log.exception(f"Error querying a collection '{collection_name}': {e}")
             return None
 
-    def get(self, collection_name: str) -> Optional[GetResult]:
+    def get(self, collection_name: str) -> GetResult | None:
         # Get all the items in the collection.
         points = self.client.scroll(
             collection_name=f'{self.collection_prefix}_{collection_name}',
@@ -213,8 +212,8 @@ class QdrantClient(VectorDBBase):
     def delete(
         self,
         collection_name: str,
-        ids: Optional[list[str]] = None,
-        filter: Optional[dict] = None,
+        ids: list[str] | None = None,
+        filter: dict | None = None,
     ):
         # Delete by point ID: the point ID is the item's id (see _create_points).
         # Filtering on metadata.id silently misses points whose payload omits an

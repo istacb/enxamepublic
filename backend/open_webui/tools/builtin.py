@@ -6,22 +6,18 @@ These tools are automatically available when native function calling is enabled.
 IMPORTANT: DO NOT IMPORT THIS MODULE DIRECTLY IN OTHER PARTS OF THE CODEBASE.
 """
 
-from open_webui.tools.knowledge_fs import kb_exec  # noqa: F401 — re-exported
-
-import asyncio
 import json
 import logging
 import time
-from typing import Optional
 
 from fastapi import Request
 
-from open_webui.models.channels import Channel, ChannelMember, Channels
+from open_webui.models.channels import Channels
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
 from open_webui.models.memories import Memories
-from open_webui.models.messages import Message, Messages
+from open_webui.models.messages import Messages
 from open_webui.models.notes import Notes
 from open_webui.models.users import UserModel
 from open_webui.retrieval.utils import get_content_from_url
@@ -39,16 +35,25 @@ from open_webui.routers.memories import (
     ReadMemoryPathForm,
     SearchMemoriesForm,
     UpdateMemoriesForm,
-    list_memory_paths as _list_memory_paths,
-    read_memory_path as _read_memory_path,
-    search_memories as _search_memories,
-    update_memories as _update_memories,
     update_memory_by_id,
 )
 from open_webui.routers.memories import (
     add_memory as _add_memory,
 )
+from open_webui.routers.memories import (
+    list_memory_paths as _list_memory_paths,
+)
+from open_webui.routers.memories import (
+    read_memory_path as _read_memory_path,
+)
+from open_webui.routers.memories import (
+    search_memories as _search_memories,
+)
+from open_webui.routers.memories import (
+    update_memories as _update_memories,
+)
 from open_webui.routers.retrieval import search_web as _search_web
+from open_webui.tools.knowledge_fs import kb_exec  # noqa: F401 — re-exported
 from open_webui.utils.sanitize import sanitize_code
 
 log = logging.getLogger(__name__)
@@ -60,7 +65,7 @@ async def _has_read_access_to_file(
     file,
     user_id: str,
     user_role: str,
-    model_knowledge: Optional[list[dict]] = None,
+    model_knowledge: list[dict] | None = None,
 ) -> bool:
     """Check if a user can read a file via ownership, admin role, model attachment, or access grants."""
     if file.user_id == user_id or user_role == 'admin':
@@ -94,7 +99,7 @@ async def get_current_timestamp(
         import datetime
         from zoneinfo import ZoneInfo
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         result = {
             'current_timestamp': int(now.timestamp()),
             'current_iso': now.isoformat(),
@@ -141,7 +146,7 @@ async def calculate_timestamp(
 
         from dateutil.relativedelta import relativedelta
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         current_ts = int(now.timestamp())
 
         # Calculate the adjusted time
@@ -179,7 +184,7 @@ async def calculate_timestamp(
         # Fallback without dateutil
         import datetime
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         current_ts = int(now.timestamp())
         total_days = days_ago + (weeks_ago * 7) + (months_ago * 30) + (years_ago * 365)
         adjusted = now - datetime.timedelta(days=total_days)
@@ -216,7 +221,7 @@ async def calculate_timestamp(
 
 async def search_web(
     query: str,
-    count: Optional[int] = None,
+    count: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -664,8 +669,8 @@ async def search_memories(
     query: str = '',
     count: int = 5,
     type: str = 'all',
-    path: Optional[str] = None,
-    memory_id: Optional[str] = None,
+    path: str | None = None,
+    memory_id: str | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -721,7 +726,7 @@ async def search_memories(
 async def add_memory(
     content: str,
     type: str = 'user',
-    path: Optional[str] = None,
+    path: str | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -802,8 +807,8 @@ async def update_memory(
 async def replace_memory_content(
     memory_id: str,
     content: str,
-    type: Optional[str] = None,
-    path: Optional[str] = None,
+    type: str | None = None,
+    path: str | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -925,8 +930,8 @@ async def list_memories(
 async def search_notes(
     query: str,
     count: int = 5,
-    start_timestamp: Optional[int] = None,
-    end_timestamp: Optional[int] = None,
+    start_timestamp: int | None = None,
+    end_timestamp: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -1129,7 +1134,7 @@ async def write_note(
 async def replace_note_content(
     note_id: str,
     content: str,
-    title: Optional[str] = None,
+    title: str | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -1203,8 +1208,8 @@ async def replace_note_content(
 async def search_chats(
     query: str,
     count: int = 5,
-    start_timestamp: Optional[int] = None,
-    end_timestamp: Optional[int] = None,
+    start_timestamp: int | None = None,
+    end_timestamp: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
     __chat_id__: str = None,
@@ -1408,8 +1413,8 @@ async def search_channels(
 async def search_channel_messages(
     query: str,
     count: int = 10,
-    start_timestamp: Optional[int] = None,
-    end_timestamp: Optional[int] = None,
+    start_timestamp: int | None = None,
+    end_timestamp: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -1756,12 +1761,12 @@ async def search_knowledge_bases(
 
 async def search_knowledge_files(
     query: str,
-    knowledge_id: Optional[str] = None,
+    knowledge_id: str | None = None,
     count: int = 5,
     skip: int = 0,
     __request__: Request = None,
     __user__: dict = None,
-    __model_knowledge__: Optional[list[dict]] = None,
+    __model_knowledge__: list[dict] | None = None,
 ) -> str:
     """
     Search files by filename across knowledge bases the user has access to.
@@ -1927,12 +1932,12 @@ MAX_GREP_RESULTS = 50
 
 async def grep_knowledge_files(
     pattern: str,
-    file_id: Optional[str] = None,
+    file_id: str | None = None,
     case_insensitive: bool = False,
     count_only: bool = False,
     __request__: Request = None,
     __user__: dict = None,
-    __model_knowledge__: Optional[list[dict]] = None,
+    __model_knowledge__: list[dict] | None = None,
 ) -> str:
     """
     Search for exact text across knowledge files. Returns matching lines with line numbers.
@@ -2091,11 +2096,11 @@ async def view_file(
     offset: int = 0,
     max_chars: int = DEFAULT_VIEW_FILE_MAX_CHARS,
     line_numbers: bool = False,
-    start_line: Optional[int] = None,
-    end_line: Optional[int] = None,
+    start_line: int | None = None,
+    end_line: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
-    __model_knowledge__: Optional[list[dict]] = None,
+    __model_knowledge__: list[dict] | None = None,
 ) -> str:
     """
     Get the content of a file by its ID. Supports pagination for large files.
@@ -2207,8 +2212,8 @@ async def view_knowledge_file(
     offset: int = 0,
     max_chars: int = DEFAULT_VIEW_FILE_MAX_CHARS,
     line_numbers: bool = False,
-    start_line: Optional[int] = None,
-    end_line: Optional[int] = None,
+    start_line: int | None = None,
+    end_line: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -2349,12 +2354,12 @@ async def view_knowledge_file(
 
 
 async def list_knowledge(
-    knowledge_id: Optional[str] = None,
+    knowledge_id: str | None = None,
     skip: int = 0,
     count: int = 50,
     __request__: Request = None,
     __user__: dict = None,
-    __model_knowledge__: Optional[list[dict]] = None,
+    __model_knowledge__: list[dict] | None = None,
 ) -> str:
     """
     List knowledge bases, files, and notes attached to the current model.
@@ -2492,7 +2497,7 @@ async def list_knowledge(
 
 async def query_knowledge_files(
     query: str,
-    knowledge_ids: Optional[list[str]] = None,
+    knowledge_ids: list[str] | None = None,
     count: int = 5,
     __request__: Request = None,
     __user__: dict = None,
@@ -2881,7 +2886,7 @@ VALID_TASK_STATUSES = {'pending', 'in_progress', 'completed', 'cancelled'}
 
 
 class TaskItem(BaseModel):
-    id: Optional[str] = Field(None, description='Unique identifier for the task. Auto-generated if omitted.')
+    id: str | None = Field(None, description='Unique identifier for the task. Auto-generated if omitted.')
     content: str = Field(..., description='Task description.')
     status: Literal['pending', 'in_progress', 'completed', 'cancelled'] = Field('pending', description='Task status.')
 
@@ -3108,10 +3113,10 @@ async def create_automation(
 
 async def update_automation(
     automation_id: str,
-    name: Optional[str] = None,
-    prompt: Optional[str] = None,
-    rrule: Optional[str] = None,
-    model_id: Optional[str] = None,
+    name: str | None = None,
+    prompt: str | None = None,
+    rrule: str | None = None,
+    model_id: str | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -3188,7 +3193,7 @@ async def update_automation(
 
 
 async def list_automations(
-    status: Optional[str] = None,
+    status: str | None = None,
     count: int = 10,
     __request__: Request = None,
     __user__: dict = None,
@@ -3405,9 +3410,9 @@ def _event_to_dict(event, tz) -> dict:
 
 
 async def search_calendar_events(
-    query: Optional[str] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
+    query: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
     count: int = 10,
     __request__: Request = None,
     __user__: dict = None,
@@ -3500,12 +3505,12 @@ async def search_calendar_events(
 async def create_calendar_event(
     title: str,
     start: str,
-    end: Optional[str] = None,
-    description: Optional[str] = None,
-    calendar_id: Optional[str] = None,
+    end: str | None = None,
+    description: str | None = None,
+    calendar_id: str | None = None,
     all_day: bool = False,
-    location: Optional[str] = None,
-    reminder_minutes: Optional[int] = None,
+    location: str | None = None,
+    reminder_minutes: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -3626,14 +3631,14 @@ async def create_calendar_event(
 
 async def update_calendar_event(
     event_id: str,
-    title: Optional[str] = None,
-    description: Optional[str] = None,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    all_day: Optional[bool] = None,
-    location: Optional[str] = None,
-    is_cancelled: Optional[bool] = None,
-    reminder_minutes: Optional[int] = None,
+    title: str | None = None,
+    description: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    all_day: bool | None = None,
+    location: str | None = None,
+    is_cancelled: bool | None = None,
+    reminder_minutes: int | None = None,
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:

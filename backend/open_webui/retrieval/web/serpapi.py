@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 from urllib.parse import urlencode
 
 import requests
@@ -13,7 +12,7 @@ def search_serpapi(
     engine: str,
     query: str,
     count: int,
-    filter_list: Optional[list[str]] = None,
+    filter_list: list[str] | None = None,
 ) -> list[SearchResult]:
     """Search using serpapi.com's API and return the results as a list of SearchResult objects.
 

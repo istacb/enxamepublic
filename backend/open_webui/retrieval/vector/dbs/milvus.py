@@ -4,7 +4,6 @@ NOTE: This vector database integration is community-supported and maintained on 
 
 import json
 import logging
-from typing import Optional
 
 from open_webui.config import (
     MILVUS_DB,
@@ -25,7 +24,7 @@ from open_webui.retrieval.vector.main import (
     VectorItem,
 )
 from open_webui.retrieval.vector.utils import process_metadata
-from pymilvus import Collection, DataType, FieldSchema, connections
+from pymilvus import Collection, DataType, connections
 from pymilvus import MilvusClient as Client
 from pymilvus.exceptions import MilvusException
 
@@ -184,9 +183,9 @@ class MilvusClient(VectorDBBase):
         self,
         collection_name: str,
         vectors: list[list[float | int]],
-        filter: Optional[dict] = None,
+        filter: dict | None = None,
         limit: int = 10,
-    ) -> Optional[SearchResult]:
+    ) -> SearchResult | None:
         # Search for the nearest neighbor items based on the vectors and return 'limit' number of results.
         collection_name = collection_name.replace('-', '_')
         # For some index types like IVF_FLAT, search params like nprobe can be set.
@@ -253,7 +252,7 @@ class MilvusClient(VectorDBBase):
             )
             return None
 
-    def get(self, collection_name: str) -> Optional[GetResult]:
+    def get(self, collection_name: str) -> GetResult | None:
         # Get all the items in the collection. This can be very resource-intensive for large collections.
         collection_name = collection_name.replace('-', '_')
         log.warning(
@@ -340,8 +339,8 @@ class MilvusClient(VectorDBBase):
     def delete(
         self,
         collection_name: str,
-        ids: Optional[list[str]] = None,
-        filter: Optional[dict] = None,
+        ids: list[str] | None = None,
+        filter: dict | None = None,
     ):
         # Delete the items from the collection based on the ids or filter.
         collection_name = collection_name.replace('-', '_')

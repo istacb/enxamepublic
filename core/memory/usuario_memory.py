@@ -4,32 +4,31 @@ ENXAME v3 - Sistema de Memória de Longo Prazo do Usuário
 Armazena contexto, preferências, histórico de decisões e padrões de trabalho
 do usuário para agilizar e melhorar respostas futuras. Offline-first.
 
-SEGURANÇA: 
+SEGURANÇA:
 - Usa parâmetros posicionais para prevenir SQL injection
 - Valida inputs com whitelist para ORDER BY
 - Escapa caracteres especiais em buscas LIKE
 - Não usa concatenação de strings em queries SQL
 """
 
-import os
 import json
+import os
 import sqlite3
-import hashlib
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any
 
-ENXAME_DIR = os.path.expanduser("~/enxame")
-MEMORY_DB = os.path.join(ENXAME_DIR, "memory", "usuario.db")
+ENXAME_DIR = os.path.expanduser('~/enxame')
+MEMORY_DB = os.path.join(ENXAME_DIR, 'memory', 'usuario.db')
 
 # Whitelist segura para cláusulas ORDER BY
-ALLOWED_ORDER_DIRECTIONS = frozenset(["ASC", "DESC"])
+ALLOWED_ORDER_DIRECTIONS = frozenset(['ASC', 'DESC'])
 
 
 def init_memory_db():
     """Inicializa o banco de dados de memória do usuário."""
     os.makedirs(os.path.dirname(MEMORY_DB), exist_ok=True)
     conn = sqlite3.connect(MEMORY_DB)
-    
+
     # Tabela de contexto persistente (preferências, padrões)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS contexto (
@@ -41,7 +40,7 @@ def init_memory_db():
             atualizado_em TEXT NOT NULL
         )
     """)
-    
+
     # Tabela de histórico de interações
     conn.execute("""
         CREATE TABLE IF NOT EXISTS historico (
@@ -56,7 +55,7 @@ def init_memory_db():
             feedback_usuario TEXT
         )
     """)
-    
+
     # Tabela de memória semântica (embeddings simples em texto)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memoria_semantica (
@@ -69,32 +68,35 @@ def init_memory_db():
             ultimo_acesso TEXT
         )
     """)
-    
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_historico_timestamp ON historico(timestamp)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_memoria_tags ON memoria_semantica(tags)")
+
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_historico_timestamp ON historico(timestamp)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_memoria_tags ON memoria_semantica(tags)')
     conn.commit()
     return conn
 
 
-def salvar_contexto(conn: sqlite3.Connection, chave: str, valor: Any, categoria: str = "geral"):
+def salvar_contexto(conn: sqlite3.Connection, chave: str, valor: Any, categoria: str = 'geral'):
     """Salva ou atualiza um contexto persistente do usuário."""
     agora = datetime.now().isoformat()
     valor_str = json.dumps(valor, ensure_ascii=False) if not isinstance(valor, str) else valor
-    
-    conn.execute("""
+
+    conn.execute(
+        """
         INSERT INTO contexto (chave, valor, categoria, criado_em, atualizado_em)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(chave) DO UPDATE SET
             valor = excluded.valor,
             categoria = excluded.categoria,
             atualizado_em = excluded.atualizado_em
-    """, (chave, valor_str, categoria, agora, agora))
+    """,
+        (chave, valor_str, categoria, agora, agora),
+    )
     conn.commit()
 
 
-def carregar_contexto(conn: sqlite3.Connection, chave: str) -> Optional[Any]:
+def carregar_contexto(conn: sqlite3.Connection, chave: str) -> Any | None:
     """Carrega um contexto específico do usuário."""
-    cur = conn.execute("SELECT valor FROM contexto WHERE chave = ?", (chave,))
+    cur = conn.execute('SELECT valor FROM contexto WHERE chave = ?', (chave,))
     row = cur.fetchone()
     if row:
         try:
@@ -104,29 +106,24 @@ def carregar_contexto(conn: sqlite3.Connection, chave: str) -> Optional[Any]:
     return None
 
 
-def listar_contextos(conn: sqlite3.Connection, categoria: Optional[str] = None) -> List[Dict]:
+def listar_contextos(conn: sqlite3.Connection, categoria: str | None = None) -> list[dict]:
     """Lista todos os contextos, opcionalmente filtrados por categoria."""
     if categoria:
         cur = conn.execute(
-            "SELECT chave, valor, categoria, criado_em, atualizado_em FROM contexto WHERE categoria = ?",
-            (categoria,)
+            'SELECT chave, valor, categoria, criado_em, atualizado_em FROM contexto WHERE categoria = ?', (categoria,)
         )
     else:
-        cur = conn.execute("SELECT chave, valor, categoria, criado_em, atualizado_em FROM contexto")
-    
+        cur = conn.execute('SELECT chave, valor, categoria, criado_em, atualizado_em FROM contexto')
+
     resultados = []
     for row in cur.fetchall():
         try:
             valor = json.loads(row[1])
         except json.JSONDecodeError:
             valor = row[1]
-        resultados.append({
-            "chave": row[0],
-            "valor": valor,
-            "categoria": row[2],
-            "criado_em": row[3],
-            "atualizado_em": row[4]
-        })
+        resultados.append(
+            {'chave': row[0], 'valor': valor, 'categoria': row[2], 'criado_em': row[3], 'atualizado_em': row[4]}
+        )
     return resultados
 
 
@@ -134,226 +131,227 @@ def registrar_interacao(
     conn: sqlite3.Connection,
     prompt: str,
     resposta: str,
-    worker_origem: str = "",
-    perfil_usado: str = "",
-    fontes_contexto: Optional[List[str]] = None,
-    decisao_usuario: Optional[str] = None,
-    feedback_usuario: Optional[str] = None
+    worker_origem: str = '',
+    perfil_usado: str = '',
+    fontes_contexto: list[str] | None = None,
+    decisao_usuario: str | None = None,
+    feedback_usuario: str | None = None,
 ):
     """Registra uma interação completa no histórico."""
     timestamp = datetime.now().isoformat()
-    fontes_str = json.dumps(fontes_contexto) if fontes_contexto else "[]"
-    
-    conn.execute("""
+    fontes_str = json.dumps(fontes_contexto) if fontes_contexto else '[]'
+
+    conn.execute(
+        """
         INSERT INTO historico (timestamp, prompt, resposta, worker_origem, perfil_usado, 
                                fontes_contexto, decisao_usuario, feedback_usuario)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (timestamp, prompt, resposta, worker_origem, perfil_usado, fontes_str, 
-          decisao_usuario, feedback_usuario))
+    """,
+        (timestamp, prompt, resposta, worker_origem, perfil_usado, fontes_str, decisao_usuario, feedback_usuario),
+    )
     conn.commit()
 
 
 def buscar_historico(
-    conn: sqlite3.Connection,
-    termo: Optional[str] = None,
-    limite: int = 50,
-    ordem: str = "DESC"
-) -> List[Dict]:
+    conn: sqlite3.Connection, termo: str | None = None, limite: int = 50, ordem: str = 'DESC'
+) -> list[dict]:
     """Busca no histórico de interações."""
-    query = "SELECT * FROM historico"
+    query = 'SELECT * FROM historico'
     params = []
-    
+
     if termo:
-        query += " WHERE prompt LIKE ? OR resposta LIKE ?"
+        query += ' WHERE prompt LIKE ? OR resposta LIKE ?'
         # Escapa caracteres especiais do LIKE para prevenir bypass
-        termo_safe = termo.replace("%", "\\%").replace("_", "\\_")
-        termo_like = f"%{termo_safe}%"
+        termo_safe = termo.replace('%', '\\%').replace('_', '\\_')
+        termo_like = f'%{termo_safe}%'
         params = [termo_like, termo_like]
-    
+
     # Valida ordem para prevenir SQL injection - whitelist estrita
     # Qualquer valor fora da whitelist é ignorado silenciosamente (fail-safe)
-    ordem_valida = ordem if ordem in ALLOWED_ORDER_DIRECTIONS else "DESC"
-    
-    query += f" ORDER BY timestamp {ordem_valida} LIMIT ?"
+    ordem_valida = ordem if ordem in ALLOWED_ORDER_DIRECTIONS else 'DESC'
+
+    query += f' ORDER BY timestamp {ordem_valida} LIMIT ?'
     params.append(limite)
-    
+
     cur = conn.execute(query, params)
-    colunas = ["id", "timestamp", "prompt", "resposta", "worker_origem", 
-               "perfil_usado", "fontes_contexto", "decisao_usuario", "feedback_usuario"]
-    
+    colunas = [
+        'id',
+        'timestamp',
+        'prompt',
+        'resposta',
+        'worker_origem',
+        'perfil_usado',
+        'fontes_contexto',
+        'decisao_usuario',
+        'feedback_usuario',
+    ]
+
     resultados = []
     for row in cur.fetchall():
         item = dict(zip(colunas, row))
         try:
-            item["fontes_contexto"] = json.loads(item["fontes_contexto"])
+            item['fontes_contexto'] = json.loads(item['fontes_contexto'])
         except (json.JSONDecodeError, TypeError):
-            item["fontes_contexto"] = []
+            item['fontes_contexto'] = []
         resultados.append(item)
-    
+
     return resultados
 
 
 def adicionar_memoria_semantica(
     conn: sqlite3.Connection,
     conteudo: str,
-    resumo: Optional[str] = None,
-    tags: Optional[List[str]] = None,
-    relevancia: int = 1
+    resumo: str | None = None,
+    tags: list[str] | None = None,
+    relevancia: int = 1,
 ):
     """Adiciona conteúdo à memória semântica para recuperação futura."""
     agora = datetime.now().isoformat()
-    tags_str = json.dumps(tags) if tags else "[]"
-    
-    conn.execute("""
+    tags_str = json.dumps(tags) if tags else '[]'
+
+    conn.execute(
+        """
         INSERT INTO memoria_semantica (conteudo, resumo, tags, relevancia, criado_em)
         VALUES (?, ?, ?, ?, ?)
-    """, (conteudo, resumo, tags_str, relevancia, agora))
+    """,
+        (conteudo, resumo, tags_str, relevancia, agora),
+    )
     conn.commit()
 
 
-def buscar_memoria_semantica(
-    conn: sqlite3.Connection,
-    termo: str,
-    limite: int = 10
-) -> List[Dict]:
+def buscar_memoria_semantica(conn: sqlite3.Connection, termo: str, limite: int = 10) -> list[dict]:
     """Busca na memória semântica por termo ou tags."""
     # Escapa caracteres especiais do LIKE para prevenir bypass
-    termo_safe = termo.replace("%", "\\%").replace("_", "\\_")
-    termo_like = f"%{termo_safe}%"
-    cur = conn.execute("""
+    termo_safe = termo.replace('%', '\\%').replace('_', '\\_')
+    termo_like = f'%{termo_safe}%'
+    cur = conn.execute(
+        """
         SELECT id, conteudo, resumo, tags, relevancia, criado_em, ultimo_acesso
         FROM memoria_semantica
         WHERE conteudo LIKE ? OR tags LIKE ?
         ORDER BY relevancia DESC, criado_em DESC
         LIMIT ?
-    """, (termo_like, termo_like, limite))
-    
+    """,
+        (termo_like, termo_like, limite),
+    )
+
     resultados = []
     for row in cur.fetchall():
         try:
             tags = json.loads(row[3])
         except (json.JSONDecodeError, TypeError):
             tags = []
-        resultados.append({
-            "id": row[0],
-            "conteudo": row[1],
-            "resumo": row[2],
-            "tags": tags,
-            "relevancia": row[4],
-            "criado_em": row[5],
-            "ultimo_acesso": row[6]
-        })
-    
+        resultados.append(
+            {
+                'id': row[0],
+                'conteudo': row[1],
+                'resumo': row[2],
+                'tags': tags,
+                'relevancia': row[4],
+                'criado_em': row[5],
+                'ultimo_acesso': row[6],
+            }
+        )
+
     # Atualiza último acesso
     for r in resultados:
         conn.execute(
-            "UPDATE memoria_semantica SET ultimo_acesso = ? WHERE id = ?",
-            (datetime.now().isoformat(), r["id"])
+            'UPDATE memoria_semantica SET ultimo_acesso = ? WHERE id = ?', (datetime.now().isoformat(), r['id'])
         )
     conn.commit()
-    
+
     return resultados
 
 
 def atualizar_relevancia_memoria(conn: sqlite3.Connection, id_memoria: int, delta: int = 1):
     """Aumenta ou diminui a relevância de uma memória."""
-    conn.execute("""
+    conn.execute(
+        """
         UPDATE memoria_semantica 
         SET relevancia = MAX(0, relevancia + ?)
         WHERE id = ?
-    """, (delta, id_memoria))
+    """,
+        (delta, id_memoria),
+    )
     conn.commit()
 
 
 def limpar_historico_antigo(conn: sqlite3.Connection, dias: int = 90):
     """Remove histórico mais antigo que N dias."""
     from datetime import timedelta
+
     limite = (datetime.now() - timedelta(days=dias)).isoformat()
-    conn.execute("DELETE FROM historico WHERE timestamp < ?", (limite,))
+    conn.execute('DELETE FROM historico WHERE timestamp < ?', (limite,))
     conn.commit()
 
 
 class UsuarioMemory:
     """Classe principal para gerenciamento da memória do usuário."""
-    
-    def __init__(self, db_path: Optional[str] = None):
+
+    def __init__(self, db_path: str | None = None):
         self.db_path = db_path or MEMORY_DB
         self.conn = init_memory_db()
-    
+
     def close(self):
         """Fecha a conexão com o banco de dados."""
         if self.conn:
             self.conn.close()
-    
-    def salvar_preferencia(self, chave: str, valor: Any, categoria: str = "preferencias"):
+
+    def salvar_preferencia(self, chave: str, valor: Any, categoria: str = 'preferencias'):
         """Salva uma preferência do usuário."""
         salvar_contexto(self.conn, chave, valor, categoria)
-    
-    def carregar_preferencia(self, chave: str) -> Optional[Any]:
+
+    def carregar_preferencia(self, chave: str) -> Any | None:
         """Carrega uma preferência do usuário."""
         return carregar_contexto(self.conn, chave)
-    
+
     def registrar_decisao(self, prompt: str, resposta_sugerida: str, decisao: str):
         """Registra a decisão final do usuário sobre uma resposta sugerida."""
-        registrar_interacao(
-            self.conn,
-            prompt=prompt,
-            resposta=resposta_sugerida,
-            decisao_usuario=decisao
-        )
-    
-    def aprender_padrao(self, contexto: str, padrao: Dict[str, Any]):
+        registrar_interacao(self.conn, prompt=prompt, resposta=resposta_sugerida, decisao_usuario=decisao)
+
+    def aprender_padrao(self, contexto: str, padrao: dict[str, Any]):
         """Aprende um padrão de trabalho do usuário."""
-        salvar_contexto(self.conn, f"padrao:{contexto}", padrao, "padroes")
-    
-    def carregar_padrao(self, contexto: str) -> Optional[Dict]:
+        salvar_contexto(self.conn, f'padrao:{contexto}', padrao, 'padroes')
+
+    def carregar_padrao(self, contexto: str) -> dict | None:
         """Carrega um padrão de trabalho aprendido."""
-        return carregar_contexto(self.conn, f"padrao:{contexto}")
-    
-    def buscar_contexto_relevante(self, query: str, limite: int = 5) -> List[Dict]:
+        return carregar_contexto(self.conn, f'padrao:{contexto}')
+
+    def buscar_contexto_relevante(self, query: str, limite: int = 5) -> list[dict]:
         """Busca contexto relevante para uma query."""
         resultados = []
-        
+
         # Busca no histórico recente
         historico = buscar_historico(self.conn, termo=query, limite=limite)
         for h in historico:
-            resultados.append({
-                "tipo": "historico",
-                "conteudo": h["resposta"],
-                "timestamp": h["timestamp"]
-            })
-        
+            resultados.append({'tipo': 'historico', 'conteudo': h['resposta'], 'timestamp': h['timestamp']})
+
         # Busca na memória semântica
         memorias = buscar_memoria_semantica(self.conn, termo=query, limite=limite)
         for m in memorias:
-            resultados.append({
-                "tipo": "memoria",
-                "conteudo": m["conteudo"],
-                "resumo": m.get("resumo"),
-                "tags": m.get("tags")
-            })
-        
+            resultados.append(
+                {'tipo': 'memoria', 'conteudo': m['conteudo'], 'resumo': m.get('resumo'), 'tags': m.get('tags')}
+            )
+
         return resultados[:limite]
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     # Teste rápido
     mem = UsuarioMemory()
-    
+
     # Salvar preferência
-    mem.salvar_preferencia("idioma", "pt-BR")
-    mem.salvar_preferencia("tom_respostas", "formal")
-    
+    mem.salvar_preferencia('idioma', 'pt-BR')
+    mem.salvar_preferencia('tom_respostas', 'formal')
+
     # Aprender padrão
-    mem.aprender_padrao("relatorios", {
-        "formato": "markdown",
-        "secoes": ["resumo", "analise", "recomendacoes"],
-        "incluir_fontes": True
-    })
-    
+    mem.aprender_padrao(
+        'relatorios', {'formato': 'markdown', 'secoes': ['resumo', 'analise', 'recomendacoes'], 'incluir_fontes': True}
+    )
+
     # Buscar contexto
-    ctx = mem.buscar_contexto_relevante("relatório")
-    print(f"Contexto encontrado: {ctx}")
-    
+    ctx = mem.buscar_contexto_relevante('relatório')
+    print(f'Contexto encontrado: {ctx}')
+
     mem.close()
-    print("Memória do usuário inicializada com sucesso!")
+    print('Memória do usuário inicializada com sucesso!')

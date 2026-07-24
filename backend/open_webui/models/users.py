@@ -4,22 +4,20 @@ from __future__ import annotations
 
 import datetime
 import time
-from typing import Optional
+
 from open_webui.env import DATABASE_USER_ACTIVE_STATUS_UPDATE_INTERVAL
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.utils.misc import throttle
 from open_webui.utils.validate import validate_profile_image_url
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import (
     JSON,
     BigInteger,
-    Boolean,
     Column,
     Date,
     String,
     Text,
     case,
-    cast,
     delete,
     exists,
     func,
@@ -121,7 +119,7 @@ class UserModel(BaseModel):
     # validation schema logic
     # --- model validators ---
     @model_validator(mode='after')
-    def _ensure_profile_image(self) -> 'UserModel':
+    def _ensure_profile_image(self) -> UserModel:
         """Assign a generated avatar when no profile image is provided."""
         self.profile_image_url = self.profile_image_url or _DEFAULT_PROFILE_IMAGE_URL.format(user_id=self.id)
         return self

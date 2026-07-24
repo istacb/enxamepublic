@@ -1,5 +1,4 @@
 import logging
-from typing import List, Optional
 
 import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
@@ -11,9 +10,9 @@ def search_youcom(
     api_key: str,
     query: str,
     count: int,
-    filter_list: Optional[List[str]] = None,
+    filter_list: list[str] | None = None,
     language: str = 'EN',
-) -> List[SearchResult]:
+) -> list[SearchResult]:
     """Search using You.com's YDC Index API and return the results as a list of SearchResult objects.
 
     Args:

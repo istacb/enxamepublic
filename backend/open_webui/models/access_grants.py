@@ -1,12 +1,10 @@
 import logging
 import time
 import uuid
-from typing import Optional
 
 from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import BigInteger, Column, Text, UniqueConstraint, and_, delete, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -78,7 +76,7 @@ class AccessGrantResponse(BaseModel):
 def access_control_to_grants(
     resource_type: str,
     resource_id: str,
-    access_control: Optional[dict],
+    access_control: dict | None,
 ) -> list[dict]:
     """
     Convert an old-style access_control JSON dict to a flat list of grant dicts.
@@ -142,7 +140,7 @@ def access_control_to_grants(
     return grants
 
 
-def normalize_access_grants(access_grants: Optional[list]) -> list[dict]:
+def normalize_access_grants(access_grants: list | None) -> list[dict]:
     """
     Normalize direct access_grants payloads from API forms.
 
@@ -181,7 +179,7 @@ def normalize_access_grants(access_grants: Optional[list]) -> list[dict]:
     return list(deduped.values())
 
 
-def has_public_read_access_grant(access_grants: Optional[list]) -> bool:
+def has_public_read_access_grant(access_grants: list | None) -> bool:
     """
     Returns True when a direct grant list includes wildcard public-read.
     """
@@ -191,7 +189,7 @@ def has_public_read_access_grant(access_grants: Optional[list]) -> bool:
     return False
 
 
-def has_public_write_access_grant(access_grants: Optional[list]) -> bool:
+def has_public_write_access_grant(access_grants: list | None) -> bool:
     """
     Returns True when a direct grant list includes wildcard public-write.
     """
@@ -201,7 +199,7 @@ def has_public_write_access_grant(access_grants: Optional[list]) -> bool:
     return False
 
 
-def has_user_access_grant(access_grants: Optional[list]) -> bool:
+def has_user_access_grant(access_grants: list | None) -> bool:
     """
     Returns True when a direct grant list includes any non-wildcard user grant.
     """
@@ -211,7 +209,7 @@ def has_user_access_grant(access_grants: Optional[list]) -> bool:
     return False
 
 
-def strip_user_access_grants(access_grants: Optional[list]) -> list:
+def strip_user_access_grants(access_grants: list | None) -> list:
     """
     Remove all non-wildcard user grants from the list.
     Keeps group grants and the public wildcard (user:*) intact.
@@ -229,7 +227,7 @@ def strip_user_access_grants(access_grants: Optional[list]) -> list:
     ]
 
 
-def grants_to_access_control(grants: list) -> Optional[dict]:
+def grants_to_access_control(grants: list) -> dict | None:
     """
     Convert a list of grant objects (AccessGrantModel or AccessGrantResponse)
     back to the old-style access_control JSON dict for backward compatibility.
@@ -287,8 +285,8 @@ class AccessGrantsTable:
         principal_type: str,
         principal_id: str,
         permission: str,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[AccessGrantModel]:
+        db: AsyncSession | None = None,
+    ) -> AccessGrantModel | None:
         """Add a single access grant. Idempotent (ignores duplicates)."""
         async with get_async_db_context(db) as db:
             # Check for existing grant
@@ -326,7 +324,7 @@ class AccessGrantsTable:
         principal_type: str,
         principal_id: str,
         permission: str,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> bool:
         """Remove a single access grant."""
         async with get_async_db_context(db) as db:
@@ -346,7 +344,7 @@ class AccessGrantsTable:
         self,
         resource_type: str,
         resource_id: str,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> int:
         """Remove all access grants for a resource."""
         async with get_async_db_context(db) as db:
@@ -363,8 +361,8 @@ class AccessGrantsTable:
         self,
         resource_type: str,
         resource_id: str,
-        access_control: Optional[dict],
-        db: Optional[AsyncSession] = None,
+        access_control: dict | None,
+        db: AsyncSession | None = None,
     ) -> list[AccessGrantModel]:
         """
         Replace all grants for a resource from an access_control JSON dict.
@@ -401,8 +399,8 @@ class AccessGrantsTable:
         self,
         resource_type: str,
         resource_id: str,
-        access_grants: Optional[list],
-        db: Optional[AsyncSession] = None,
+        access_grants: list | None,
+        db: AsyncSession | None = None,
     ) -> list[AccessGrantModel]:
         """
         Replace all grants for a resource from a direct access_grants list.
@@ -438,8 +436,8 @@ class AccessGrantsTable:
         self,
         resource_type: str,
         resource_id: str,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[dict]:
+        db: AsyncSession | None = None,
+    ) -> dict | None:
         """
         Reconstruct the old-style access_control JSON dict from grants.
         For backward compat with the frontend.
@@ -459,7 +457,7 @@ class AccessGrantsTable:
         self,
         resource_type: str,
         resource_id: str,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[AccessGrantModel]:
         """Get all grants for a specific resource."""
         async with get_async_db_context(db) as db:
@@ -476,7 +474,7 @@ class AccessGrantsTable:
         self,
         resource_type: str,
         resource_ids: list[str],
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> dict[str, list[AccessGrantModel]]:
         """Batch-fetch grants for multiple resources. Returns {resource_id: [grants]}."""
         if not resource_ids:
@@ -500,8 +498,8 @@ class AccessGrantsTable:
         resource_type: str,
         resource_id: str,
         permission: str = 'read',
-        user_group_ids: Optional[set[str]] = None,
-        db: Optional[AsyncSession] = None,
+        user_group_ids: set[str] | None = None,
+        db: AsyncSession | None = None,
     ) -> bool:
         """
         Check if a user has the specified permission on a resource.
@@ -560,8 +558,8 @@ class AccessGrantsTable:
         resource_type: str,
         resource_ids: list[str],
         permission: str = 'read',
-        user_group_ids: Optional[set[str]] = None,
-        db: Optional[AsyncSession] = None,
+        user_group_ids: set[str] | None = None,
+        db: AsyncSession | None = None,
     ) -> set[str]:
         """
         Batch check: return the subset of resource_ids that the user can access.
@@ -615,14 +613,14 @@ class AccessGrantsTable:
         resource_type: str,
         resource_id: str,
         permission: str = 'read',
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list:
         """
         Get all users who have the specified permission on a resource.
         Returns a list of UserModel instances.
         """
         from open_webui.models.groups import Groups
-        from open_webui.models.users import UserModel, Users
+        from open_webui.models.users import Users
 
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -717,7 +715,6 @@ class AccessGrantsTable:
 
         # LEFT JOIN access_grant and filter
         # We use a subquery approach to avoid duplicates from multiple matching grants
-        from sqlalchemy import exists as sa_exists
 
         grant_exists = (
             select(AccessGrant.id)
@@ -782,8 +779,6 @@ class AccessGrantsTable:
         """
         group_ids = filter.get('group_ids', [])
         user_id = filter.get('user_id')
-
-        from sqlalchemy import exists as sa_exists
 
         # Has read grant (not public)
         read_grant_exists = (

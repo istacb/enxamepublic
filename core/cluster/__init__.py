@@ -5,11 +5,11 @@ from .election import ClusterElection, ElectionResult, NodeBenchmark
 from .local_search import LocalSearchEngine, LocalSearchResult
 
 __all__ = [
-    "HardwareBenchmark",
-    "HardwareProfile",
-    "NodeBenchmark",
-    "ElectionResult",
-    "ClusterElection",
-    "LocalSearchEngine",
-    "LocalSearchResult",
+    'HardwareBenchmark',
+    'HardwareProfile',
+    'NodeBenchmark',
+    'ElectionResult',
+    'ClusterElection',
+    'LocalSearchEngine',
+    'LocalSearchResult',
 ]

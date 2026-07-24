@@ -24,10 +24,10 @@ class EXPServerAdapter:
             while True:
                 raw = await websocket.receive_text()
                 data: dict[str, Any] = json.loads(raw)
-                signature = data.get("signature")
-                signable = {k: v for k, v in data.items() if k != "signature"}
+                signature = data.get('signature')
+                signable = {k: v for k, v in data.items() if k != 'signature'}
                 if not signature or not self.security.verify_payload(signable, signature):
-                    await websocket.send_json({"type": "ERROR", "payload": {"code": "BAD_SIGNATURE"}})
+                    await websocket.send_json({'type': 'ERROR', 'payload': {'code': 'BAD_SIGNATURE'}})
                     continue
                 envelope = EXPEnvelope.model_validate(data)
                 await handler(envelope, websocket)

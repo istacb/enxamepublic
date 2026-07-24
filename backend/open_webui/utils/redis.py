@@ -14,7 +14,6 @@ from typing import Any
 from urllib.parse import ParseResult, urlparse
 
 import redis as _redis_sync
-
 from open_webui.env import (
     REDIS_CLUSTER,
     REDIS_HEALTH_CHECK_INTERVAL,

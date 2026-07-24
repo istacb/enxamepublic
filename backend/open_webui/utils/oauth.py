@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Literal, Optional
+from typing import Literal
 
 import aiohttp
 from authlib.integrations.starlette_client import OAuth
@@ -65,7 +65,6 @@ from open_webui.config import (
     WEBHOOK_URL,
 )
 from open_webui.constants import ERROR_MESSAGES
-from open_webui.events import EVENTS, publish_event
 from open_webui.env import (
     AIOHTTP_CLIENT_ALLOW_REDIRECTS,
     AIOHTTP_CLIENT_SESSION_SSL,
@@ -77,6 +76,7 @@ from open_webui.env import (
     WEBUI_AUTH_COOKIE_SAME_SITE,
     WEBUI_AUTH_COOKIE_SECURE,
 )
+from open_webui.events import EVENTS, publish_event
 from open_webui.models.auths import Auths
 from open_webui.models.config import Config
 from open_webui.models.groups import GroupForm, GroupModel, Groups, GroupUpdateForm
@@ -99,8 +99,8 @@ OAuthResourceParameterMode = Literal['auto', 'include', 'omit']
 
 
 class OAuthClientInformationFull(OAuthClientMetadata):
-    issuer: Optional[str] = None  # URL of the OAuth server that issued this client
-    resource: Optional[str] = None  # RFC 8707 resource indicator for JWT audience
+    issuer: str | None = None  # URL of the OAuth server that issued this client
+    resource: str | None = None  # RFC 8707 resource indicator for JWT audience
     oauth_resource_parameter: OAuthResourceParameterMode = 'auto'
 
     client_id: str
@@ -108,7 +108,7 @@ class OAuthClientInformationFull(OAuthClientMetadata):
     client_id_issued_at: int | None = None
     client_secret_expires_at: int | None = None
 
-    server_metadata: Optional[OAuthMetadata] = None  # Fetched from the OAuth server
+    server_metadata: OAuthMetadata | None = None  # Fetched from the OAuth server
 
 
 from open_webui.env import GLOBAL_LOG_LEVEL
@@ -475,7 +475,7 @@ async def get_oauth_client_info_with_dynamic_client_registration(
     request,
     client_id: str,
     oauth_server_url: str,
-    oauth_server_key: Optional[str] = None,
+    oauth_server_key: str | None = None,
     oauth_scope: str | None = None,
 ) -> OAuthClientInformationFull:
     try:
@@ -581,7 +581,7 @@ async def get_oauth_client_info_with_dynamic_client_registration(
                         log.error(
                             f'Dynamic client registration failed at {registration_url}: {oauth_client_registration_response.status} - {error_text}'
                         )
-                    except Exception as e:
+                    except Exception:
                         pass
 
                     log.error(f'Error parsing client registration response: {e}')

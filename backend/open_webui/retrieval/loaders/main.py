@@ -14,7 +14,6 @@ from langchain_community.document_loaders import (
     OutlookMessageLoader,
     PyPDFLoader,
     TextLoader,
-    YoutubeLoader,
 )
 from langchain_core.documents import Document
 from open_webui.env import (

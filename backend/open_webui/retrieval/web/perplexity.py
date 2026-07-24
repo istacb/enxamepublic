@@ -1,5 +1,5 @@
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 import requests
 from open_webui.env import VERSION
@@ -22,7 +22,7 @@ def search_perplexity(
     api_key: str,
     query: str,
     count: int,
-    filter_list: Optional[list[str]] = None,
+    filter_list: list[str] | None = None,
     model: MODELS = 'sonar',
     search_context_usage: SEARCH_CONTEXT_USAGE_LEVELS = 'medium',
 ) -> list[SearchResult]:

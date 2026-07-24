@@ -5,17 +5,11 @@ import socket
 import ssl
 import urllib.parse
 import urllib.request
+from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import datetime, time, timedelta
 from typing import (
     Any,
-    AsyncIterator,
-    Dict,
-    Iterator,
-    List,
     Literal,
-    Optional,
-    Sequence,
-    Union,
 )
 
 import aiohttp
@@ -24,7 +18,6 @@ import certifi
 import urllib3.connection
 import urllib3.connectionpool
 import validators
-from requests.adapters import HTTPAdapter
 from fastapi.concurrency import run_in_threadpool
 from langchain_community.document_loaders import PlaywrightURLLoader, WebBaseLoader
 from langchain_community.document_loaders.base import BaseLoader
@@ -59,6 +52,7 @@ from open_webui.retrieval.loaders.microsoft_web_iq import MicrosoftWebIQLoader
 from open_webui.retrieval.loaders.tavily import TavilyLoader
 from open_webui.retrieval.web.firecrawl import scrape_firecrawl_url
 from open_webui.utils.misc import is_host_allowed
+from requests.adapters import HTTPAdapter
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +68,7 @@ def resolve_hostname(hostname):
     return ipv4_addresses, ipv6_addresses
 
 
-def validate_url(url: Union[str, Sequence[str]]):
+def validate_url(url: str | Sequence[str]):
     if isinstance(url, str):
         if isinstance(validators.url(url), validators.ValidationError):
             raise ValueError(ERROR_MESSAGES.INVALID_URL)
@@ -295,14 +289,14 @@ class SafeFireCrawlLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
         web_paths,
         verify_ssl: bool = True,
         trust_env: bool = False,
-        requests_per_second: Optional[float] = None,
+        requests_per_second: float | None = None,
         continue_on_failure: bool = True,
-        api_key: Optional[str] = None,
-        api_url: Optional[str] = None,
-        timeout: Optional[int] = None,
+        api_key: str | None = None,
+        api_url: str | None = None,
+        timeout: int | None = None,
         mode: Literal['crawl', 'scrape', 'map'] = 'scrape',
-        proxy: Optional[Dict[str, str]] = None,
-        params: Optional[Dict] = None,
+        proxy: dict[str, str] | None = None,
+        params: dict | None = None,
     ):
         proxy_server = proxy.get('server') if proxy else None
         if trust_env and not proxy_server:
@@ -370,15 +364,15 @@ class SafeFireCrawlLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
 class SafeTavilyLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
     def __init__(
         self,
-        web_paths: Union[str, List[str]],
+        web_paths: str | list[str],
         api_base_url: str,
         api_key: str,
         extract_depth: Literal['basic', 'advanced'] = 'basic',
         continue_on_failure: bool = True,
-        requests_per_second: Optional[float] = None,
+        requests_per_second: float | None = None,
         verify_ssl: bool = True,
         trust_env: bool = False,
-        proxy: Optional[Dict[str, str]] = None,
+        proxy: dict[str, str] | None = None,
     ):
         """Initialize SafeTavilyLoader with rate limiting and SSL verification support.
 
@@ -484,14 +478,14 @@ class SafeTavilyLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
 class SafeMicrosoftWebIQLoader(BaseLoader, RateLimitMixin, URLProcessingMixin):
     def __init__(
         self,
-        web_paths: Union[str, List[str]],
+        web_paths: str | list[str],
         api_key: str,
         language: str = 'en',
         verify_ssl: bool = True,
         trust_env: bool = False,
-        requests_per_second: Optional[float] = None,
+        requests_per_second: float | None = None,
         continue_on_failure: bool = True,
-        timeout: Optional[int] = None,
+        timeout: int | None = None,
     ):
         self.web_paths = web_paths if isinstance(web_paths, list) else [web_paths]
         self.api_key = api_key
@@ -559,16 +553,16 @@ class SafePlaywrightURLLoader(PlaywrightURLLoader, RateLimitMixin, URLProcessing
 
     def __init__(
         self,
-        web_paths: List[str],
+        web_paths: list[str],
         verify_ssl: bool = True,
         trust_env: bool = False,
-        requests_per_second: Optional[float] = None,
+        requests_per_second: float | None = None,
         continue_on_failure: bool = True,
         headless: bool = True,
-        remove_selectors: Optional[List[str]] = None,
-        proxy: Optional[Dict[str, str]] = None,
-        playwright_ws_url: Optional[str] = None,
-        playwright_timeout: Optional[int] = 10000,
+        remove_selectors: list[str] | None = None,
+        proxy: dict[str, str] | None = None,
+        playwright_ws_url: str | None = None,
+        playwright_timeout: int | None = 10000,
     ):
         """Initialize with additional safety parameters and remote browser support."""
 
@@ -754,7 +748,7 @@ class SafeWebBaseLoader(WebBaseLoader):
         async with aiohttp.ClientSession(trust_env=self.trust_env, connector=connector) as session:
             for i in range(retries):
                 try:
-                    kwargs: Dict = dict(
+                    kwargs: dict = dict(
                         headers=self.session.headers,
                         cookies=self.session.cookies.get_dict(),
                     )
@@ -778,7 +772,7 @@ class SafeWebBaseLoader(WebBaseLoader):
                         await asyncio.sleep(cooldown * backoff**i)
         raise ValueError('retry count exceeded')
 
-    def _unpack_fetch_results(self, results: Any, urls: List[str], parser: Union[str, None] = None) -> List[Any]:
+    def _unpack_fetch_results(self, results: Any, urls: list[str], parser: str | None = None) -> list[Any]:
         """Unpack fetch results into BeautifulSoup objects."""
         from bs4 import BeautifulSoup
 
@@ -794,7 +788,7 @@ class SafeWebBaseLoader(WebBaseLoader):
             final_results.append(BeautifulSoup(result, parser, **self.bs_kwargs))
         return final_results
 
-    async def ascrape_all(self, urls: List[str], parser: Union[str, None] = None) -> List[Any]:
+    async def ascrape_all(self, urls: list[str], parser: str | None = None) -> list[Any]:
         """Async fetch all urls, then return soups for all results."""
         results = await self.fetch_all(urls)
         return self._unpack_fetch_results(results, urls, parser=parser)
@@ -834,7 +828,7 @@ class SafeWebBaseLoader(WebBaseLoader):
 
 
 def get_web_loader(
-    urls: Union[str, Sequence[str]],
+    urls: str | Sequence[str],
     verify_ssl: bool = True,
     requests_per_second: int = 2,
     trust_env: bool = False,

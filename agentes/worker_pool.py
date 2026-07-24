@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -48,12 +48,12 @@ class WorkerPool:
         current = self.active + queued
         utilization = (current / total_capacity) if total_capacity > 0 else 0.0
         return {
-            "workers": self.workers,
-            "active_tasks": self.active,
-            "queue_size": queued,
-            "queue_max": self.queue.maxsize,
-            "utilization": round(utilization, 4),
-            "available_slots": max(0, total_capacity - current),
+            'workers': self.workers,
+            'active_tasks': self.active,
+            'queue_size': queued,
+            'queue_max': self.queue.maxsize,
+            'utilization': round(utilization, 4),
+            'available_slots': max(0, total_capacity - current),
         }
 
     async def _worker_loop(self, idx: int, handler) -> None:
@@ -73,4 +73,4 @@ class WorkerPool:
 
 
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

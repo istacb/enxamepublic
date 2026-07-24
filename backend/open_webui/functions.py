@@ -3,23 +3,15 @@ import inspect
 import json
 import logging
 import sys
-from typing import AsyncGenerator, Generator, Iterator
+from collections.abc import AsyncGenerator, Generator, Iterator
 
 from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
     Request,
-    UploadFile,
-    status,
 )
 from pydantic import BaseModel
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import StreamingResponse
 
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
-from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import BYPASS_MODEL_ACCESS_CONTROL, GLOBAL_LOG_LEVEL
 from open_webui.models.functions import Functions
 from open_webui.models.models import Models
@@ -30,11 +22,8 @@ from open_webui.socket.main import (
 )
 from open_webui.utils.access_control import check_model_access
 from open_webui.utils.misc import (
-    add_or_update_system_message,
-    get_last_user_message,
     openai_chat_chunk_message_template,
     openai_chat_completion_message_template,
-    prepend_to_first_user_message_content,
 )
 from open_webui.utils.payload import (
     apply_model_params_to_body_openai,
@@ -42,7 +31,6 @@ from open_webui.utils.payload import (
 )
 from open_webui.utils.plugin import (
     get_function_module_from_cache,
-    load_function_module_by_id,
 )
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)

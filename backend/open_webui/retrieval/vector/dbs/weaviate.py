@@ -4,7 +4,7 @@ NOTE: This vector database integration is community-supported and maintained on 
 
 import re
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import weaviate
 from open_webui.config import (
@@ -118,7 +118,7 @@ class WeaviateClient(VectorDBBase):
             ],
         )
 
-    def insert(self, collection_name: str, items: List[VectorItem]) -> None:
+    def insert(self, collection_name: str, items: list[VectorItem]) -> None:
         sane_collection_name = self._sanitize_collection_name(collection_name)
         if not self.client.collections.exists(sane_collection_name):
             self._create_collection(sane_collection_name)
@@ -137,7 +137,7 @@ class WeaviateClient(VectorDBBase):
 
                 batch.add_object(properties=properties, uuid=item_uuid, vector=item['vector'])
 
-    def upsert(self, collection_name: str, items: List[VectorItem]) -> None:
+    def upsert(self, collection_name: str, items: list[VectorItem]) -> None:
         sane_collection_name = self._sanitize_collection_name(collection_name)
         if not self.client.collections.exists(sane_collection_name):
             self._create_collection(sane_collection_name)
@@ -159,10 +159,10 @@ class WeaviateClient(VectorDBBase):
     def search(
         self,
         collection_name: str,
-        vectors: List[List[Union[float, int]]],
-        filter: Optional[dict] = None,
+        vectors: list[list[float | int]],
+        filter: dict | None = None,
         limit: int = 10,
-    ) -> Optional[SearchResult]:
+    ) -> SearchResult | None:
         sane_collection_name = self._sanitize_collection_name(collection_name)
         if not self.client.collections.exists(sane_collection_name):
             return None
@@ -220,7 +220,7 @@ class WeaviateClient(VectorDBBase):
             }
         )
 
-    def query(self, collection_name: str, filter: Dict, limit: Optional[int] = None) -> Optional[GetResult]:
+    def query(self, collection_name: str, filter: dict, limit: int | None = None) -> GetResult | None:
         sane_collection_name = self._sanitize_collection_name(collection_name)
         if not self.client.collections.exists(sane_collection_name):
             return None
@@ -259,7 +259,7 @@ class WeaviateClient(VectorDBBase):
         except Exception:
             return None
 
-    def get(self, collection_name: str) -> Optional[GetResult]:
+    def get(self, collection_name: str) -> GetResult | None:
         sane_collection_name = self._sanitize_collection_name(collection_name)
         if not self.client.collections.exists(sane_collection_name):
             return None
@@ -290,8 +290,8 @@ class WeaviateClient(VectorDBBase):
     def delete(
         self,
         collection_name: str,
-        ids: Optional[List[str]] = None,
-        filter: Optional[Dict] = None,
+        ids: list[str] | None = None,
+        filter: dict | None = None,
     ) -> None:
         sane_collection_name = self._sanitize_collection_name(collection_name)
         if not self.client.collections.exists(sane_collection_name):

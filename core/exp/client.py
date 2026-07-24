@@ -36,8 +36,8 @@ class EXPWebSocketClient:
                 await self.ensure_connection()
                 raw = await self._ws.recv()
                 data = json.loads(raw)
-                signature = data.get("signature")
-                payload = {k: v for k, v in data.items() if k != "signature"}
+                signature = data.get('signature')
+                payload = {k: v for k, v in data.items() if k != 'signature'}
                 if not signature or not self.security.verify_payload(payload, signature):
                     continue
                 yield EXPEnvelope.model_validate(data)

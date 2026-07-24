@@ -2,4 +2,4 @@
 
 from .base import SpecialtyPlugin
 
-__all__ = ["SpecialtyPlugin"]
+__all__ = ['SpecialtyPlugin']

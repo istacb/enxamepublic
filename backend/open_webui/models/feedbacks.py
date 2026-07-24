@@ -1,12 +1,11 @@
 import logging
 import time
 import uuid
-from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
-from open_webui.models.users import User, UserModel
+from open_webui.internal.db import Base, get_async_db_context
+from open_webui.models.users import User
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import JSON, BigInteger, Boolean, Column, Text, delete, func, select
+from sqlalchemy import JSON, BigInteger, Column, Text, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -35,9 +34,9 @@ class FeedbackModel(BaseModel):
     user_id: str
     version: int
     type: str
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
-    snapshot: Optional[dict] = None
+    data: dict | None = None
+    meta: dict | None = None
+    snapshot: dict | None = None
     created_at: int
     updated_at: int
 
@@ -54,8 +53,8 @@ class FeedbackResponse(BaseModel):
     user_id: str
     version: int
     type: str
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
+    data: dict | None = None
+    meta: dict | None = None
     created_at: int
     updated_at: int
 
@@ -71,36 +70,36 @@ class LeaderboardFeedbackData(BaseModel):
     """Minimal feedback data for leaderboard computation (excludes snapshot/meta)."""
 
     id: str
-    data: Optional[dict] = None
+    data: dict | None = None
 
 
 class RatingData(BaseModel):
-    rating: Optional[str | int] = None
-    model_id: Optional[str] = None
-    sibling_model_ids: Optional[list[str]] = None
-    reason: Optional[str] = None
-    comment: Optional[str] = None
+    rating: str | int | None = None
+    model_id: str | None = None
+    sibling_model_ids: list[str] | None = None
+    reason: str | None = None
+    comment: str | None = None
     model_config = ConfigDict(extra='allow', protected_namespaces=())
 
 
 class MetaData(BaseModel):
-    arena: Optional[bool] = None
-    chat_id: Optional[str] = None
-    message_id: Optional[str] = None
-    tags: Optional[list[str]] = None
+    arena: bool | None = None
+    chat_id: str | None = None
+    message_id: str | None = None
+    tags: list[str] | None = None
     model_config = ConfigDict(extra='allow')
 
 
 class SnapshotData(BaseModel):
-    chat: Optional[dict] = None
+    chat: dict | None = None
     model_config = ConfigDict(extra='allow')
 
 
 class FeedbackForm(BaseModel):
     type: str
-    data: Optional[RatingData] = None
-    meta: Optional[dict] = None
-    snapshot: Optional[SnapshotData] = None
+    data: RatingData | None = None
+    meta: dict | None = None
+    snapshot: SnapshotData | None = None
     # ignore: drop client-supplied id/user_id/version/timestamps at parse time.
     model_config = ConfigDict(extra='ignore')
 
@@ -119,7 +118,7 @@ class UserResponse(BaseModel):
 
 
 class FeedbackUserResponse(FeedbackResponse):
-    user: Optional[UserResponse] = None
+    user: UserResponse | None = None
 
 
 class FeedbackListResponse(BaseModel):
@@ -146,8 +145,8 @@ class ModelHistoryResponse(BaseModel):
 
 class FeedbackTable:
     async def insert_new_feedback(
-        self, user_id: str, form_data: FeedbackForm, db: Optional[AsyncSession] = None
-    ) -> Optional[FeedbackModel]:
+        self, user_id: str, form_data: FeedbackForm, db: AsyncSession | None = None
+    ) -> FeedbackModel | None:
         async with get_async_db_context(db) as db:
             id = str(uuid.uuid4())
             # Spread form_data first so server-controlled fields win on duplicate keys.
@@ -174,7 +173,7 @@ class FeedbackTable:
                 log.exception(f'Error creating a new feedback: {e}')
                 return None
 
-    async def get_feedback_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[FeedbackModel]:
+    async def get_feedback_by_id(self, id: str, db: AsyncSession | None = None) -> FeedbackModel | None:
         try:
             async with get_async_db_context(db) as db:
                 result = await db.execute(select(Feedback).filter_by(id=id))
@@ -186,8 +185,8 @@ class FeedbackTable:
             return None
 
     async def get_feedback_by_id_and_user_id(
-        self, id: str, user_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[FeedbackModel]:
+        self, id: str, user_id: str, db: AsyncSession | None = None
+    ) -> FeedbackModel | None:
         try:
             async with get_async_db_context(db) as db:
                 result = await db.execute(select(Feedback).filter_by(id=id, user_id=user_id))
@@ -198,7 +197,7 @@ class FeedbackTable:
         except Exception:
             return None
 
-    async def get_feedbacks_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> list[FeedbackModel]:
+    async def get_feedbacks_by_chat_id(self, chat_id: str, db: AsyncSession | None = None) -> list[FeedbackModel]:
         """Get all feedbacks for a specific chat."""
         try:
             async with get_async_db_context(db) as db:
@@ -218,7 +217,7 @@ class FeedbackTable:
         filter: dict = {},
         skip: int = 0,
         limit: int = 30,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> FeedbackListResponse:
         async with get_async_db_context(db) as db:
             stmt = select(Feedback, User).join(User, Feedback.user_id == User.id)
@@ -279,12 +278,12 @@ class FeedbackTable:
 
             return FeedbackListResponse(items=feedbacks, total=total)
 
-    async def get_all_feedbacks(self, db: Optional[AsyncSession] = None) -> list[FeedbackModel]:
+    async def get_all_feedbacks(self, db: AsyncSession | None = None) -> list[FeedbackModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback).order_by(Feedback.updated_at.desc()))
             return [FeedbackModel.model_validate(feedback) for feedback in result.scalars().all()]
 
-    async def get_all_feedback_ids(self, db: Optional[AsyncSession] = None) -> list[FeedbackIdResponse]:
+    async def get_all_feedback_ids(self, db: AsyncSession | None = None) -> list[FeedbackIdResponse]:
         async with get_async_db_context(db) as db:
             result = await db.execute(
                 select(Feedback.id, Feedback.user_id, Feedback.created_at, Feedback.updated_at).order_by(
@@ -301,7 +300,7 @@ class FeedbackTable:
                 for row in result.all()
             ]
 
-    async def get_distinct_model_ids(self, db: Optional[AsyncSession] = None) -> list[str]:
+    async def get_distinct_model_ids(self, db: AsyncSession | None = None) -> list[str]:
         """Get distinct model_ids from feedback data for filter dropdowns."""
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -312,14 +311,14 @@ class FeedbackTable:
             rows = result.all()
             return sorted([row[0] for row in rows if row[0]])
 
-    async def get_feedbacks_for_leaderboard(self, db: Optional[AsyncSession] = None) -> list[LeaderboardFeedbackData]:
+    async def get_feedbacks_for_leaderboard(self, db: AsyncSession | None = None) -> list[LeaderboardFeedbackData]:
         """Fetch only id and data for leaderboard computation (excludes snapshot/meta)."""
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback.id, Feedback.data))
             return [LeaderboardFeedbackData(id=row.id, data=row.data) for row in result.all()]
 
     async def get_model_evaluation_history(
-        self, model_id: str, days: int = 30, db: Optional[AsyncSession] = None
+        self, model_id: str, days: int = 30, db: AsyncSession | None = None
     ) -> list[ModelHistoryEntry]:
         """
         Get daily wins/losses for a specific model over the past N days.
@@ -387,8 +386,8 @@ class FeedbackTable:
     async def get_model_feedback_counts_by_day(
         self,
         model_id: str,
-        start_date: Optional[int] = None,
-        db: Optional[AsyncSession] = None,
+        start_date: int | None = None,
+        db: AsyncSession | None = None,
     ) -> list[ModelHistoryCounts]:
         """Get aggregated feedback counts per day for a model, preserving all matching days."""
         from collections import defaultdict
@@ -423,7 +422,7 @@ class FeedbackTable:
             for date_str, counts in sorted(daily_counts.items())
         ]
 
-    async def get_feedbacks_by_type(self, type: str, db: Optional[AsyncSession] = None) -> list[FeedbackModel]:
+    async def get_feedbacks_by_type(self, type: str, db: AsyncSession | None = None) -> list[FeedbackModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback).filter_by(type=type).order_by(Feedback.updated_at.desc()))
             return [FeedbackModel.model_validate(feedback) for feedback in result.scalars().all()]
@@ -433,7 +432,7 @@ class FeedbackTable:
         user_id: str,
         skip: int = 0,
         limit: int = 30,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> FeedbackListResponse:
         async with get_async_db_context(db) as db:
             stmt = (
@@ -463,8 +462,8 @@ class FeedbackTable:
             return FeedbackListResponse(items=feedbacks, total=total)
 
     async def update_feedback_by_id(
-        self, id: str, form_data: FeedbackForm, db: Optional[AsyncSession] = None
-    ) -> Optional[FeedbackModel]:
+        self, id: str, form_data: FeedbackForm, db: AsyncSession | None = None
+    ) -> FeedbackModel | None:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback).filter_by(id=id))
             feedback = result.scalars().first()
@@ -488,8 +487,8 @@ class FeedbackTable:
         id: str,
         user_id: str,
         form_data: FeedbackForm,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[FeedbackModel]:
+        db: AsyncSession | None = None,
+    ) -> FeedbackModel | None:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback).filter_by(id=id, user_id=user_id))
             feedback = result.scalars().first()
@@ -508,7 +507,7 @@ class FeedbackTable:
             await db.commit()
             return FeedbackModel.model_validate(feedback)
 
-    async def delete_feedback_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_feedback_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback).filter_by(id=id))
             feedback = result.scalars().first()
@@ -518,7 +517,7 @@ class FeedbackTable:
             await db.commit()
             return True
 
-    async def delete_feedback_by_id_and_user_id(self, id: str, user_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_feedback_by_id_and_user_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Feedback).filter_by(id=id, user_id=user_id))
             feedback = result.scalars().first()
@@ -528,13 +527,13 @@ class FeedbackTable:
             await db.commit()
             return True
 
-    async def delete_feedbacks_by_user_id(self, user_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_feedbacks_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             result = await db.execute(delete(Feedback).filter_by(user_id=user_id))
             await db.commit()
             return result.rowcount > 0
 
-    async def delete_all_feedbacks(self, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_all_feedbacks(self, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             result = await db.execute(delete(Feedback))
             await db.commit()

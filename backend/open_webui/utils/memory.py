@@ -7,7 +7,6 @@ import re
 from typing import Any
 
 from fastapi import HTTPException
-
 from open_webui.models.config import Config
 from open_webui.models.memories import Memories
 from open_webui.utils.misc import add_or_update_system_message, get_content_from_message

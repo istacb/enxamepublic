@@ -1,6 +1,4 @@
 import logging
-from typing import List, Optional, Tuple
-from urllib.parse import quote
 
 import requests
 from open_webui.env import ENABLE_FORWARD_USER_INFO_HEADERS, REQUESTS_VERIFY
@@ -16,14 +14,14 @@ class ExternalReranker(BaseReranker):
         api_key: str,
         url: str = 'http://localhost:8080/v1/rerank',
         model: str = 'reranker',
-        timeout: Optional[int] = None,
+        timeout: int | None = None,
     ):
         self.api_key = api_key
         self.url = url
         self.model = model
         self.timeout = timeout
 
-    def predict(self, sentences: List[Tuple[str, str]], user=None) -> Optional[List[float]]:
+    def predict(self, sentences: list[tuple[str, str]], user=None) -> list[float] | None:
         query = sentences[0][0]
         docs = [i[1] for i in sentences]
 

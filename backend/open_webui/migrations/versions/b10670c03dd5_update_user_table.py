@@ -8,17 +8,16 @@ Create Date: 2025-11-28 04:55:31.737538
 
 import json
 import time
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-import open_webui.internal.db
 import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'b10670c03dd5'
-down_revision: Union[str, None] = '2f1211949ecc'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '2f1211949ecc'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # ── Ad-hoc table references for Core DML ─────────────────────────────────
 # These are lightweight table() / column() references used only inside this

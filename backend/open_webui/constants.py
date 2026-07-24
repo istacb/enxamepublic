@@ -3,7 +3,6 @@ from __future__ import annotations
 import errno
 from enum import Enum
 
-
 _ERRNO_MESSAGES = {
     errno.ENAMETOOLONG: 'File name is too long.',
     errno.ENOSPC: 'The server is out of storage space.',

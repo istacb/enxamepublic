@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import copy
 import logging
-from typing import Optional
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,14 +9,12 @@ from open_webui.config import BannerModel
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
-from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.utils.oauth import (
     OAuthClientInformationFull,
     apply_connection_oauth_options,
-    decrypt_data,
     encrypt_data,
     get_discovery_urls,
     get_oauth_client_info_with_dynamic_client_registration,
@@ -196,7 +192,7 @@ async def register_oauth_client(
         log.debug(f'Failed to register OAuth client: {e}')
         raise HTTPException(
             status_code=400,
-            detail=f'Failed to register OAuth client',
+            detail='Failed to register OAuth client',
         )
 
 
@@ -596,7 +592,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
 
                                 if oauth_token:
                                     token = oauth_token.get('access_token', '')
-                        except Exception as e:
+                        except Exception:
                             pass
                     if token:
                         headers = {'Authorization': f'Bearer {token}'}
@@ -617,7 +613,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
                     log.debug(f'Failed to create MCP client: {e}')
                     raise HTTPException(
                         status_code=400,
-                        detail=f'Failed to create MCP client',
+                        detail='Failed to create MCP client',
                     )
                 finally:
                     if client:
@@ -640,7 +636,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
                         if oauth_token:
                             token = oauth_token.get('access_token', '')
 
-                except Exception as e:
+                except Exception:
                     pass
 
             if token:
@@ -660,7 +656,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
         log.debug(f'Failed to connect to the tool server: {e}')
         raise HTTPException(
             status_code=400,
-            detail=f'Failed to connect to the tool server',
+            detail='Failed to connect to the tool server',
         )
 
 

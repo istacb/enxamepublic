@@ -24,15 +24,15 @@ class HardwareProfile:
 
     def as_dict(self) -> dict[str, float | int | str]:
         return {
-            "cpu_cores": self.cpu_cores,
-            "cpu_freq_mhz": round(self.cpu_freq_mhz, 2),
-            "ram_total_gb": round(self.ram_total_gb, 2),
-            "gpu_score": round(self.gpu_score, 2),
-            "disk_write_mb_s": round(self.disk_write_mb_s, 2),
-            "disk_read_mb_s": round(self.disk_read_mb_s, 2),
-            "overall_score": round(self.overall_score, 3),
-            "hostname": self.hostname,
-            "platform": self.platform,
+            'cpu_cores': self.cpu_cores,
+            'cpu_freq_mhz': round(self.cpu_freq_mhz, 2),
+            'ram_total_gb': round(self.ram_total_gb, 2),
+            'gpu_score': round(self.gpu_score, 2),
+            'disk_write_mb_s': round(self.disk_write_mb_s, 2),
+            'disk_read_mb_s': round(self.disk_read_mb_s, 2),
+            'overall_score': round(self.overall_score, 3),
+            'hostname': self.hostname,
+            'platform': self.platform,
         }
 
 
@@ -64,17 +64,17 @@ class HardwareBenchmark:
             disk_write_mb_s=write_mb_s,
             disk_read_mb_s=read_mb_s,
             overall_score=overall,
-            hostname=platform.node() or "unknown",
+            hostname=platform.node() or 'unknown',
             platform=platform.platform(),
         )
 
     def _cpu_freq_mhz(self) -> float:
         try:
-            with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
+            with open('/proc/cpuinfo', encoding='utf-8') as f:
                 freqs = []
                 for line in f:
-                    if line.lower().startswith("cpu mhz"):
-                        value = float(line.split(":", 1)[1].strip())
+                    if line.lower().startswith('cpu mhz'):
+                        value = float(line.split(':', 1)[1].strip())
                         freqs.append(value)
                 if freqs:
                     return sum(freqs) / len(freqs)
@@ -84,9 +84,9 @@ class HardwareBenchmark:
 
     def _ram_total_gb(self) -> float:
         try:
-            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            with open('/proc/meminfo', encoding='utf-8') as f:
                 for line in f:
-                    if line.startswith("MemTotal:"):
+                    if line.startswith('MemTotal:'):
                         kb = float(line.split()[1])
                         return kb / (1024 * 1024)
         except Exception:
@@ -94,15 +94,15 @@ class HardwareBenchmark:
         return 4.0
 
     def _gpu_score(self) -> float:
-        nvidia_smi = shutil.which("nvidia-smi")
+        nvidia_smi = shutil.which('nvidia-smi')
         if not nvidia_smi:
             return 0.0
         try:
             out = subprocess.check_output(
                 [
                     nvidia_smi,
-                    "--query-gpu=memory.total,clocks.max.sm",
-                    "--format=csv,noheader,nounits",
+                    '--query-gpu=memory.total,clocks.max.sm',
+                    '--format=csv,noheader,nounits',
                 ],
                 stderr=subprocess.DEVNULL,
                 text=True,
@@ -110,7 +110,7 @@ class HardwareBenchmark:
             )
             score = 0.0
             for row in out.strip().splitlines():
-                parts = [p.strip() for p in row.split(",")]
+                parts = [p.strip() for p in row.split(',')]
                 if len(parts) != 2:
                     continue
                 mem_mb = float(parts[0] or 0)
@@ -122,9 +122,9 @@ class HardwareBenchmark:
 
     def _disk_speed_mb_s(self) -> tuple[float, float]:
         size = self.sample_mb * 1024 * 1024
-        payload = b"0" * min(1024 * 1024, size)
+        payload = b'0' * min(1024 * 1024, size)
         try:
-            with tempfile.NamedTemporaryFile(delete=True, dir="/tmp") as tf:
+            with tempfile.NamedTemporaryFile(delete=True, dir='/tmp') as tf:
                 path = Path(tf.name)
 
                 chunks = max(1, size // len(payload))

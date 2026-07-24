@@ -1,6 +1,6 @@
 import logging
 import traceback
-from typing import Collection, Union
+from collections.abc import Collection
 
 from aiohttp import (
     TraceRequestEndParams,
@@ -58,7 +58,7 @@ def response_hook(span: Span, request: PreparedRequest, response: Response):
     span.set_status(StatusCode.ERROR if response.status_code >= 400 else StatusCode.OK)
 
 
-def redis_request_hook(span: Span, instance: Union[Redis | RedisCluster], args, kwargs):
+def redis_request_hook(span: Span, instance: Redis | RedisCluster, args, kwargs):
     """
     Redis Request Hook
     """
@@ -148,7 +148,7 @@ def aiohttp_request_hook(span: Span, request: TraceRequestStartParams):
     )
 
 
-def aiohttp_response_hook(span: Span, response: Union[TraceRequestExceptionParams, TraceRequestEndParams]):
+def aiohttp_response_hook(span: Span, response: TraceRequestExceptionParams | TraceRequestEndParams):
     """
     Aiohttp Response Hook
     """

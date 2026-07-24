@@ -4,7 +4,6 @@ import logging
 from open_webui.models.functions import Functions
 from open_webui.utils.plugin import (
     get_function_module_from_cache,
-    load_function_module_by_id,
 )
 
 log = logging.getLogger(__name__)

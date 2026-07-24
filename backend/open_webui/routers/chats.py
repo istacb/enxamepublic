@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -13,7 +10,6 @@ from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
 from open_webui.models.access_grants import AccessGrants
-from open_webui.models.config import Config
 from open_webui.models.chats import (
     AggregateChatStats,
     ChatBody,
@@ -28,6 +24,7 @@ from open_webui.models.chats import (
     ChatUsageStatsListResponse,
     MessageStats,
 )
+from open_webui.models.config import Config
 from open_webui.models.folders import Folders
 from open_webui.models.shared_chats import SharedChatResponse, SharedChats
 from open_webui.models.tags import TagModel, Tags
@@ -263,7 +260,7 @@ async def get_session_user_chat_usage_stats(
                             'created_at': chat.created_at,
                         }
                     )
-                except Exception as e:
+                except Exception:
                     pass
 
         return ChatUsageStatsListResponse(items=chat_stats, total=total)

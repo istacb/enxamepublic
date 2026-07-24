@@ -1,16 +1,12 @@
-import json
 import time
 import uuid
-from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
-from open_webui.models.channels import ChannelMember, Channels
-from open_webui.models.tags import Tag, TagModel, Tags
+from open_webui.internal.db import Base, get_async_db_context
+from open_webui.models.channels import Channels
 from open_webui.models.users import User, UserNameResponse, Users
 from pydantic import BaseModel, ConfigDict, field_validator
-from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, and_, delete, func, or_, select, text
+from sqlalchemy import JSON, BigInteger, Boolean, Column, Text, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import exists
 
 ####################
 # Message DB Schema
@@ -64,19 +60,19 @@ class MessageModel(BaseModel):
 
     id: str
     user_id: str
-    channel_id: Optional[str] = None
+    channel_id: str | None = None
 
-    reply_to_id: Optional[str] = None
-    parent_id: Optional[str] = None
+    reply_to_id: str | None = None
+    parent_id: str | None = None
 
     # Pins
     is_pinned: bool = False
-    pinned_by: Optional[str] = None
-    pinned_at: Optional[int] = None  # timestamp in epoch (time_ns)
+    pinned_by: str | None = None
+    pinned_at: int | None = None  # timestamp in epoch (time_ns)
 
     content: str
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
+    data: dict | None = None
+    meta: dict | None = None
 
     created_at: int  # timestamp in epoch (time_ns)
     updated_at: int  # timestamp in epoch (time_ns)
@@ -88,12 +84,12 @@ class MessageModel(BaseModel):
 
 
 class MessageForm(BaseModel):
-    temp_id: Optional[str] = None
+    temp_id: str | None = None
     content: str
-    reply_to_id: Optional[str] = None
-    parent_id: Optional[str] = None
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
+    reply_to_id: str | None = None
+    parent_id: str | None = None
+    data: dict | None = None
+    meta: dict | None = None
 
 
 class Reactions(BaseModel):
@@ -103,7 +99,7 @@ class Reactions(BaseModel):
 
 
 class MessageUserResponse(MessageModel):
-    user: Optional[UserNameResponse] = None
+    user: UserNameResponse | None = None
 
 
 class MessageUserSlimResponse(MessageUserResponse):
@@ -120,7 +116,7 @@ class MessageUserSlimResponse(MessageUserResponse):
 
 
 class MessageReplyToResponse(MessageUserResponse):
-    reply_to_message: Optional[MessageUserSlimResponse] = None
+    reply_to_message: MessageUserSlimResponse | None = None
 
 
 class MessageWithReactionsResponse(MessageUserSlimResponse):
@@ -128,7 +124,7 @@ class MessageWithReactionsResponse(MessageUserSlimResponse):
 
 
 class MessageResponse(MessageReplyToResponse):
-    latest_reply_at: Optional[int]
+    latest_reply_at: int | None
     reply_count: int
     reactions: list[Reactions]
 
@@ -139,8 +135,8 @@ class MessageTable:
         form_data: MessageForm,
         channel_id: str,
         user_id: str,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[MessageModel]:
+        db: AsyncSession | None = None,
+    ) -> MessageModel | None:
         async with get_async_db_context(db) as db:
             channel_member = await Channels.join_channel(channel_id, user_id)
 
@@ -174,9 +170,9 @@ class MessageTable:
     async def get_message_by_id(
         self,
         id: str,
-        include_thread_replies: Optional[bool] = True,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[MessageResponse]:
+        include_thread_replies: bool | None = True,
+        db: AsyncSession | None = None,
+    ) -> MessageResponse | None:
         async with get_async_db_context(db) as db:
             message = await db.get(Message, id)
             if not message:
@@ -227,7 +223,7 @@ class MessageTable:
                 }
             )
 
-    async def _resolve_user_info(self, message: Message, db: AsyncSession) -> Optional[dict]:
+    async def _resolve_user_info(self, message: Message, db: AsyncSession) -> dict | None:
         """Resolve user info from message, handling webhook messages."""
         webhook_info = message.meta.get('webhook') if message.meta else None
         if webhook_info and webhook_info.get('id'):
@@ -247,7 +243,7 @@ class MessageTable:
         return None
 
     async def get_thread_replies_by_message_id(
-        self, id: str, db: Optional[AsyncSession] = None
+        self, id: str, db: AsyncSession | None = None
     ) -> list[MessageReplyToResponse]:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Message).filter_by(parent_id=id).order_by(Message.created_at.desc()))
@@ -274,7 +270,7 @@ class MessageTable:
                 )
             return messages
 
-    async def get_reply_user_ids_by_message_id(self, id: str, db: Optional[AsyncSession] = None) -> list[str]:
+    async def get_reply_user_ids_by_message_id(self, id: str, db: AsyncSession | None = None) -> list[str]:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Message.user_id).filter_by(parent_id=id))
             return [row[0] for row in result.all()]
@@ -284,7 +280,7 @@ class MessageTable:
         channel_id: str,
         skip: int = 0,
         limit: int = 50,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[MessageReplyToResponse]:
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -323,7 +319,7 @@ class MessageTable:
         parent_id: str,
         skip: int = 0,
         limit: int = 50,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[MessageReplyToResponse]:
         async with get_async_db_context(db) as db:
             message = await db.get(Message, parent_id)
@@ -367,8 +363,8 @@ class MessageTable:
             return messages
 
     async def get_last_message_by_channel_id(
-        self, channel_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[MessageModel]:
+        self, channel_id: str, db: AsyncSession | None = None
+    ) -> MessageModel | None:
         async with get_async_db_context(db) as db:
             result = await db.execute(
                 select(Message).filter_by(channel_id=channel_id).order_by(Message.created_at.desc()).limit(1)
@@ -381,7 +377,7 @@ class MessageTable:
         channel_id: str,
         skip: int = 0,
         limit: int = 50,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[MessageModel]:
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -395,8 +391,8 @@ class MessageTable:
             return [MessageModel.model_validate(message) for message in all_messages]
 
     async def update_message_by_id(
-        self, id: str, form_data: MessageForm, db: Optional[AsyncSession] = None
-    ) -> Optional[MessageModel]:
+        self, id: str, form_data: MessageForm, db: AsyncSession | None = None
+    ) -> MessageModel | None:
         async with get_async_db_context(db) as db:
             message = await db.get(Message, id)
             message.content = form_data.content
@@ -417,9 +413,9 @@ class MessageTable:
         self,
         id: str,
         is_pinned: bool,
-        pinned_by: Optional[str] = None,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[MessageModel]:
+        pinned_by: str | None = None,
+        db: AsyncSession | None = None,
+    ) -> MessageModel | None:
         async with get_async_db_context(db) as db:
             message = await db.get(Message, id)
             message.is_pinned = is_pinned
@@ -433,8 +429,8 @@ class MessageTable:
         self,
         channel_id: str,
         user_id: str,
-        last_read_at: Optional[int] = None,
-        db: Optional[AsyncSession] = None,
+        last_read_at: int | None = None,
+        db: AsyncSession | None = None,
     ) -> int:
         async with get_async_db_context(db) as db:
             stmt = select(func.count(Message.id)).filter(
@@ -448,8 +444,8 @@ class MessageTable:
             return result.scalar()
 
     async def add_reaction_to_message(
-        self, id: str, user_id: str, name: str, db: Optional[AsyncSession] = None
-    ) -> Optional[MessageReactionModel]:
+        self, id: str, user_id: str, name: str, db: AsyncSession | None = None
+    ) -> MessageReactionModel | None:
         async with get_async_db_context(db) as db:
             # check for existing reaction
             result = await db.execute(select(MessageReaction).filter_by(message_id=id, user_id=user_id, name=name))
@@ -471,7 +467,7 @@ class MessageTable:
             await db.refresh(result)
             return MessageReactionModel.model_validate(result) if result else None
 
-    async def get_reactions_by_message_id(self, id: str, db: Optional[AsyncSession] = None) -> list[Reactions]:
+    async def get_reactions_by_message_id(self, id: str, db: AsyncSession | None = None) -> list[Reactions]:
         async with get_async_db_context(db) as db:
             # JOIN User so all user info is fetched in one query
             result = await db.execute(
@@ -502,7 +498,7 @@ class MessageTable:
             return [Reactions(**reaction) for reaction in reactions.values()]
 
     async def get_reactions_by_message_ids(
-        self, ids: list[str], db: Optional[AsyncSession] = None
+        self, ids: list[str], db: AsyncSession | None = None
     ) -> dict[str, list[Reactions]]:
         """Batch-fetch reactions for multiple messages in a single query.
 
@@ -543,7 +539,7 @@ class MessageTable:
             return {mid: [Reactions(**r) for r in reactions.values()] for mid, reactions in grouped.items()}
 
     async def get_thread_reply_counts_by_message_ids(
-        self, ids: list[str], db: Optional[AsyncSession] = None
+        self, ids: list[str], db: AsyncSession | None = None
     ) -> dict[str, tuple[int, int | None]]:
         """Batch-fetch reply counts and latest reply timestamps for multiple parent messages.
 
@@ -567,26 +563,26 @@ class MessageTable:
             return {row[0]: (row[1], row[2]) for row in result.all()}
 
     async def remove_reaction_by_id_and_user_id_and_name(
-        self, id: str, user_id: str, name: str, db: Optional[AsyncSession] = None
+        self, id: str, user_id: str, name: str, db: AsyncSession | None = None
     ) -> bool:
         async with get_async_db_context(db) as db:
             await db.execute(delete(MessageReaction).filter_by(message_id=id, user_id=user_id, name=name))
             await db.commit()
             return True
 
-    async def delete_reactions_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_reactions_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             await db.execute(delete(MessageReaction).filter_by(message_id=id))
             await db.commit()
             return True
 
-    async def delete_replies_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_replies_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             await db.execute(delete(Message).filter_by(parent_id=id))
             await db.commit()
             return True
 
-    async def delete_message_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_message_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
             await db.execute(delete(Message).filter_by(id=id))
 
@@ -600,10 +596,10 @@ class MessageTable:
         self,
         channel_ids: list[str],
         query: str,
-        start_timestamp: Optional[int] = None,
-        end_timestamp: Optional[int] = None,
+        start_timestamp: int | None = None,
+        end_timestamp: int | None = None,
         limit: int = 10,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[MessageModel]:
         """Search messages in specified channels by content."""
         async with get_async_db_context(db) as db:

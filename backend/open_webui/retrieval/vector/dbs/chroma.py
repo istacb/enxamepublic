@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 import chromadb
 from chromadb import Settings
@@ -72,9 +71,9 @@ class ChromaClient(VectorDBBase):
         self,
         collection_name: str,
         vectors: list[list[float | int]],
-        filter: Optional[dict] = None,
+        filter: dict | None = None,
         limit: int = 10,
-    ) -> Optional[SearchResult]:
+    ) -> SearchResult | None:
         # Search for the nearest neighbor items based on the vectors and return 'limit' number of results.
         try:
             collection = self.client.get_collection(name=collection_name)
@@ -100,10 +99,10 @@ class ChromaClient(VectorDBBase):
                     }
                 )
             return None
-        except Exception as e:
+        except Exception:
             return None
 
-    def query(self, collection_name: str, filter: dict, limit: Optional[int] = None) -> Optional[GetResult]:
+    def query(self, collection_name: str, filter: dict, limit: int | None = None) -> GetResult | None:
         # Query the items from the collection based on the filter.
         try:
             collection = self.client.get_collection(name=collection_name)
@@ -124,7 +123,7 @@ class ChromaClient(VectorDBBase):
         except Exception:
             return None
 
-    def get(self, collection_name: str) -> Optional[GetResult]:
+    def get(self, collection_name: str) -> GetResult | None:
         # Get all the items in the collection.
         collection = self.client.get_collection(name=collection_name)
         if collection:
@@ -170,8 +169,8 @@ class ChromaClient(VectorDBBase):
     def delete(
         self,
         collection_name: str,
-        ids: Optional[list[str]] = None,
-        filter: Optional[dict] = None,
+        ids: list[str] | None = None,
+        filter: dict | None = None,
     ):
         # Delete the items from the collection based on the ids.
         try:
@@ -181,7 +180,7 @@ class ChromaClient(VectorDBBase):
                     collection.delete(ids=ids)
                 elif filter:
                     collection.delete(where=filter)
-        except Exception as e:
+        except Exception:
             # If collection doesn't exist, that's fine - nothing to delete
             log.debug(f'Attempted to delete from non-existent collection {collection_name}. Ignoring.')
             pass

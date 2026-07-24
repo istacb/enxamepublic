@@ -218,11 +218,7 @@ curl -X POST http://localhost:8000/api/task \
 import requests
 
 response = requests.post(
-    'http://localhost:8000/api/task',
-    json={
-        'prompt': 'Liste os processos ativos',
-        'user_id': 'admin'
-    }
+    'http://localhost:8000/api/task', json={'prompt': 'Liste os processos ativos', 'user_id': 'admin'}
 )
 
 print(response.json())

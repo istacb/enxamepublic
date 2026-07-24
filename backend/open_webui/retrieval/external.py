@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Optional
+from typing import Any
 
 from open_webui.models.config import Config
 from open_webui.models.knowledge import KnowledgeModel
@@ -13,12 +13,12 @@ EXTERNAL_KNOWLEDGE_CONNECTIONS_CONFIG_KEY = 'external_knowledge.connections'
 IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
-async def _get_external_connection(connection_id: str) -> Optional[dict]:
+async def _get_external_connection(connection_id: str) -> dict | None:
     connections = await Config.get(EXTERNAL_KNOWLEDGE_CONNECTIONS_CONFIG_KEY, []) or []
     return next((connection for connection in connections if connection.get('id') == connection_id), None)
 
 
-def _get_path(data: Any, path: Optional[str], default=None):
+def _get_path(data: Any, path: str | None, default=None):
     if not path:
         return default
     value = data
@@ -30,7 +30,7 @@ def _get_path(data: Any, path: Optional[str], default=None):
     return value
 
 
-def _normalize_result(result: dict, mapping: dict, knowledge: KnowledgeModel, distance: Optional[float] = None) -> dict:
+def _normalize_result(result: dict, mapping: dict, knowledge: KnowledgeModel, distance: float | None = None) -> dict:
     content = _get_path(result, mapping.get('content_field', 'content'), '')
     title = _get_path(result, mapping.get('title_field', 'title'), None)
     source = _get_path(result, mapping.get('source_field', 'source'), None)
@@ -73,7 +73,7 @@ def _source_config(knowledge: KnowledgeModel) -> dict:
     return source.get('config') or {}
 
 
-def _root_field(path: Optional[str]) -> Optional[str]:
+def _root_field(path: str | None) -> str | None:
     if not path:
         return None
     return path.split('.')[0]

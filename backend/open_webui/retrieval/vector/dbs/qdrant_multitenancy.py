@@ -3,10 +3,9 @@ NOTE: This vector database integration is community-supported and maintained on 
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
-import grpc
 from open_webui.config import (
     QDRANT_API_KEY,
     QDRANT_COLLECTION_PREFIX,
@@ -24,7 +23,6 @@ from open_webui.retrieval.vector.main import (
     VectorItem,
 )
 from qdrant_client import QdrantClient as Qclient
-from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.http.models import PointStruct
 from qdrant_client.models import models
 
@@ -95,7 +93,7 @@ class QdrantClient(VectorDBBase):
             metadatas.append(payload['metadata'])
         return GetResult(ids=[ids], documents=[documents], metadatas=[metadatas])
 
-    def _get_collection_and_tenant_id(self, collection_name: str) -> Tuple[str, str]:
+    def _get_collection_and_tenant_id(self, collection_name: str) -> tuple[str, str]:
         """
         Maps the traditional collection name to multi-tenant collection and tenant ID.
 
@@ -170,7 +168,7 @@ class QdrantClient(VectorDBBase):
                 ),
             )
 
-    def _create_points(self, items: List[VectorItem], tenant_id: str) -> List[PointStruct]:
+    def _create_points(self, items: list[VectorItem], tenant_id: str) -> list[PointStruct]:
         """
         Create point structs from vector items with tenant ID.
         """
@@ -213,8 +211,8 @@ class QdrantClient(VectorDBBase):
     def delete(
         self,
         collection_name: str,
-        ids: Optional[List[str]] = None,
-        filter: Optional[Dict[str, Any]] = None,
+        ids: list[str] | None = None,
+        filter: dict[str, Any] | None = None,
     ):
         """
         Delete vectors by ID or filter from a collection with tenant isolation.
@@ -244,10 +242,10 @@ class QdrantClient(VectorDBBase):
     def search(
         self,
         collection_name: str,
-        vectors: List[List[float | int]],
-        filter: Optional[Dict] = None,
+        vectors: list[list[float | int]],
+        filter: dict | None = None,
         limit: int = 10,
-    ) -> Optional[SearchResult]:
+    ) -> SearchResult | None:
         """
         Search for the nearest neighbor items based on the vectors with tenant isolation.
         """
@@ -273,7 +271,7 @@ class QdrantClient(VectorDBBase):
             distances=[[(point.score + 1.0) / 2.0 for point in query_response.points]],
         )
 
-    def query(self, collection_name: str, filter: Dict[str, Any], limit: Optional[int] = None):
+    def query(self, collection_name: str, filter: dict[str, Any], limit: int | None = None):
         """
         Query points with filters and tenant isolation.
         """
@@ -295,7 +293,7 @@ class QdrantClient(VectorDBBase):
         )
         return self._result_to_get_result(points[0])
 
-    def get(self, collection_name: str) -> Optional[GetResult]:
+    def get(self, collection_name: str) -> GetResult | None:
         """
         Get all items in a collection with tenant isolation.
         """
@@ -313,7 +311,7 @@ class QdrantClient(VectorDBBase):
         )
         return self._result_to_get_result(points[0])
 
-    def upsert(self, collection_name: str, items: List[VectorItem]):
+    def upsert(self, collection_name: str, items: list[VectorItem]):
         """
         Upsert items with tenant ID.
         """
@@ -326,7 +324,7 @@ class QdrantClient(VectorDBBase):
         self.client.upload_points(mt_collection, points)
         return None
 
-    def insert(self, collection_name: str, items: List[VectorItem]):
+    def insert(self, collection_name: str, items: list[VectorItem]):
         """
         Insert items with tenant ID.
         """

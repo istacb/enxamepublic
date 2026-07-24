@@ -13,16 +13,16 @@ Access control semantics:
 
 import time
 import uuid
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from open_webui.migrations.util import get_existing_tables
 
 revision: str = 'f1e2d3c4b5a6'
-down_revision: Union[str, None] = '8452d01d26d7'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '8452d01d26d7'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

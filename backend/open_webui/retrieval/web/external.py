@@ -1,5 +1,4 @@
 import logging
-from typing import List, Optional
 
 import requests
 from fastapi import Request
@@ -16,9 +15,9 @@ def search_external(
     external_api_key: str,
     query: str,
     count: int,
-    filter_list: Optional[List[str]] = None,
+    filter_list: list[str] | None = None,
     user=None,
-) -> List[SearchResult]:
+) -> list[SearchResult]:
     try:
         headers = {
             'User-Agent': 'Open WebUI (https://github.com/open-webui/open-webui) RAG Bot',

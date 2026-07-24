@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Optional
 
 import aiohttp
 import websockets
@@ -17,9 +16,9 @@ class ResultModel(BaseModel):
     Execute Code Result Model
     """
 
-    stdout: Optional[str] = ''
-    stderr: Optional[str] = ''
-    result: Optional[str] = ''
+    stdout: str | None = ''
+    stderr: str | None = ''
+    result: str | None = ''
 
 
 class JupyterCodeExecuter:
@@ -181,7 +180,7 @@ class JupyterCodeExecuter:
                         if message_data['content']['execution_state'] == 'idle':
                             break
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 stderr += '\nExecution timed out.'
                 break
         self.result.stdout = stdout.strip()

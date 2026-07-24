@@ -6,7 +6,7 @@ import logging
 import time
 
 # local imports
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from open_webui.utils.misc import sanitize_metadata
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import JSON, BigInteger, Column, String, Text, delete, func, select
@@ -258,7 +258,7 @@ class FilesTable:
         skip: int = 0,
         limit: int = 50,
         db: AsyncSession | None = None,
-    ) -> 'FileListResponse':
+    ) -> FileListResponse:
         async with get_async_db_context(db) as db:
             stmt = select(File)
             if user_id:
@@ -377,7 +377,7 @@ class FilesTable:
                 file.updated_at = int(time.time())
                 await db.commit()
                 return FileModel.model_validate(file)
-            except Exception as e:
+            except Exception:
                 return None
 
     async def update_file_metadata_by_id(self, id: str, meta: dict, db: AsyncSession | None = None) -> FileModel | None:

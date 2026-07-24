@@ -1,6 +1,5 @@
 import json
 import logging
-from typing import List, Optional
 
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
 
@@ -12,8 +11,8 @@ def search_sougou(
     sougou_api_sk: str,
     query: str,
     count: int,
-    filter_list: Optional[List[str]] = None,
-) -> List[SearchResult]:
+    filter_list: list[str] | None = None,
+) -> list[SearchResult]:
     from tencentcloud.common import credential
     from tencentcloud.common.common_client import CommonClient
     from tencentcloud.common.exception.tencent_cloud_sdk_exception import (

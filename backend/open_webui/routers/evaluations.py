@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -14,10 +13,8 @@ from open_webui.models.feedbacks import (
     FeedbackModel,
     Feedbacks,
     LeaderboardFeedbackData,
-    ModelHistoryEntry,
     ModelHistoryResponse,
 )
-from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -215,7 +212,7 @@ class LeaderboardResponse(BaseModel):
 
 @router.get('/leaderboard', response_model=LeaderboardResponse)
 async def get_leaderboard(
-    query: Optional[str] = None,
+    query: str | None = None,
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -276,8 +273,8 @@ async def get_config(request: Request, user=Depends(get_admin_user)):
 
 
 class UpdateConfigForm(BaseModel):
-    ENABLE_EVALUATION_ARENA_MODELS: Optional[bool] = None
-    EVALUATION_ARENA_MODELS: Optional[list[dict]] = None
+    ENABLE_EVALUATION_ARENA_MODELS: bool | None = None
+    EVALUATION_ARENA_MODELS: list[dict] | None = None
 
 
 @router.post('/config')
@@ -336,7 +333,7 @@ async def delete_all_feedbacks(
 
 @router.get('/feedbacks/all/export', response_model=list[FeedbackModel])
 async def export_all_feedbacks(
-    model_id: Optional[str] = None,
+    model_id: str | None = None,
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -351,7 +348,7 @@ PAGE_ITEM_COUNT = 30
 
 @router.get('/feedbacks/user', response_model=FeedbackListResponse)
 async def get_user_feedbacks(
-    page: Optional[int] = 1,
+    page: int | None = 1,
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
@@ -381,10 +378,10 @@ async def delete_feedbacks(
 
 @router.get('/feedbacks/list', response_model=FeedbackListResponse)
 async def get_feedbacks(
-    order_by: Optional[str] = None,
-    direction: Optional[str] = None,
-    page: Optional[int] = 1,
-    model_id: Optional[str] = None,
+    order_by: str | None = None,
+    direction: str | None = None,
+    page: int | None = 1,
+    model_id: str | None = None,
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):

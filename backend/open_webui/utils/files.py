@@ -4,13 +4,8 @@ import io
 import mimetypes
 import re
 from pathlib import Path
-from typing import Optional
 
 from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    Request,
     UploadFile,
 )
 from open_webui.env import (
@@ -18,16 +13,15 @@ from open_webui.env import (
     AIOHTTP_CLIENT_SESSION_SSL,
     ENABLE_IMAGE_CONTENT_TYPE_EXTENSION_FALLBACK,
 )
-from open_webui.models.chats import Chats
 from open_webui.models.files import Files
 from open_webui.retrieval.web.utils import get_ssrf_safe_session, validate_url
 from open_webui.routers.files import upload_file_handler
-from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.routers.images import (
     get_image_data,
     upload_image,
 )
 from open_webui.storage.provider import Storage
+from open_webui.utils.access_control.files import has_access_to_file
 
 BASE64_IMAGE_URL_PREFIX = re.compile(r'data:image/\w+;base64,', re.IGNORECASE)
 MARKDOWN_IMAGE_URL_PATTERN = re.compile(r'!\[(.*?)\]\((.+?)\)', re.IGNORECASE)
@@ -50,7 +44,7 @@ _IMAGE_MIME_FALLBACK = {
 }
 
 
-async def get_image_base64_from_url(url: str, user=None) -> Optional[str]:
+async def get_image_base64_from_url(url: str, user=None) -> str | None:
     try:
         if url.startswith('http'):
             # Validate URL to prevent SSRF attacks against local/private networks.
@@ -75,7 +69,7 @@ async def get_image_base64_from_url(url: str, user=None) -> Optional[str]:
             # file-ID resolver which enforces ownership/access checks.
             return await get_image_base64_from_file_id(url, user=user)
 
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -179,7 +173,7 @@ async def get_file_url_from_base64(request, base64_file_string, metadata, user):
     return None
 
 
-async def get_image_base64_from_file_id(id: str, user=None) -> Optional[str]:
+async def get_image_base64_from_file_id(id: str, user=None) -> str | None:
     file = await Files.get_file_by_id(id)
     if not file:
         return None
@@ -210,5 +204,5 @@ async def get_image_base64_from_file_id(id: str, user=None) -> Optional[str]:
                 return f'data:{content_type};base64,{encoded_string}'
         else:
             return None
-    except Exception as e:
+    except Exception:
         return None

@@ -1,6 +1,4 @@
 import logging
-from dataclasses import dataclass
-from typing import Optional
 
 import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
@@ -13,7 +11,7 @@ def search_ollama_cloud(
     api_key: str,
     query: str,
     count: int,
-    filter_list: Optional[list[str]] = None,
+    filter_list: list[str] | None = None,
 ) -> list[SearchResult]:
     """Search using Ollama Search API and return the results as a list of SearchResult objects.
 

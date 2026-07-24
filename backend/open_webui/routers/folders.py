@@ -1,35 +1,26 @@
 import logging
-import mimetypes
-import os
-import shutil
-import uuid
-from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
-from open_webui.config import UPLOAD_DIR
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
-from open_webui.models.config import Config
+from open_webui.models.access_grants import AccessGrants
 from open_webui.models.chats import Chats
+from open_webui.models.config import Config
 from open_webui.models.folders import (
     FolderForm,
-    FolderModel,
     FolderNameIdResponse,
     Folders,
     FolderUpdateForm,
 )
-from open_webui.models.access_grants import AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import Users
-from open_webui.utils.access_control import has_permission
 from open_webui.utils.access_control import (
     filter_allowed_access_grants,
+    has_permission,
 )
 from open_webui.utils.access_control.files import get_accessible_folder_files
-from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.auth import get_verified_user
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -323,7 +314,7 @@ async def update_folder_name_by_id(
 
 
 class FolderParentIdForm(BaseModel):
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
 
 
 @router.post('/{id}/update/parent')
@@ -526,7 +517,7 @@ async def get_shared_folder_chats(
 async def delete_folder_by_id(
     request: Request,
     id: str,
-    delete_contents: Optional[bool] = True,
+    delete_contents: bool | None = True,
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):

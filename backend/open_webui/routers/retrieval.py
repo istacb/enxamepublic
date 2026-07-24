@@ -1,33 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import mimetypes
 import os
-import re
 import shutil
 import uuid
-from datetime import datetime
-from pathlib import Path
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Callable, Iterator, Optional, Sequence, Union
 
 import tiktoken
 from fastapi import (
     APIRouter,
     Depends,
-    FastAPI,
-    File,
-    Form,
     HTTPException,
     Query,
     Request,
-    UploadFile,
     status,
 )
 from fastapi.concurrency import run_in_threadpool
-from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.documents import Document
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
@@ -58,18 +48,17 @@ from open_webui.env import (
 )
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_db, get_async_session
+from open_webui.models.config import Config
 from open_webui.models.files import FileModel, Files, FileUpdateForm
 from open_webui.models.knowledge import Knowledges
-from open_webui.models.config import Config
 
 # Document loaders
-from open_webui.retrieval.loaders.youtube import YoutubeLoader
 from open_webui.retrieval.utils import (
     build_loader_from_config,
-    get_loader_config,
     filter_accessible_collections,
     get_content_from_url,
     get_embedding_function,
+    get_loader_config,
     get_model_path,
     get_reranking_function,
     query_collection,
@@ -92,6 +81,7 @@ from open_webui.retrieval.web.firecrawl import search_firecrawl
 from open_webui.retrieval.web.google_pse import search_google_pse
 from open_webui.retrieval.web.jina_search import search_jina
 from open_webui.retrieval.web.kagi import search_kagi
+from open_webui.retrieval.web.linkup import search_linkup
 
 # Web search engines
 from open_webui.retrieval.web.main import SearchResult
@@ -113,10 +103,8 @@ from open_webui.retrieval.web.utils import get_web_loader
 from open_webui.retrieval.web.yacy import search_yacy
 from open_webui.retrieval.web.yandex import search_yandex
 from open_webui.retrieval.web.ydc import search_youcom
-from open_webui.retrieval.web.linkup import search_linkup
 from open_webui.storage.provider import Storage
 from open_webui.utils.access_control import has_permission
-from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.misc import (
     calculate_sha256_string,
@@ -912,10 +900,10 @@ class ConfigForm(BaseModel):
     CHUNK_OVERLAP: int | None = None
 
     # File upload settings
-    FILE_MAX_SIZE: Union[int, str | None] = None
-    FILE_MAX_COUNT: Union[int, str | None] = None
-    FILE_IMAGE_COMPRESSION_WIDTH: Union[int, str | None] = None
-    FILE_IMAGE_COMPRESSION_HEIGHT: Union[int, str | None] = None
+    FILE_MAX_SIZE: int | (str | None) = None
+    FILE_MAX_COUNT: int | (str | None) = None
+    FILE_IMAGE_COMPRESSION_WIDTH: int | (str | None) = None
+    FILE_IMAGE_COMPRESSION_HEIGHT: int | (str | None) = None
     ALLOWED_FILE_EXTENSIONS: list[str | None] = None
 
     # Integration settings

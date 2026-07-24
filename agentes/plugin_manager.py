@@ -22,7 +22,7 @@ class PluginMeta:
 class PluginManager:
     """Gerencia plugins de especialidades com hot-load/hot-unload."""
 
-    def __init__(self, package: str = "agentes.plugins") -> None:
+    def __init__(self, package: str = 'agentes.plugins') -> None:
         self.package = package
         self._plugins: dict[str, SpecialtyPlugin] = {}
         self._modules: dict[str, ModuleType] = {}
@@ -32,7 +32,7 @@ class PluginManager:
         pkg = importlib.import_module(self.package)
         loaded: list[PluginMeta] = []
         for info in pkgutil.iter_modules(pkg.__path__):
-            if info.name.startswith("_") or info.name == "base":
+            if info.name.startswith('_') or info.name == 'base':
                 continue
             meta = self.load_plugin(info.name)
             if meta:
@@ -45,7 +45,7 @@ class PluginManager:
     def get(self, name: str) -> SpecialtyPlugin | None:
         return self._plugins.get(name)
 
-    def best_for(self, text: str, fallback: str = "programador") -> SpecialtyPlugin:
+    def best_for(self, text: str, fallback: str = 'programador') -> SpecialtyPlugin:
         ranked = [(plugin.match_score(text), plugin) for plugin in self._plugins.values()]
         ranked.sort(key=lambda item: item[0], reverse=True)
         if ranked and ranked[0][0] > 0:
@@ -54,16 +54,16 @@ class PluginManager:
             return self._plugins[fallback]
         if self._plugins:
             return next(iter(self._plugins.values()))
-        raise RuntimeError("Nenhum plugin carregado")
+        raise RuntimeError('Nenhum plugin carregado')
 
     def load_plugin(self, module_name: str) -> PluginMeta | None:
-        full_module = f"{self.package}.{module_name}"
+        full_module = f'{self.package}.{module_name}'
         module = importlib.import_module(full_module)
         plugin = self._build_plugin(module)
         if plugin is None:
             return None
 
-        file_path = Path(getattr(module, "__file__", ""))
+        file_path = Path(getattr(module, '__file__', ''))
         mtime = file_path.stat().st_mtime if file_path.exists() else 0.0
         self._plugins[plugin.name] = plugin
         self._modules[plugin.name] = module
@@ -92,7 +92,7 @@ class PluginManager:
         plugin = self._build_plugin(module)
         if plugin is None:
             return None
-        file_path = Path(getattr(module, "__file__", ""))
+        file_path = Path(getattr(module, '__file__', ''))
         mtime = file_path.stat().st_mtime if file_path.exists() else 0.0
         self._plugins[plugin.name] = plugin
         self._modules[plugin.name] = module
@@ -112,7 +112,7 @@ class PluginManager:
             module = self._modules.get(meta.name)
             if not module:
                 continue
-            path = Path(getattr(module, "__file__", ""))
+            path = Path(getattr(module, '__file__', ''))
             if not path.exists():
                 continue
             mtime = path.stat().st_mtime
@@ -123,7 +123,7 @@ class PluginManager:
         return changed
 
     def _build_plugin(self, module: ModuleType) -> SpecialtyPlugin | None:
-        plugin_cls = getattr(module, "PLUGIN_CLASS", None)
+        plugin_cls = getattr(module, 'PLUGIN_CLASS', None)
         if plugin_cls and inspect.isclass(plugin_cls) and issubclass(plugin_cls, SpecialtyPlugin):
             return plugin_cls()
 

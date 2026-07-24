@@ -1,15 +1,12 @@
-import json
 import time
 import uuid
-from functools import lru_cache
-from typing import Optional
 
 from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
-from open_webui.models.users import User, UserModel, UserResponse, Users
+from open_webui.models.users import User, UserModel, UserResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import JSON, BigInteger, Boolean, Column, ForeignKey, Text, delete, func, or_, select, update
+from sqlalchemy import JSON, BigInteger, Column, ForeignKey, Text, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 ####################
@@ -38,9 +35,9 @@ class NoteModel(BaseModel):
     user_id: str
 
     title: str
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
-    is_pinned: Optional[bool] = False
+    data: dict | None = None
+    meta: dict | None = None
+    is_pinned: bool | None = False
 
     access_grants: list[AccessGrantModel] = Field(default_factory=list)
 
@@ -64,30 +61,30 @@ class PinnedNote(Base):
 
 class NoteForm(BaseModel):
     title: str
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
-    access_grants: Optional[list[dict]] = None
+    data: dict | None = None
+    meta: dict | None = None
+    access_grants: list[dict] | None = None
 
 
 class NoteUpdateForm(BaseModel):
-    title: Optional[str] = None
-    data: Optional[dict] = None
-    meta: Optional[dict] = None
-    access_grants: Optional[list[dict]] = None
+    title: str | None = None
+    data: dict | None = None
+    meta: dict | None = None
+    access_grants: list[dict] | None = None
 
 
 class NoteUserResponse(NoteModel):
-    user: Optional[UserResponse] = None
+    user: UserResponse | None = None
 
 
 class NoteItemResponse(BaseModel):
     id: str
     title: str
-    data: Optional[dict]
-    is_pinned: Optional[bool] = False
+    data: dict | None
+    is_pinned: bool | None = False
     updated_at: int
     created_at: int
-    user: Optional[UserResponse] = None
+    user: UserResponse | None = None
 
 
 class NoteListResponse(BaseModel):
@@ -96,14 +93,14 @@ class NoteListResponse(BaseModel):
 
 
 class NoteTable:
-    async def _get_access_grants(self, note_id: str, db: Optional[AsyncSession] = None) -> list[AccessGrantModel]:
+    async def _get_access_grants(self, note_id: str, db: AsyncSession | None = None) -> list[AccessGrantModel]:
         return await AccessGrants.get_grants_by_resource('note', note_id, db=db)
 
     async def _to_note_model(
         self,
         note: Note,
-        access_grants: Optional[list[AccessGrantModel]] = None,
-        db: Optional[AsyncSession] = None,
+        access_grants: list[AccessGrantModel] | None = None,
+        db: AsyncSession | None = None,
     ) -> NoteModel:
         # We exclude access_grants to inject them
         note_data = NoteModel.model_validate(note).model_dump(exclude={'access_grants'})
@@ -123,8 +120,8 @@ class NoteTable:
         )
 
     async def insert_new_note(
-        self, user_id: str, form_data: NoteForm, db: Optional[AsyncSession] = None
-    ) -> Optional[NoteModel]:
+        self, user_id: str, form_data: NoteForm, db: AsyncSession | None = None
+    ) -> NoteModel | None:
         async with get_async_db_context(db) as db:
             note = NoteModel(
                 **{
@@ -144,7 +141,7 @@ class NoteTable:
             await AccessGrants.set_access_grants('note', note.id, form_data.access_grants, db=db)
             return await self._to_note_model(new_note, db=db)
 
-    async def get_notes(self, skip: int = 0, limit: int = 50, db: Optional[AsyncSession] = None) -> list[NoteModel]:
+    async def get_notes(self, skip: int = 0, limit: int = 50, db: AsyncSession | None = None) -> list[NoteModel]:
         async with get_async_db_context(db) as db:
             stmt = select(Note).order_by(Note.updated_at.desc())
             if skip is not None:
@@ -163,7 +160,7 @@ class NoteTable:
         filter: dict = {},
         skip: int = 0,
         limit: int = 30,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> NoteListResponse:
         async with get_async_db_context(db) as db:
             stmt = select(Note, User).outerjoin(User, User.id == Note.user_id)
@@ -268,7 +265,7 @@ class NoteTable:
         permission: str = 'read',
         skip: int = 0,
         limit: int = 50,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[NoteModel]:
         async with get_async_db_context(db) as db:
             user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
@@ -288,15 +285,15 @@ class NoteTable:
             grants_map = await AccessGrants.get_grants_by_resources('note', note_ids, db=db)
             return [await self._to_note_model(note, access_grants=grants_map.get(note.id, []), db=db) for note in notes]
 
-    async def get_note_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[NoteModel]:
+    async def get_note_by_id(self, id: str, db: AsyncSession | None = None) -> NoteModel | None:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Note).filter(Note.id == id))
             note = result.scalars().first()
             return await self._to_note_model(note, db=db) if note else None
 
     async def update_note_by_id(
-        self, id: str, form_data: NoteUpdateForm, db: Optional[AsyncSession] = None
-    ) -> Optional[NoteModel]:
+        self, id: str, form_data: NoteUpdateForm, db: AsyncSession | None = None
+    ) -> NoteModel | None:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(Note).filter(Note.id == id))
             note = result.scalars().first()
@@ -320,9 +317,7 @@ class NoteTable:
             await db.commit()
             return await self._to_note_model(note, db=db) if note else None
 
-    async def toggle_note_pinned_by_id(
-        self, id: str, user_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[NoteModel]:
+    async def toggle_note_pinned_by_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> NoteModel | None:
         try:
             async with get_async_db_context(db) as db:
                 result = await db.execute(select(Note).filter(Note.id == id))
@@ -351,7 +346,7 @@ class NoteTable:
         self,
         user_id: str,
         permission: str = 'read',
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[NoteModel]:
         async with get_async_db_context(db) as db:
             user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
@@ -371,7 +366,7 @@ class NoteTable:
             grants_map = await AccessGrants.get_grants_by_resources('note', note_ids, db=db)
             return [await self._to_note_model(note, access_grants=grants_map.get(note.id, []), db=db) for note in notes]
 
-    async def delete_note_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_note_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         try:
             async with get_async_db_context(db) as db:
                 await AccessGrants.revoke_all_access('note', id, db=db)
@@ -382,7 +377,7 @@ class NoteTable:
         except Exception:
             return False
 
-    async def get_pinned_note_ids(self, user_id: str, db: Optional[AsyncSession] = None) -> list[str]:
+    async def get_pinned_note_ids(self, user_id: str, db: AsyncSession | None = None) -> list[str]:
         async with get_async_db_context(db) as db:
             result = await db.execute(select(PinnedNote.note_id).filter_by(user_id=user_id))
             return result.scalars().all()

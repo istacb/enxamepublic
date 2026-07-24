@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,10 +15,10 @@ class LocalSearchResult:
 
     def as_dict(self) -> dict:
         return {
-            "found": self.found,
-            "source": self.source,
-            "snippets": self.snippets,
-            "sources": self.sources,
+            'found': self.found,
+            'source': self.source,
+            'snippets': self.snippets,
+            'sources': self.sources,
         }
 
 
@@ -49,7 +48,7 @@ class LocalSearchEngine:
         return zim_hit
 
     def _cache_key(self, text: str) -> str:
-        return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
+        return hashlib.sha256(text.strip().lower().encode('utf-8')).hexdigest()
 
     def _cache_set(self, key: str, value: LocalSearchResult) -> None:
         self._cache[key] = value
@@ -63,28 +62,28 @@ class LocalSearchEngine:
         sources: list[str] = []
 
         if not self.docs_dir.exists():
-            return LocalSearchResult(False, "local_files", [], [])
+            return LocalSearchResult(False, 'local_files', [], [])
 
-        for path in self.docs_dir.rglob("*"):
+        for path in self.docs_dir.rglob('*'):
             if not path.is_file() or path.suffix.lower() not in {
-                ".txt",
-                ".md",
-                ".json",
-                ".yaml",
-                ".yml",
-                ".py",
-                ".js",
-                ".ts",
-                ".log",
-                ".csv",
+                '.txt',
+                '.md',
+                '.json',
+                '.yaml',
+                '.yml',
+                '.py',
+                '.js',
+                '.ts',
+                '.log',
+                '.csv',
             }:
                 continue
 
             try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
+                content = path.read_text(encoding='utf-8', errors='ignore')
                 low = content.lower()
                 if not terms or all(term in low for term in terms[:2]) or any(term in low for term in terms):
-                    snippet = content[:300].strip().replace("\n", " ")
+                    snippet = content[:300].strip().replace('\n', ' ')
                     if snippet:
                         snippets.append(snippet)
                         sources.append(str(path))
@@ -94,11 +93,11 @@ class LocalSearchEngine:
             if len(snippets) >= limit:
                 break
 
-        return LocalSearchResult(bool(snippets), "local_files", snippets, sources)
+        return LocalSearchResult(bool(snippets), 'local_files', snippets, sources)
 
     def _search_local_zim(self, query: str, limit: int = 5) -> LocalSearchResult:
         if not self.zim_dir.exists():
-            return LocalSearchResult(False, "zim", [], [])
+            return LocalSearchResult(False, 'zim', [], [])
 
         query_low = query.lower()
         snippets: list[str] = []
@@ -106,38 +105,38 @@ class LocalSearchEngine:
 
         # Estratégia compatível sem dependências nativas obrigatórias:
         # busca por nome de arquivo e fragmentos textuais no início do arquivo.
-        for path in self.zim_dir.rglob("*.zim"):
+        for path in self.zim_dir.rglob('*.zim'):
             name = path.name.lower()
             matched = query_low in name or any(tok in name for tok in query_low.split())
-            preview = ""
+            preview = ''
             if not matched:
                 try:
-                    with path.open("rb") as f:
+                    with path.open('rb') as f:
                         head = f.read(1024 * 64)
-                    preview = head.decode("utf-8", errors="ignore")
+                    preview = head.decode('utf-8', errors='ignore')
                     matched = query_low in preview.lower()
                 except Exception:
                     matched = False
 
             if matched:
-                snippets.append((preview[:240] if preview else f"Arquivo ZIM: {path.name}").strip())
+                snippets.append((preview[:240] if preview else f'Arquivo ZIM: {path.name}').strip())
                 sources.append(str(path))
 
             if len(snippets) >= limit:
                 break
 
-        return LocalSearchResult(bool(snippets), "zim", snippets, sources)
+        return LocalSearchResult(bool(snippets), 'zim', snippets, sources)
 
     def list_zim_files(self) -> list[str]:
         if not self.zim_dir.exists():
             return []
-        return sorted(str(p) for p in self.zim_dir.rglob("*.zim"))
+        return sorted(str(p) for p in self.zim_dir.rglob('*.zim'))
 
     @staticmethod
     def compute_partition_owner(path: str, node_ids: list[str]) -> str | None:
         if not node_ids:
             return None
-        digest = hashlib.sha1(path.encode("utf-8")).hexdigest()
+        digest = hashlib.sha1(path.encode('utf-8')).hexdigest()
         idx = int(digest, 16) % len(node_ids)
         return sorted(node_ids)[idx]
 
@@ -154,7 +153,7 @@ class LocalSearchEngine:
         if not allowed:
             return []
         kept: list[str] = []
-        for path in self.zim_dir.rglob("*.zim"):
+        for path in self.zim_dir.rglob('*.zim'):
             if str(path) in allowed:
                 kept.append(str(path))
         return sorted(kept)

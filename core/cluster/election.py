@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class NodeBenchmark:
     node_id: str
     score: float
-    role_hint: str = "agent"
+    role_hint: str = 'agent'
 
 
 @dataclass(slots=True)
@@ -25,11 +25,11 @@ class ClusterElection:
     def rank(self, nodes: list[NodeBenchmark]) -> list[NodeBenchmark]:
         ordered = sorted(nodes, key=lambda n: n.score, reverse=True)
         if ordered:
-            ordered[0].role_hint = "juiz"
+            ordered[0].role_hint = 'juiz'
         if len(ordered) > 1:
-            ordered[-1].role_hint = "bibliotecaria"
+            ordered[-1].role_hint = 'bibliotecaria'
         for item in ordered[1:-1]:
-            item.role_hint = "agente"
+            item.role_hint = 'agente'
         return ordered
 
     def run(self, nodes: list[NodeBenchmark], total_votes: int, positive_votes: int) -> ElectionResult | None:

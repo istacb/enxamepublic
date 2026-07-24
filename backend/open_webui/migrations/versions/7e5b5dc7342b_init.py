@@ -3,7 +3,9 @@
 # Revises: (none)
 # Created on: 2024-06-24 13:15:33.808998
 from __future__ import annotations
-from typing import Sequence
+
+from collections.abc import Sequence
+
 import open_webui.internal.db  # noqa: F401
 import sqlalchemy as sa
 from alembic import op

@@ -1,4 +1,3 @@
-import logging
 from base64 import b64encode
 
 from open_webui.env import (

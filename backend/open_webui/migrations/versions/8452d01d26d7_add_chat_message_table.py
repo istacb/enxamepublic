@@ -9,7 +9,7 @@ Create Date: 2026-02-01 04:00:00.000000
 import json
 import logging
 import time
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -17,9 +17,9 @@ from alembic import op
 log = logging.getLogger(__name__)
 
 revision: str = '8452d01d26d7'
-down_revision: Union[str, None] = '374d2f66af06'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '374d2f66af06'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 BATCH_SIZE = 5000
 
@@ -169,7 +169,7 @@ def upgrade() -> None:
 
             try:
                 timestamp = int(float(timestamp))
-            except Exception as e:
+            except Exception:
                 timestamp = now
 
             # Normalize timestamp: convert ms to seconds, validate range

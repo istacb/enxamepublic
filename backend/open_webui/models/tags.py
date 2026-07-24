@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import logging
-import time
-import uuid
 
 # local imports
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import JSON, BigInteger, Column, Index, PrimaryKeyConstraint, String, delete, select
+from sqlalchemy import JSON, Column, Index, PrimaryKeyConstraint, String, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)

@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 from abc import ABC, abstractmethod
-from typing import BinaryIO, Dict, Tuple
+from typing import BinaryIO
 
 import boto3
 from azure.core.exceptions import ResourceNotFoundError
@@ -43,7 +43,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    def upload_file(self, file: BinaryIO, filename: str, tags: Dict[str, str]) -> Tuple[bytes, str]:
+    def upload_file(self, file: BinaryIO, filename: str, tags: dict[str, str]) -> tuple[bytes, str]:
         pass
 
     @abstractmethod
@@ -57,7 +57,7 @@ class StorageProvider(ABC):
 
 class LocalStorageProvider(StorageProvider):
     @staticmethod
-    def upload_file(file: BinaryIO, filename: str, tags: Dict[str, str]) -> Tuple[bytes, str]:
+    def upload_file(file: BinaryIO, filename: str, tags: dict[str, str]) -> tuple[bytes, str]:
         contents = file.read()
         if not contents:
             raise ValueError(ERROR_MESSAGES.EMPTY_CONTENT)
@@ -138,7 +138,7 @@ class S3StorageProvider(StorageProvider):
         """Only include S3 allowed characters."""
         return re.sub(r'[^a-zA-Z0-9 äöüÄÖÜß\+\-=\._:/@]', '', s)
 
-    def upload_file(self, file: BinaryIO, filename: str, tags: Dict[str, str]) -> Tuple[bytes, str]:
+    def upload_file(self, file: BinaryIO, filename: str, tags: dict[str, str]) -> tuple[bytes, str]:
         """Handles uploading of the file to S3 storage."""
         contents, file_path = LocalStorageProvider.upload_file(file, filename, tags)
         s3_key = os.path.join(self.key_prefix, filename)
@@ -220,7 +220,7 @@ class GCSStorageProvider(StorageProvider):
             self.gcs_client = storage.Client()
         self.bucket = self.gcs_client.bucket(GCS_BUCKET_NAME)
 
-    def upload_file(self, file: BinaryIO, filename: str, tags: Dict[str, str]) -> Tuple[bytes, str]:
+    def upload_file(self, file: BinaryIO, filename: str, tags: dict[str, str]) -> tuple[bytes, str]:
         """Handles uploading of the file to GCS storage."""
         contents, file_path = LocalStorageProvider.upload_file(file, filename, tags)
         try:
@@ -284,7 +284,7 @@ class AzureStorageProvider(StorageProvider):
             self.blob_service_client = BlobServiceClient(account_url=self.endpoint, credential=DefaultAzureCredential())
         self.container_client = self.blob_service_client.get_container_client(self.container_name)
 
-    def upload_file(self, file: BinaryIO, filename: str, tags: Dict[str, str]) -> Tuple[bytes, str]:
+    def upload_file(self, file: BinaryIO, filename: str, tags: dict[str, str]) -> tuple[bytes, str]:
         """Handles uploading of the file to Azure Blob Storage."""
         contents, file_path = LocalStorageProvider.upload_file(file, filename, tags)
         try:

@@ -41,11 +41,11 @@ class MetricsCollector:
             ram = float(psutil.virtual_memory().percent)
 
         return {
-            "cpu_percent": round(cpu, 2),
-            "ram_percent": round(ram, 2),
-            "avg_latency_ms": round(avg_ms, 2),
-            "p95_latency_ms": round(p95_ms, 2),
-            "tasks_completed": self._completed,
-            "tasks_failed": self._failed,
-            "throughput_tps": round((self._completed + self._failed) / elapsed, 3),
+            'cpu_percent': round(cpu, 2),
+            'ram_percent': round(ram, 2),
+            'avg_latency_ms': round(avg_ms, 2),
+            'p95_latency_ms': round(p95_ms, 2),
+            'tasks_completed': self._completed,
+            'tasks_failed': self._failed,
+            'throughput_tps': round((self._completed + self._failed) / elapsed, 3),
         }

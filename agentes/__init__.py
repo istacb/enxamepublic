@@ -2,4 +2,4 @@
 
 from .service import DynamicAgentService
 
-__all__ = ["DynamicAgentService"]
+__all__ = ['DynamicAgentService']

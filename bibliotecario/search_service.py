@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
+from core.exp.secure_logger import log_safe_query, log_safe_user_action, setup_secure_logger
 from core.ollama.client import OllamaClient, OllamaGenerateRequest
-from core.exp.secure_logger import setup_secure_logger, log_safe_query, log_safe_user_action
 
 from .embeddings import EmbeddingService
 from .indexer import IndexedChunk, LocalDocumentIndexer
@@ -19,9 +18,9 @@ from .zim_reader import ZimSearchClient
 
 # Configurar logger seguro para o Bibliotecário
 logger = setup_secure_logger(
-    name="bibliotecario.search_service",
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    log_file=os.getenv("BIB_LOG_FILE", "/var/log/enxame/bibliotecario.log"),
+    name='bibliotecario.search_service',
+    level=os.getenv('LOG_LEVEL', 'INFO'),
+    log_file=os.getenv('BIB_LOG_FILE', '/var/log/enxame/bibliotecario.log'),
     console_output=True,
 )
 
@@ -34,12 +33,12 @@ class SearchResult:
 
 class SearchPipelineService:
     def __init__(self) -> None:
-        docs_dir = os.getenv("BIB_DOCS_DIR", "/data/docs")
-        zim_dir = os.getenv("BIB_ZIM_DIR", "/data/zim")
-        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        self.model = os.getenv("BIB_MODEL", "gemma2:9b")
+        docs_dir = os.getenv('BIB_DOCS_DIR', '/data/docs')
+        zim_dir = os.getenv('BIB_ZIM_DIR', '/data/zim')
+        ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+        self.model = os.getenv('BIB_MODEL', 'gemma2:9b')
 
-        self.translator = PTBRTranslator(enabled=os.getenv("TRANSLATION_ENABLED", "1") == "1")
+        self.translator = PTBRTranslator(enabled=os.getenv('TRANSLATION_ENABLED', '1') == '1')
         self.embeddings = EmbeddingService()
         self.indexer = LocalDocumentIndexer(docs_dir=docs_dir, embeddings=self.embeddings)
         self.qdrant = QdrantStore(embeddings=self.embeddings)
@@ -49,7 +48,7 @@ class SearchPipelineService:
 
         self._cache = None
         self._memory_cache: dict[str, str] = {}
-        self._cache_ttl = int(os.getenv("REDIS_CACHE_TTL_SECONDS", "3600"))
+        self._cache_ttl = int(os.getenv('REDIS_CACHE_TTL_SECONDS', '3600'))
 
     async def initialize(self) -> None:
         await self._init_cache()
@@ -57,15 +56,15 @@ class SearchPipelineService:
         await self.qdrant.upsert_chunks(chunks)
 
     async def _init_cache(self) -> None:
-        redis_url = os.getenv("REDIS_URL", "redis://redis-bibliotecario:6379/0")
+        redis_url = os.getenv('REDIS_URL', 'redis://redis-bibliotecario:6379/0')
         try:
             from redis.asyncio import from_url  # type: ignore
 
             self._cache = from_url(redis_url, decode_responses=True)
             await self._cache.ping()
-            logger.info("Redis conectado em %s", redis_url)
+            logger.info('Redis conectado em %s', redis_url)
         except Exception as exc:  # pragma: no cover - depende de runtime
-            logger.warning("Redis indisponível, cache em memória: %s", exc)
+            logger.warning('Redis indisponível, cache em memória: %s', exc)
             self._cache = None
 
     async def _cache_get(self, key: str) -> str | None:
@@ -91,11 +90,11 @@ class SearchPipelineService:
 
     async def _synthesize(self, query: str, context: str, source: str) -> str:
         prompt = (
-            "Você é o Bibliotecário do ENXAME. Responda em português brasileiro técnico e objetivo. "
-            "Se o contexto não for suficiente, diga explicitamente as limitações.\n\n"
-            f"Pergunta: {query}\n"
-            f"Fonte primária: {source}\n\n"
-            f"Contexto:\n{context}"
+            'Você é o Bibliotecário do ENXAME. Responda em português brasileiro técnico e objetivo. '
+            'Se o contexto não for suficiente, diga explicitamente as limitações.\n\n'
+            f'Pergunta: {query}\n'
+            f'Fonte primária: {source}\n\n'
+            f'Contexto:\n{context}'
         )
         response = await self.ollama.generate(
             OllamaGenerateRequest(model=self.model, prompt=prompt, temperature=0.2, num_ctx=8192)
@@ -111,124 +110,122 @@ class SearchPipelineService:
     async def search(self, query: str, allow_internet: bool = True) -> SearchResult:
         """
         Pipeline de busca com logging seguro e controle de acesso à internet.
-        
+
         Args:
             query: Query de busca do usuário
             allow_internet: Se True e apenas Bibliotecário/Juiz podem acessar internet
-        
+
         Returns:
             SearchResult com resposta e metadados
         """
         started = time.perf_counter()
-        
+
         # Log seguro da query (não loga conteúdo completo)
-        log_safe_query(logger, query, context="search_start")
-        log_safe_user_action(logger, action="search_query", details={"allow_internet": allow_internet})
-        
+        log_safe_query(logger, query, context='search_start')
+        log_safe_user_action(logger, action='search_query', details={'allow_internet': allow_internet})
+
         query_pt = self.translator.to_pt_br(query)
         trace: list[dict[str, Any]] = []
 
-        logger.info("[pipeline] etapa=1 redis_cache")
+        logger.info('[pipeline] etapa=1 redis_cache')
         # 1) Cache Redis
-        cache_key = f"bibliotecario:query:{hash(query_pt.strip().lower())}"
+        cache_key = f'bibliotecario:query:{hash(query_pt.strip().lower())}'
         cached = await self._cache_get(cache_key)
-        trace.append({"stage": "redis_cache", "hit": bool(cached)})
+        trace.append({'stage': 'redis_cache', 'hit': bool(cached)})
         if cached:
             payload = json.loads(cached)
-            payload.setdefault("metadata", {}).setdefault("pipeline", trace)
-            payload["metadata"]["latency_ms"] = int((time.perf_counter() - started) * 1000)
-            logger.info("[pipeline] cache_hit=true latency_ms=%d", payload["metadata"]["latency_ms"])
-            return SearchResult(answer=str(payload.get("answer", "")), metadata=payload.get("metadata", {}))
+            payload.setdefault('metadata', {}).setdefault('pipeline', trace)
+            payload['metadata']['latency_ms'] = int((time.perf_counter() - started) * 1000)
+            logger.info('[pipeline] cache_hit=true latency_ms=%d', payload['metadata']['latency_ms'])
+            return SearchResult(answer=str(payload.get('answer', '')), metadata=payload.get('metadata', {}))
 
-        logger.info("[pipeline] etapa=2 qdrant")
+        logger.info('[pipeline] etapa=2 qdrant')
         # 2) Qdrant
         qdrant_hits = await self.qdrant.search(query_pt, limit=4)
-        trace.append({"stage": "qdrant", "hit": bool(qdrant_hits), "count": len(qdrant_hits)})
+        trace.append({'stage': 'qdrant', 'hit': bool(qdrant_hits), 'count': len(qdrant_hits)})
         if qdrant_hits:
-            context = "\n\n".join(
-                f"[score={h.score:.3f}] {h.text}\n(origem: {h.source_path})" for h in qdrant_hits
-            )
-            answer = await self._synthesize(query_pt, context, source="qdrant")
+            context = '\n\n'.join(f'[score={h.score:.3f}] {h.text}\n(origem: {h.source_path})' for h in qdrant_hits)
+            answer = await self._synthesize(query_pt, context, source='qdrant')
             metadata = {
-                "source": "qdrant",
-                "sources": [h.source_path for h in qdrant_hits],
-                "pipeline": trace,
-                "translated": True,
-                "latency_ms": int((time.perf_counter() - started) * 1000),
+                'source': 'qdrant',
+                'sources': [h.source_path for h in qdrant_hits],
+                'pipeline': trace,
+                'translated': True,
+                'latency_ms': int((time.perf_counter() - started) * 1000),
             }
-            await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
-            logger.info("[pipeline] qdrant_success=true latency_ms=%d", metadata["latency_ms"])
+            await self._cache_set(cache_key, json.dumps({'answer': answer, 'metadata': metadata}, ensure_ascii=False))
+            logger.info('[pipeline] qdrant_success=true latency_ms=%d', metadata['latency_ms'])
             return SearchResult(answer=answer, metadata=metadata)
 
-        logger.info("[pipeline] etapa=3 local_files")
+        logger.info('[pipeline] etapa=3 local_files')
         # 3) Arquivos locais
         local_hits = await self._local_file_search(query_pt, limit=4)
-        trace.append({"stage": "local_files", "hit": bool(local_hits), "count": len(local_hits)})
+        trace.append({'stage': 'local_files', 'hit': bool(local_hits), 'count': len(local_hits)})
         if local_hits:
-            context = "\n\n".join(f"{c.text}\n(origem: {c.source_path})" for c in local_hits)
-            answer = await self._synthesize(query_pt, context, source="arquivos_locais")
+            context = '\n\n'.join(f'{c.text}\n(origem: {c.source_path})' for c in local_hits)
+            answer = await self._synthesize(query_pt, context, source='arquivos_locais')
             metadata = {
-                "source": "local_files",
-                "sources": [h.source_path for h in local_hits],
-                "pipeline": trace,
-                "translated": True,
-                "latency_ms": int((time.perf_counter() - started) * 1000),
+                'source': 'local_files',
+                'sources': [h.source_path for h in local_hits],
+                'pipeline': trace,
+                'translated': True,
+                'latency_ms': int((time.perf_counter() - started) * 1000),
             }
-            await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
-            logger.info("[pipeline] local_files_success=true latency_ms=%d", metadata["latency_ms"])
+            await self._cache_set(cache_key, json.dumps({'answer': answer, 'metadata': metadata}, ensure_ascii=False))
+            logger.info('[pipeline] local_files_success=true latency_ms=%d', metadata['latency_ms'])
             return SearchResult(answer=answer, metadata=metadata)
 
-        logger.info("[pipeline] etapa=4 zim")
+        logger.info('[pipeline] etapa=4 zim')
         # 4) ZIM
         zim_hits = self.zim.search(query_pt, limit_per_file=2)
-        trace.append({"stage": "zim", "hit": bool(zim_hits), "count": len(zim_hits)})
+        trace.append({'stage': 'zim', 'hit': bool(zim_hits), 'count': len(zim_hits)})
         if zim_hits:
-            context = "\n\n".join(
-                f"{h.title}: {h.snippet}\n(origem: {h.source_file})" for h in zim_hits[:6]
-            )
-            answer = await self._synthesize(query_pt, context, source="zim")
+            context = '\n\n'.join(f'{h.title}: {h.snippet}\n(origem: {h.source_file})' for h in zim_hits[:6])
+            answer = await self._synthesize(query_pt, context, source='zim')
             metadata = {
-                "source": "zim",
-                "sources": [h.source_file for h in zim_hits[:6]],
-                "pipeline": trace,
-                "translated": True,
-                "latency_ms": int((time.perf_counter() - started) * 1000),
+                'source': 'zim',
+                'sources': [h.source_file for h in zim_hits[:6]],
+                'pipeline': trace,
+                'translated': True,
+                'latency_ms': int((time.perf_counter() - started) * 1000),
             }
-            await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
-            logger.info("[pipeline] zim_success=true latency_ms=%d", metadata["latency_ms"])
+            await self._cache_set(cache_key, json.dumps({'answer': answer, 'metadata': metadata}, ensure_ascii=False))
+            logger.info('[pipeline] zim_success=true latency_ms=%d', metadata['latency_ms'])
             return SearchResult(answer=answer, metadata=metadata)
 
         if allow_internet:
-            logger.warning("[pipeline] etapa=5 internet (último recurso) - permitido apenas para Bibliotecário/Juiz")
+            logger.warning('[pipeline] etapa=5 internet (último recurso) - permitido apenas para Bibliotecário/Juiz')
             # 5) Internet (último recurso) - apenas Bibliotecário e Juiz têm permissão
             web_hits = await self.web.search(query_pt)
-            trace.append({"stage": "internet", "hit": bool(web_hits), "count": len(web_hits), "last_resort": True})
+            trace.append({'stage': 'internet', 'hit': bool(web_hits), 'count': len(web_hits), 'last_resort': True})
             if web_hits:
-                context = "\n\n".join(f"{h.title}: {h.snippet}\nURL: {h.url}" for h in web_hits[:5])
-                answer = await self._synthesize(query_pt, context, source="internet")
+                context = '\n\n'.join(f'{h.title}: {h.snippet}\nURL: {h.url}' for h in web_hits[:5])
+                answer = await self._synthesize(query_pt, context, source='internet')
                 metadata = {
-                    "source": "internet",
-                    "sources": [h.url for h in web_hits[:5]],
-                    "pipeline": trace,
-                    "translated": True,
-                    "latency_ms": int((time.perf_counter() - started) * 1000),
-                    "internet_used": True,
+                    'source': 'internet',
+                    'sources': [h.url for h in web_hits[:5]],
+                    'pipeline': trace,
+                    'translated': True,
+                    'latency_ms': int((time.perf_counter() - started) * 1000),
+                    'internet_used': True,
                 }
-                await self._cache_set(cache_key, json.dumps({"answer": answer, "metadata": metadata}, ensure_ascii=False))
-                logger.info("[pipeline] internet_success=true latency_ms=%d", metadata["latency_ms"])
+                await self._cache_set(
+                    cache_key, json.dumps({'answer': answer, 'metadata': metadata}, ensure_ascii=False)
+                )
+                logger.info('[pipeline] internet_success=true latency_ms=%d', metadata['latency_ms'])
                 return SearchResult(answer=answer, metadata=metadata)
         else:
-            trace.append({"stage": "internet", "skipped": True, "reason": "disabled_by_cluster_policy"})
-            logger.debug("[pipeline] internet bloqueado por política do cluster")
+            trace.append({'stage': 'internet', 'skipped': True, 'reason': 'disabled_by_cluster_policy'})
+            logger.debug('[pipeline] internet bloqueado por política do cluster')
 
-        fallback = "Não encontrei evidências suficientes nas etapas locais da busca distribuída."
+        fallback = 'Não encontrei evidências suficientes nas etapas locais da busca distribuída.'
         metadata = {
-            "source": "none",
-            "sources": [],
-            "pipeline": trace,
-            "translated": True,
-            "latency_ms": int((time.perf_counter() - started) * 1000),
+            'source': 'none',
+            'sources': [],
+            'pipeline': trace,
+            'translated': True,
+            'latency_ms': int((time.perf_counter() - started) * 1000),
         }
-        await self._cache_set(cache_key, json.dumps({"answer": fallback, "metadata": metadata}, ensure_ascii=False))
-        logger.info("[pipeline] fallback_result latency_ms=%d", metadata["latency_ms"])
+        await self._cache_set(cache_key, json.dumps({'answer': fallback, 'metadata': metadata}, ensure_ascii=False))
+        logger.info('[pipeline] fallback_result latency_ms=%d', metadata['latency_ms'])
         return SearchResult(answer=fallback, metadata=metadata)

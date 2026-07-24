@@ -1,9 +1,7 @@
 import logging
-import re
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from open_webui.config import (
     DEFAULT_AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE,
     DEFAULT_EMOJI_GENERATION_PROMPT_TEMPLATE,
@@ -13,7 +11,6 @@ from open_webui.config import (
     DEFAULT_QUERY_GENERATION_PROMPT_TEMPLATE,
     DEFAULT_TAGS_GENERATION_PROMPT_TEMPLATE,
     DEFAULT_TITLE_GENERATION_PROMPT_TEMPLATE,
-    DEFAULT_VOICE_MODE_PROMPT_TEMPLATE,
 )
 from open_webui.constants import ERROR_MESSAGES, TASKS
 from open_webui.models.config import Config
@@ -94,8 +91,8 @@ async def get_task_config(request: Request, user=Depends(get_verified_user)):
 
 
 class TaskConfigForm(BaseModel):
-    TASK_MODEL: Optional[str]
-    TASK_MODEL_EXTERNAL: Optional[str]
+    TASK_MODEL: str | None
+    TASK_MODEL_EXTERNAL: str | None
     ENABLE_TITLE_GENERATION: bool
     TITLE_GENERATION_PROMPT_TEMPLATE: str
     IMAGE_PROMPT_GENERATION_PROMPT_TEMPLATE: str
@@ -111,7 +108,7 @@ class TaskConfigForm(BaseModel):
     QUERY_GENERATION_PROMPT_TEMPLATE: str
     TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE: str
     ENABLE_VOICE_MODE_PROMPT: bool
-    VOICE_MODE_PROMPT_TEMPLATE: Optional[str]
+    VOICE_MODE_PROMPT_TEMPLATE: str | None
 
 
 @router.post('/config/update')
@@ -196,7 +193,7 @@ async def generate_title(request: Request, form_data: dict, user=Depends(get_ver
 
     try:
         return await generate_chat_completion(request, form_data=payload, user=user)
-    except Exception as e:
+    except Exception:
         log.error('Exception occurred', exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -266,7 +263,7 @@ async def generate_follow_ups(request: Request, form_data: dict, user=Depends(ge
 
     try:
         return await generate_chat_completion(request, form_data=payload, user=user)
-    except Exception as e:
+    except Exception:
         log.error('Exception occurred', exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -400,7 +397,7 @@ async def generate_image_prompt(request: Request, form_data: dict, user=Depends(
 
     try:
         return await generate_chat_completion(request, form_data=payload, user=user)
-    except Exception as e:
+    except Exception:
         log.error('Exception occurred', exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,

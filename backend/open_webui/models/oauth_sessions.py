@@ -4,13 +4,12 @@ import json
 import logging
 import time
 import uuid
-from typing import List, Optional
 
 from cryptography.fernet import Fernet
 from open_webui.env import OAUTH_SESSION_TOKEN_ENCRYPTION_KEY
 from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import BigInteger, Column, Index, String, Text, delete, select, update
+from sqlalchemy import BigInteger, Column, Index, Text, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -106,8 +105,8 @@ class OAuthSessionTable:
         user_id: str,
         provider: str,
         token: dict,
-        db: Optional[AsyncSession] = None,
-    ) -> Optional[OAuthSessionModel]:
+        db: AsyncSession | None = None,
+    ) -> OAuthSessionModel | None:
         """Create a new OAuth session"""
         try:
             async with get_async_db_context(db) as db:
@@ -148,9 +147,7 @@ class OAuthSessionTable:
             log.error(f'Error creating OAuth session: {e}')
             return None
 
-    async def get_session_by_id(
-        self, session_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[OAuthSessionModel]:
+    async def get_session_by_id(self, session_id: str, db: AsyncSession | None = None) -> OAuthSessionModel | None:
         """Get OAuth session by ID"""
         try:
             async with get_async_db_context(db) as db:
@@ -173,8 +170,8 @@ class OAuthSessionTable:
             return None
 
     async def get_session_by_id_and_user_id(
-        self, session_id: str, user_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[OAuthSessionModel]:
+        self, session_id: str, user_id: str, db: AsyncSession | None = None
+    ) -> OAuthSessionModel | None:
         """Get OAuth session by ID and user ID"""
         try:
             async with get_async_db_context(db) as db:
@@ -197,8 +194,8 @@ class OAuthSessionTable:
             return None
 
     async def get_session_by_provider_and_user_id(
-        self, provider: str, user_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[OAuthSessionModel]:
+        self, provider: str, user_id: str, db: AsyncSession | None = None
+    ) -> OAuthSessionModel | None:
         """Get OAuth session by provider and user ID"""
         try:
             async with get_async_db_context(db) as db:
@@ -224,7 +221,7 @@ class OAuthSessionTable:
             log.error(f'Error getting OAuth session by provider and user ID: {e}')
             return None
 
-    async def get_sessions_by_user_id(self, user_id: str, db: Optional[AsyncSession] = None) -> List[OAuthSessionModel]:
+    async def get_sessions_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> list[OAuthSessionModel]:
         """Get all OAuth sessions for a user"""
         try:
             async with get_async_db_context(db) as db:
@@ -259,8 +256,8 @@ class OAuthSessionTable:
             return []
 
     async def update_session_by_id(
-        self, session_id: str, token: dict, db: Optional[AsyncSession] = None
-    ) -> Optional[OAuthSessionModel]:
+        self, session_id: str, token: dict, db: AsyncSession | None = None
+    ) -> OAuthSessionModel | None:
         """Update OAuth session tokens"""
         try:
             async with get_async_db_context(db) as db:
@@ -295,7 +292,7 @@ class OAuthSessionTable:
             log.error(f'Error updating OAuth session tokens: {e}')
             return None
 
-    async def delete_session_by_id(self, session_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_session_by_id(self, session_id: str, db: AsyncSession | None = None) -> bool:
         """Delete an OAuth session"""
         try:
             async with get_async_db_context(db) as db:
@@ -306,7 +303,7 @@ class OAuthSessionTable:
             log.error(f'Error deleting OAuth session: {e}')
             return False
 
-    async def delete_sessions_by_user_id(self, user_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_sessions_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> bool:
         """Delete all OAuth sessions for a user"""
         try:
             async with get_async_db_context(db) as db:
@@ -318,7 +315,7 @@ class OAuthSessionTable:
             return False
 
     async def delete_sessions_by_user_id_and_provider(
-        self, user_id: str, provider: str, db: Optional[AsyncSession] = None
+        self, user_id: str, provider: str, db: AsyncSession | None = None
     ) -> bool:
         """Delete all OAuth sessions for a specific user and provider"""
         try:
@@ -330,7 +327,7 @@ class OAuthSessionTable:
             log.error(f'Error deleting OAuth sessions for user {user_id} and provider {provider}: {e}')
             return False
 
-    async def delete_sessions_by_provider(self, provider: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_sessions_by_provider(self, provider: str, db: AsyncSession | None = None) -> bool:
         """Delete all OAuth sessions for a provider"""
         try:
             async with get_async_db_context(db) as db:

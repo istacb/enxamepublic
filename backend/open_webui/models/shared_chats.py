@@ -1,9 +1,8 @@
 import logging
 import time
 import uuid
-from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, get_async_db_context
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import JSON, BigInteger, Column, ForeignKey, Text, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +46,7 @@ class SharedChatResponse(BaseModel):
     id: str
     chat_id: str
     title: str
-    share_id: Optional[str] = None  # Alias for id, for backward compat
+    share_id: str | None = None  # Alias for id, for backward compat
     updated_at: int
     created_at: int
 
@@ -58,7 +57,7 @@ class SharedChatResponse(BaseModel):
 
 
 class SharedChatsTable:
-    async def create(self, chat_id: str, user_id: str, db: Optional[AsyncSession] = None) -> Optional[SharedChatModel]:
+    async def create(self, chat_id: str, user_id: str, db: AsyncSession | None = None) -> SharedChatModel | None:
         """
         Create a snapshot of the chat for link sharing.
         Returns the SharedChatModel with the share token as its id.
@@ -88,7 +87,7 @@ class SharedChatsTable:
 
             return SharedChatModel.model_validate(shared_chat)
 
-    async def update(self, share_id: str, db: Optional[AsyncSession] = None) -> Optional[SharedChatModel]:
+    async def update(self, share_id: str, db: AsyncSession | None = None) -> SharedChatModel | None:
         """
         Re-snapshot: update the shared chat with the current state of the original chat.
         """
@@ -111,7 +110,7 @@ class SharedChatsTable:
             await db.refresh(shared_chat)
             return SharedChatModel.model_validate(shared_chat)
 
-    async def get_by_id(self, share_id: str, db: Optional[AsyncSession] = None) -> Optional[SharedChatModel]:
+    async def get_by_id(self, share_id: str, db: AsyncSession | None = None) -> SharedChatModel | None:
         """Get a shared chat by its share token."""
         async with get_async_db_context(db) as db:
             shared_chat = await db.get(SharedChat, share_id)
@@ -119,7 +118,7 @@ class SharedChatsTable:
                 return SharedChatModel.model_validate(shared_chat)
             return None
 
-    async def get_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> Optional[SharedChatModel]:
+    async def get_by_chat_id(self, chat_id: str, db: AsyncSession | None = None) -> SharedChatModel | None:
         """Get the shared chat for a given original chat. Returns the most recent one."""
         async with get_async_db_context(db) as db:
             result = await db.execute(
@@ -133,10 +132,10 @@ class SharedChatsTable:
     async def get_by_user_id(
         self,
         user_id: str,
-        filter: Optional[dict] = None,
+        filter: dict | None = None,
         skip: int = 0,
         limit: int = 50,
-        db: Optional[AsyncSession] = None,
+        db: AsyncSession | None = None,
     ) -> list[SharedChatResponse]:
         """List all shared chats created by a user."""
         async with get_async_db_context(db) as db:
@@ -181,7 +180,7 @@ class SharedChatsTable:
                 for sc in result.scalars().all()
             ]
 
-    async def delete_by_id(self, share_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_by_id(self, share_id: str, db: AsyncSession | None = None) -> bool:
         """Delete a shared chat by its share token."""
         try:
             async with get_async_db_context(db) as db:
@@ -191,7 +190,7 @@ class SharedChatsTable:
         except Exception:
             return False
 
-    async def delete_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_by_chat_id(self, chat_id: str, db: AsyncSession | None = None) -> bool:
         """Delete all shared chats for a given original chat."""
         try:
             async with get_async_db_context(db) as db:
@@ -201,7 +200,7 @@ class SharedChatsTable:
         except Exception:
             return False
 
-    async def delete_all_by_user_id(self, user_id: str, db: Optional[AsyncSession] = None) -> bool:
+    async def delete_all_by_user_id(self, user_id: str, db: AsyncSession | None = None) -> bool:
         """Delete all shared chats created by a user."""
         try:
             async with get_async_db_context(db) as db:

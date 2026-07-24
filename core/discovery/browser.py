@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import socket
+from dataclasses import dataclass
 from threading import Event
 
 from zeroconf import ServiceBrowser, ServiceStateChange, Zeroconf
@@ -24,7 +24,9 @@ class ENXAMEMDNSBrowser:
         self._stop_event = Event()
         self._browser: ServiceBrowser | None = None
 
-    def _on_service_state_change(self, zeroconf: Zeroconf, service_type: str, name: str, state_change: ServiceStateChange) -> None:
+    def _on_service_state_change(
+        self, zeroconf: Zeroconf, service_type: str, name: str, state_change: ServiceStateChange
+    ) -> None:
         if state_change is ServiceStateChange.Removed:
             self.nodes.pop(name, None)
             return
@@ -33,21 +35,21 @@ class ENXAMEMDNSBrowser:
         if not info or not info.addresses:
             return
 
-        props = {k.decode("utf-8"): v.decode("utf-8") for k, v in info.properties.items()}
+        props = {k.decode('utf-8'): v.decode('utf-8') for k, v in info.properties.items()}
         host = socket.inet_ntoa(info.addresses[0])
         self.nodes[name] = DiscoveredNode(
-            node_id=props.get("node_id", name),
-            role=props.get("role", "unknown"),
+            node_id=props.get('node_id', name),
+            role=props.get('role', 'unknown'),
             host=host,
             port=info.port,
-            capabilities=props.get("capabilities", ""),
-            models=props.get("models", ""),
+            capabilities=props.get('capabilities', ''),
+            models=props.get('models', ''),
         )
 
     def start(self) -> None:
         self._browser = ServiceBrowser(
             self.zeroconf,
-            "_enxame._tcp.local.",
+            '_enxame._tcp.local.',
             handlers=[self._on_service_state_change],
         )
 

@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import quote
 
 import jwt
@@ -31,7 +31,7 @@ def _mint_forward_user_jwt(user: Any) -> str:
     return jwt.encode(payload, FORWARD_USER_INFO_HEADER_JWT_SECRET, algorithm='HS256')
 
 
-def include_user_info_headers(headers: dict, user: Optional[Any] = None) -> dict:
+def include_user_info_headers(headers: dict, user: Any | None = None) -> dict:
     """
     Forward user identity to external backends: signed JWT in
     FORWARD_USER_INFO_HEADER_JWT if FORWARD_USER_INFO_HEADER_JWT_SECRET is set;

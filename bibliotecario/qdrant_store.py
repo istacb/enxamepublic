@@ -22,7 +22,7 @@ class QdrantHit:
 class QdrantStore:
     def __init__(self, embeddings: EmbeddingService) -> None:
         self.embeddings = embeddings
-        self.collection = os.getenv("QDRANT_COLLECTION", "enxame_docs")
+        self.collection = os.getenv('QDRANT_COLLECTION', 'enxame_docs')
         self._client = None
         self._ready = False
 
@@ -33,11 +33,11 @@ class QdrantStore:
             from qdrant_client import QdrantClient  # type: ignore
             from qdrant_client.models import Distance, VectorParams  # type: ignore
 
-            qdrant_url = os.getenv("QDRANT_URL", "").strip()
+            qdrant_url = os.getenv('QDRANT_URL', '').strip()
             if qdrant_url:
                 self._client = QdrantClient(url=qdrant_url)
             else:
-                local_path = os.getenv("QDRANT_LOCAL_PATH", "/data/qdrant")
+                local_path = os.getenv('QDRANT_LOCAL_PATH', '/data/qdrant')
                 self._client = QdrantClient(path=local_path)
 
             collections = {c.name for c in self._client.get_collections().collections}
@@ -46,9 +46,9 @@ class QdrantStore:
                     collection_name=self.collection,
                     vectors_config=VectorParams(size=self.embeddings.dimension, distance=Distance.COSINE),
                 )
-            logger.info("Qdrant pronto na coleção %s", self.collection)
+            logger.info('Qdrant pronto na coleção %s', self.collection)
         except Exception as exc:  # pragma: no cover - depende de runtime
-            logger.warning("Qdrant indisponível: %s", exc)
+            logger.warning('Qdrant indisponível: %s', exc)
             self._client = None
         self._ready = True
 
@@ -73,17 +73,17 @@ class QdrantStore:
                         id=int_id,
                         vector=vector,
                         payload={
-                            "chunk_id": chunk.chunk_id,
-                            "text": chunk.text,
-                            "source_path": chunk.source_path,
-                            "extension": chunk.extension,
+                            'chunk_id': chunk.chunk_id,
+                            'text': chunk.text,
+                            'source_path': chunk.source_path,
+                            'extension': chunk.extension,
                         },
                     )
                 )
             self._client.upsert(collection_name=self.collection, points=points)
-            logger.info("Qdrant indexado com %s chunks", len(points))
+            logger.info('Qdrant indexado com %s chunks', len(points))
         except Exception as exc:  # pragma: no cover
-            logger.warning("Falha no upsert Qdrant: %s", exc)
+            logger.warning('Falha no upsert Qdrant: %s', exc)
 
     async def search(self, query: str, limit: int = 5) -> list[QdrantHit]:
         self._load()
@@ -98,12 +98,12 @@ class QdrantStore:
                 hits.append(
                     QdrantHit(
                         score=float(row.score),
-                        text=str(payload.get("text", "")),
-                        source_path=str(payload.get("source_path", "")),
-                        chunk_id=str(payload.get("chunk_id", "")),
+                        text=str(payload.get('text', '')),
+                        source_path=str(payload.get('source_path', '')),
+                        chunk_id=str(payload.get('chunk_id', '')),
                     )
                 )
             return hits
         except Exception as exc:  # pragma: no cover
-            logger.warning("Falha na busca Qdrant: %s", exc)
+            logger.warning('Falha na busca Qdrant: %s', exc)
             return []

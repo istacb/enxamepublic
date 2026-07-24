@@ -6,16 +6,16 @@ Create Date: 2026-05-14 04:38:14.000000
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '461111b60977'
-down_revision: Union[str, None] = '3c9b0ca343fd'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '3c9b0ca343fd'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # Tables bootstrapped by the old Peewee migration layer that may have
 # UNIQUE(id) but no PRIMARY KEY constraint.  Fresh Alembic installs

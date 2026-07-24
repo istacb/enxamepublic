@@ -4,7 +4,7 @@ import logging
 
 import black
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from open_webui.config import DATA_DIR, ENABLE_ADMIN_EXPORT
+from open_webui.config import ENABLE_ADMIN_EXPORT
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.models.chats import ChatTitleMessagesForm
 from open_webui.models.config import Config

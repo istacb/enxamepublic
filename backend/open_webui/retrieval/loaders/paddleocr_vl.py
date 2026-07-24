@@ -2,7 +2,6 @@ import base64
 import logging
 import os
 import sys
-from typing import List
 
 import requests
 from langchain_core.documents import Document
@@ -31,7 +30,7 @@ class PaddleOCRVLLoader:
         self.file_path = file_path
         self.file_name = os.path.basename(file_path)
 
-    def load(self) -> List[Document]:
+    def load(self) -> list[Document]:
         log.info(f'Processing with PaddleOCR-vl: {self.file_path}')
 
         try:

@@ -19,7 +19,6 @@ from open_webui.config import (
     OAUTH_PROVIDERS,
 )
 from open_webui.constants import ERROR_MESSAGES
-from open_webui.events import EVENTS, publish_event
 from open_webui.env import (
     AIOHTTP_CLIENT_SESSION_SSL,
     ENABLE_INITIAL_ADMIN_SIGNUP,
@@ -33,6 +32,7 @@ from open_webui.env import (
     WEBUI_AUTH_TRUSTED_NAME_HEADER,
     WEBUI_AUTH_TRUSTED_ROLE_HEADER,
 )
+from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
 from open_webui.models.auths import (
     AddUserForm,
@@ -170,7 +170,7 @@ async def create_session_response(
     )
 
     if set_cookie and response:
-        datetime_expires_at = datetime.datetime.fromtimestamp(expires_at, datetime.timezone.utc) if expires_at else None
+        datetime_expires_at = datetime.datetime.fromtimestamp(expires_at, datetime.UTC) if expires_at else None
         max_age = int(expires_delta.total_seconds()) if expires_delta else None
         response.set_cookie(
             key='token',
@@ -257,7 +257,7 @@ async def get_session_user(
         response.set_cookie(
             key='token',
             value=token,
-            expires=(datetime.datetime.fromtimestamp(expires_at, datetime.timezone.utc) if expires_at else None),
+            expires=(datetime.datetime.fromtimestamp(expires_at, datetime.UTC) if expires_at else None),
             httponly=True,  # Ensures the cookie is not accessible via JavaScript
             samesite=WEBUI_AUTH_COOKIE_SAME_SITE,
             secure=WEBUI_AUTH_COOKIE_SECURE,
@@ -677,7 +677,7 @@ async def signin(
             name = request.headers.get(WEBUI_AUTH_TRUSTED_NAME_HEADER, email)
             try:
                 name = urllib.parse.unquote(name, encoding='utf-8')
-            except Exception as e:
+            except Exception:
                 pass
 
         if not await Users.get_user_by_email(email.lower(), db=db):
@@ -1508,7 +1508,7 @@ async def token_exchange(
     sub_claim = await Config.get('oauth.sub_claim')
     sub = user_data.get(sub_claim or OAUTH_PROVIDERS[provider].get('sub_claim', 'sub'))
     if not sub:
-        log.warning(f'Token exchange failed: sub claim missing from user data')
+        log.warning('Token exchange failed: sub claim missing from user data')
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token missing required 'sub' claim",
@@ -1516,7 +1516,7 @@ async def token_exchange(
 
     email = user_data.get(email_claim, '')
     if not email:
-        log.warning(f'Token exchange failed: email claim missing from user data')
+        log.warning('Token exchange failed: email claim missing from user data')
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Token missing required email claim',
@@ -1528,7 +1528,7 @@ async def token_exchange(
     if isinstance(oauth_allowed_domains, str):
         oauth_allowed_domains = [domain.strip() for domain in oauth_allowed_domains.split(',') if domain.strip()]
     if '*' not in oauth_allowed_domains and email.split('@')[-1] not in oauth_allowed_domains:
-        log.warning(f'Token exchange denied: email domain not in allowed domains list')
+        log.warning('Token exchange denied: email domain not in allowed domains list')
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,

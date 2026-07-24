@@ -2,4 +2,4 @@
 
 from .client import OllamaClient, OllamaGenerateRequest
 
-__all__ = ["OllamaClient", "OllamaGenerateRequest"]
+__all__ = ['OllamaClient', 'OllamaGenerateRequest']

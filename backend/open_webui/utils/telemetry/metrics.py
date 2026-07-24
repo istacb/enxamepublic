@@ -21,7 +21,7 @@ import datetime
 import logging
 import time
 from base64 import b64encode
-from typing import Dict, Iterable, List, Optional
+from collections.abc import Iterable
 
 from fastapi import FastAPI, Request
 from open_webui.env import (
@@ -31,7 +31,6 @@ from open_webui.env import (
     OTEL_METRICS_EXPORTER_OTLP_ENDPOINT,
     OTEL_METRICS_EXPORTER_OTLP_INSECURE,
     OTEL_METRICS_OTLP_SPAN_EXPORTER,
-    OTEL_SERVICE_NAME,
 )
 from open_webui.models.users import User
 from opentelemetry import metrics
@@ -66,13 +65,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _count_total_users(db_engine: Engine) -> Optional[int]:
+def _count_total_users(db_engine: Engine) -> int | None:
     """Return the total number of registered users (sync)."""
     with Session(db_engine) as session:
         return session.execute(select(func.count()).select_from(User)).scalar()
 
 
-def _count_active_users(db_engine: Engine) -> Optional[int]:
+def _count_active_users(db_engine: Engine) -> int | None:
     """Return the number of users active within the last 3 minutes (sync)."""
     three_minutes_ago = int(time.time()) - 180
     with Session(db_engine) as session:
@@ -81,7 +80,7 @@ def _count_active_users(db_engine: Engine) -> Optional[int]:
         ).scalar()
 
 
-def _count_users_active_today(db_engine: Engine) -> Optional[int]:
+def _count_users_active_today(db_engine: Engine) -> int | None:
     """Return the number of users active since midnight today (sync)."""
     now = int(datetime.datetime.now().timestamp())
     today_midnight = now - (now % 86400)
@@ -101,14 +100,14 @@ def _build_meter_provider(resource: Resource) -> MeterProvider:
 
     # Periodic reader pushes metrics over OTLP/gRPC to collector
     if OTEL_METRICS_OTLP_SPAN_EXPORTER == 'http':
-        readers: List[PeriodicExportingMetricReader] = [
+        readers: list[PeriodicExportingMetricReader] = [
             PeriodicExportingMetricReader(
                 OTLPHttpMetricExporter(endpoint=OTEL_METRICS_EXPORTER_OTLP_ENDPOINT, headers=headers),
                 export_interval_millis=OTEL_METRICS_EXPORT_INTERVAL_MILLIS,
             )
         ]
     else:
-        readers: List[PeriodicExportingMetricReader] = [
+        readers: list[PeriodicExportingMetricReader] = [
             PeriodicExportingMetricReader(
                 OTLPMetricExporter(
                     endpoint=OTEL_METRICS_EXPORTER_OTLP_ENDPOINT,
@@ -120,7 +119,7 @@ def _build_meter_provider(resource: Resource) -> MeterProvider:
         ]
 
     # Optional view to limit cardinality: drop user-agent etc.
-    views: List[View] = [
+    views: list[View] = [
         View(
             instrument_name='http.server.duration',
             attribute_keys=['http.method', 'http.route', 'http.status_code'],
@@ -242,7 +241,7 @@ def setup_metrics(app: FastAPI, resource: Resource, db_engine: Engine) -> None:
             route = request.scope.get('route')
             route_path = getattr(route, 'path', request.url.path)
 
-            attrs: Dict[str, str | int] = {
+            attrs: dict[str, str | int] = {
                 'http.method': request.method,
                 'http.route': route_path,
                 'http.status_code': status_code,

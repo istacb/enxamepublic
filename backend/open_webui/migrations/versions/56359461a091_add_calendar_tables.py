@@ -6,16 +6,16 @@ Create Date: 2026-04-19 16:20:58.162045
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '56359461a091'
-down_revision: Union[str, None] = 'c1d2e3f4a5b6'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'c1d2e3f4a5b6'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _index_exists(inspector, index_name, table_name):

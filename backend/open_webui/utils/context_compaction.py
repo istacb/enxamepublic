@@ -5,7 +5,6 @@ import logging
 from typing import Any
 
 from fastapi.responses import JSONResponse
-
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.utils.misc import get_content_from_message, get_last_user_message, get_message_list

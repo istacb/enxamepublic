@@ -1,6 +1,5 @@
 import logging
 import time
-from typing import Optional
 
 import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
@@ -12,7 +11,7 @@ def search_brave_llm_context(
     api_key: str,
     query: str,
     count: int,
-    filter_list: Optional[list[str]] = None,
+    filter_list: list[str] | None = None,
     context_tokens: int = 8192,
 ) -> list[SearchResult]:
     """Search using Brave's LLM Context API and return pre-extracted, relevance-scored

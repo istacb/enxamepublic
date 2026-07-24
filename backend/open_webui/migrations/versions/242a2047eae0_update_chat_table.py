@@ -10,7 +10,7 @@ import json
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.sql import select, table, update
+from sqlalchemy.sql import select, table
 
 revision = '242a2047eae0'
 down_revision = '6a39f3d8e55c'

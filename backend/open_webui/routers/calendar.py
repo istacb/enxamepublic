@@ -1,6 +1,5 @@
 import logging
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from open_webui.constants import ERROR_MESSAGES
@@ -145,7 +144,7 @@ async def get_events(
     request: Request,
     start: str,
     end: str,
-    calendar_ids: Optional[str] = None,
+    calendar_ids: str | None = None,
     user: UserModel = Depends(get_verified_user),
 ):
     """Get events in date range.
@@ -287,7 +286,7 @@ async def create_event(request: Request, form_data: CalendarEventForm, user: Use
 @router.get('/events/search', response_model=CalendarEventListResponse)
 async def search_events(
     request: Request,
-    query: Optional[str] = None,
+    query: str | None = None,
     skip: int = 0,
     limit: int = 30,
     user: UserModel = Depends(get_verified_user),

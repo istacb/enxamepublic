@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tempfile
 import types
-from importlib import util
 from typing import Any
 
 from open_webui.env import (

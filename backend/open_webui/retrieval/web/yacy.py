@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
@@ -10,11 +9,11 @@ log = logging.getLogger(__name__)
 
 def search_yacy(
     query_url: str,
-    username: Optional[str],
-    password: Optional[str],
+    username: str | None,
+    password: str | None,
     query: str,
     count: int,
-    filter_list: Optional[list[str]] = None,
+    filter_list: list[str] | None = None,
 ) -> list[SearchResult]:
     """
     Search a Yacy instance for a given query and return the results as a list of SearchResult objects.

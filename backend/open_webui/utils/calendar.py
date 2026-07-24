@@ -6,10 +6,7 @@ RRULE expansion reusing the automation infra.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
 from zoneinfo import ZoneInfo
-
-from open_webui.utils.automations import _parse_rule
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +15,7 @@ def expand_recurring_event(
     event_dict: dict,
     range_start_ns: int,
     range_end_ns: int,
-    tz: Optional[str] = None,
+    tz: str | None = None,
     max_instances: int = 5000,
 ) -> list[dict]:
     """Expand a recurring event into individual instances within a date range.
@@ -76,7 +73,7 @@ def expand_recurring_event(
     return instances
 
 
-def ns_from_date(year: int, month: int, day: int, tz: Optional[str] = None) -> int:
+def ns_from_date(year: int, month: int, day: int, tz: str | None = None) -> int:
     """Create epoch nanoseconds from a date."""
     if tz:
         dt = datetime(year, month, day, tzinfo=ZoneInfo(tz))
