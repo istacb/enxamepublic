@@ -3,15 +3,17 @@
 ## Resumo das Correções de Segurança
 
 ### 1. Proteção contra Prompt Injection ✅
+
 - **Arquivo**: `/workspace/core/exp/input_sanitizer.py`
-- **Implementação**: 
+- **Implementação**:
   - Detecção multi-camada com 12+ padrões suspeitos
   - Contenção estrutural com delimitadores `<<<USER_INPUT_START>>>` e `<<<USER_INPUT_END>>>`
   - Alertas contextuais para prompts suspeitos
   - Fail-safe: não bloqueia uso legítimo
 
 ### 2. Proteção contra SQL Injection ✅
-- **Arquivos**: 
+
+- **Arquivos**:
   - `/workspace/core/memory/usuario_memory.py`
   - `/workspace/core/exp/input_sanitizer.py`
 - **Implementação**:
@@ -21,6 +23,7 @@
   - Função `sanitize_for_sql_query()` para defesa em profundidade
 
 ### 3. Logging Seguro ✅
+
 - **Arquivo**: `/workspace/core/exp/secure_logger.py` (NOVO)
 - **Funcionalidades**:
   - Ofuscação automática de dados sensíveis:
@@ -37,6 +40,7 @@
   - `log_safe_user_action()`: Loga ações de usuário ofuscando dados sensíveis
 
 ### 4. Controle de Acesso à Internet ✅
+
 - **Política**: Apenas Bibliotecário e Juiz têm acesso à internet
 - **Implementação**:
   - Parâmetro `allow_internet` no método `search()` do Bibliotecário
@@ -44,6 +48,7 @@
   - Registro no trace da pipeline quando internet é bloqueada por política do cluster
 
 ### 5. Leitor Universal de Documentos ✅
+
 - **Arquivo**: `/workspace/bibliotecario/universal_reader.py` (NOVO)
 - **Formatos Suportados** (40 extensões):
   - **Texto**: .txt, .md, .py, .json, .yaml, .yml, .js, .ts, .csv, .rtf, .html, .htm
@@ -59,6 +64,7 @@
   - Chunking inteligente com sobreposição
 
 ### 6. Indexador Melhorado ✅
+
 - **Arquivo**: `/workspace/bibliotecario/indexer.py`
 - **Melhorias**:
   - Integração com `UniversalDocumentReader`
@@ -69,6 +75,7 @@
   - Metadados enrichidos por chunk
 
 ### 7. Pipeline de Busca com Logging Seguro ✅
+
 - **Arquivo**: `/workspace/bibliotecario/search_service.py`
 - **Melhorias**:
   - Uso do `setup_secure_logger()` para logging seguro
@@ -81,6 +88,7 @@
 ## Requisitos Adicionais Instaláveis
 
 ### Bibliotecário (`/workspace/bibliotecario/requirements.txt`)
+
 ```
 python-pptx==1.0.2       # PPTX
 openpyxl==3.1.5          # XLSX

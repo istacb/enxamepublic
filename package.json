@@ -12,6 +12,7 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "npm run lint:frontend ; npm run lint:types ; npm run lint:backend",
 		"lint:frontend": "eslint . --fix",
+		"lint:check": "eslint . --max-warnings=0",
 		"lint:types": "npm run check",
 		"lint:backend": "pylint backend/",
 		"format": "prettier --plugin-search-dir --write \"**/*.{js,ts,svelte,css,md,html,json}\"",
