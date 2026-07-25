@@ -1,0 +1,51 @@
+sequenceDiagram
+    participant U as Usuário
+    participant FE as Frontend
+    participant CTRL as Controller
+    participant GRD as Guardião
+    participant LIB as Bibliotecário
+    participant SCHED as Scheduler
+    participant AG as Agente
+    participant JUDGE as Judge
+    participant OLLAMA as Ollama
+
+    Note over U,OLLAMA: Fluxo de Processamento de Tarefa
+
+    U->>FE: Submit Prompt
+    FE->>CTRL: POST /api/enxame/mission
+    CTRL->>GRD: validate(query)
+    
+    alt Segurança Aprovada
+        GRD-->>CTRL: ValidationResult(allowed=true)
+        CTRL->>LIB: search(query)
+        LIB->>QDRANT: Vector Search
+        QDRANT-->>LIB: Chunks Context
+        LIB->>WEB: Fallback (se necessário)
+        WEB-->>LIB: Web Results
+        LIB-->>CTRL: Context Data
+        
+        CTRL->>SCHED: select_agent(query)
+        SCHED->>AG: Query Capabilities
+        AG-->>SCHED: Specialties + Load
+        SCHED-->>CTRL: Selected Node ID
+        
+        CTRL->>AG: TASK_DISPATCH(subtasks)
+        AG->>AG: Hot-load Plugin
+        AG->>POOL: Queue Work Items
+        POOL->>WORKER: Execute Task
+        WORKER->>OLLAMA: Generate(prompt)
+        OLLAMA-->>WORKER: Response
+        WORKER-->>POOL: Result
+        AG-->>CTRL: TASK_RESULT
+        
+        CTRL->>JUDGE: evaluate(results)
+        JUDGE->>JUDGE: Synthesize Answer
+        JUDGE-->>CTRL: Final Answer
+        CTRL-->>FE: Mission Complete
+        FE-->>U: Display Result
+        
+    else Segurança Bloqueada
+        GRD-->>CTRL: ValidationResult(allowed=false)
+        CTRL-->>FE: Blocked Response
+        FE-->>U: Error Message
+    end

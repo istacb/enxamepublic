@@ -1,0 +1,119 @@
+graph LR
+    subgraph "core/"
+        CORE_EXP[exp/]
+        CORE_CLUSTER[cluster/]
+        CORE_DISC[discovery/]
+        CORE_MEM[memory/]
+        CORE_OLL[ollama/]
+    end
+
+    subgraph "backend/open_webui/"
+        OW_ENX[enxame/]
+        OW_RET[retrieval/]
+        OW_TOOLS[tools/]
+        OW_UTILS[utils/]
+        OW_MODELS[models/]
+        OW_ROUTERS[routers/]
+    end
+
+    subgraph "juiz/"
+        JUIZ_SVC[service.py]
+        JUIZ_APP[app.py]
+    end
+
+    subgraph "bibliotecario/"
+        BIB_SEARCH[search_service.py]
+        BIB_IDX[indexer.py]
+        BIB_QDR[qdrant_store.py]
+        BIB_EMB[embeddings.py]
+        BIB_ZIM[zim_reader.py]
+        BIB_WEB[web_client.py]
+        BIB_TRANS[translator.py]
+    end
+
+    subgraph "agentes/"
+        AG_SVC[service.py]
+        AG_PLUG[plugins/]
+        AG_POOL[worker_pool.py]
+        AG_MET[metrics.py]
+        AG_PM[plugin_manager.py]
+    end
+
+    subgraph "guardian/"
+        GRD_MAIN[guardian.py]
+    end
+
+    subgraph "src/lib/"
+        FE_APIS[apis/]
+        FE_COMP[components/]
+        FE_STORE[stores/]
+        FE_UTILS[utils/]
+        FE_TYPES[types/]
+    end
+
+    %% Core module dependencies
+    CORE_EXP --> CORE_CLUSTER
+    CORE_EXP --> CORE_DISC
+    CORE_CLUSTER --> JUIZ_SVC
+    CORE_CLUSTER --> AG_SVC
+    CORE_DISC --> JUIZ_SVC
+    CORE_OLL --> BIB_SEARCH
+    CORE_OLL --> AG_SVC
+    CORE_OLL --> JUIZ_SVC
+
+    %% Backend to core
+    OW_ENX --> CORE_EXP
+    OW_ENX --> CORE_CLUSTER
+    OW_RET --> BIB_SEARCH
+    OW_RET --> CORE_OLL
+
+    %% Juiz dependencies
+    JUIZ_SVC --> CORE_EXP
+    JUIZ_SVC --> CORE_CLUSTER
+    JUIZ_SVC --> CORE_OLL
+
+    %% Bibliotecario dependencies
+    BIB_SEARCH --> BIB_IDX
+    BIB_SEARCH --> BIB_QDR
+    BIB_SEARCH --> BIB_EMB
+    BIB_SEARCH --> BIB_ZIM
+    BIB_SEARCH --> BIB_WEB
+    BIB_SEARCH --> BIB_TRANS
+    BIB_SEARCH --> CORE_OLL
+    BIB_SEARCH --> CORE_SEC[secure_logger]
+
+    %% Agentes dependencies
+    AG_SVC --> AG_PLUG
+    AG_SVC --> AG_POOL
+    AG_SVC --> AG_MET
+    AG_SVC --> AG_PM
+    AG_SVC --> CORE_EXP
+    AG_SVC --> CORE_CLUSTER
+    AG_SVC --> CORE_OLL
+
+    %% Plugin types
+    AG_PLUG --> PLUG_BASE[base.py]
+    PLUG_BASE --> PLUG_ENG[engenheiro.py]
+    PLUG_BASE --> PLUG_JUR[jurista.py]
+    PLUG_BASE --> PLUG_MAT[matematico.py]
+    PLUG_BASE --> PLUG_MED[medico.py]
+    PLUG_BASE --> PLUG_PROG[programador.py]
+    PLUG_BASE --> PLUG_RED[redator.py]
+    PLUG_BASE --> PLUG_TRAD[tradutor.py]
+
+    %% Guardian dependencies
+    GRD_MAIN --> CORE_EXP
+
+    %% Frontend dependencies
+    FE_APIS --> OW_ENX
+    FE_APIS --> JUIZ_SVC
+    FE_COMP --> FE_STORE
+    FE_STORE --> FE_APIS
+
+    style CORE_EXP fill:#ffd,stroke:#333
+    style CORE_CLUSTER fill:#ffd,stroke:#333
+    style JUIZ_SVC fill:#f9f,stroke:#333
+    style BIB_SEARCH fill:#bbf,stroke:#333
+    style AG_SVC fill:#bfb,stroke:#333
+    style GRD_MAIN fill:#fbb,stroke:#333
+    style OW_ENX fill:#ddf,stroke:#333
