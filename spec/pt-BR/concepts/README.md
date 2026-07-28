@@ -10,6 +10,8 @@ Este diretório contém especificações conceituais para o Modelo de Domínio E
 | `knowledge_asset.md` | Ativo de Conhecimento |
 | `node.md` | Node |
 | `specialization.md` | Especialização |
+| `mission.md` | Missão |
+| `workflow.md` | Workflow |
 
 ## Princípios
 
@@ -17,3 +19,21 @@ Este diretório contém especificações conceituais para o Modelo de Domínio E
 - Relacionamentos entre conceitos são explícitos
 - Conceitos não contêm detalhes de implementação
 - Conceitos podem evoluir através de EIPs
+
+## Diagrama de Dependência
+
+```mermaid
+graph TD
+
+Knowledge --> KnowledgeAsset
+KnowledgeAsset --> Node
+Node --> Specialization
+Specialization --> Capability
+
+Mission --> Workflow
+Workflow --> Task
+
+Task --> Capability
+
+Task -.Future.-> Agent
+```

@@ -1,5 +1,18 @@
 ```
-# Generated from file changes
-# No build artifacts, dependencies, or temp files detected in changes
-# Only documentation/markdown files were added
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Original rules preserved
+*.log
 ```

@@ -10,6 +10,8 @@ This directory contains conceptual specifications for the Enxame Domain Model.
 | `knowledge_asset.md` | Knowledge Asset |
 | `node.md` | Node |
 | `specialization.md` | Specialization |
+| `mission.md` | Mission |
+| `workflow.md` | Workflow |
 
 ## Principles
 
@@ -17,3 +19,21 @@ This directory contains conceptual specifications for the Enxame Domain Model.
 - Relationships between concepts are explicit
 - Concepts do not contain implementation details
 - Concepts may evolve through EIPs
+
+## Dependency Diagram
+
+```mermaid
+graph TD
+
+Knowledge --> KnowledgeAsset
+KnowledgeAsset --> Node
+Node --> Specialization
+Specialization --> Capability
+
+Mission --> Workflow
+Workflow --> Task
+
+Task --> Capability
+
+Task -.Future.-> Agent
+```
