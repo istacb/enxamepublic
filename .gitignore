@@ -1,18 +1,67 @@
 ```
-# Logs and temp files
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
 *.log
 *.tmp
 *.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# TypeScript/JavaScript
+*.tsbuildinfo
+*.js.map
+*.jsx.map
+*.ts.map
+*.tsx.map
+.next/
+.nuxt/
+.vuepress/dist
+.dist
+.temp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Environment
 .env
 .env.local
 .env.*
+!.env.example
 
-# Editors
-.vscode/
-.idea/
-
-# Original rules preserved
+# Logs
 *.log
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
 ```
