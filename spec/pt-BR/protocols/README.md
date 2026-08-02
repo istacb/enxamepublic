@@ -2,16 +2,20 @@
 
 Diretório de especificação de protocolos do projeto Enxame.
 
-## Protocolos em Especificação
+## Protocolos Especificados
 
 | Protocolo | Status | Descrição |
 |-----------|--------|-----------|
-| Node Discovery | Pendente | Descoberta e registro de nodes |
-| Task Assignment | Pendente | Atribuição de tasks a nodes |
-| Consensus | Pendente | Protocolos de consenso distribuído |
-| Message Transport | Pendente | Transporte de mensagens entre nodes |
-| Health Check | Pendente | Verificação de saúde de nodes |
-| Provider Registration | Pendente | Registro e descoberta de providers |
+| Communication Protocol | ✅ Completo | Protocolo oficial de comunicação |
+| Service Loader | ✅ Completo | Ciclo de vida de Services em um Node |
+| Scheduler | ✅ Completo | Escalonamento de Tasks para Nodes |
+| Failover | ✅ Completo | Detecção e reporte de falhas |
+| Node Discovery | ⏳ Pendente | Descoberta e registro de nodes |
+| Task Assignment | ⏳ Pendente | Atribuição de tasks a nodes |
+| Consensus | ⏳ Pendente | Protocolos de consenso distribuído |
+| Message Transport | ⏳ Pendente | Transporte de mensagens entre nodes |
+| Health Check | ⏳ Pendente | Verificação de saúde de nodes |
+| Provider Registration | ⏳ Pendente | Registro e descoberta de providers |
 
 ## Princípios de Design
 

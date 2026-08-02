@@ -16,52 +16,54 @@ __pycache__/
 env/
 venv/
 .venv/
-.venv.bak/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-*.tmp
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
+.ENV
+.python-version
 
-# TypeScript/JavaScript
-*.tsbuildinfo
-*.js.map
-*.jsx.map
-*.ts.map
-*.tsx.map
-.next/
-.nuxt/
-.vuepress/dist
-.dist
-.temp
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tmp
 
-# Environment
-.env
-.env.local
-.env.*
-!.env.example
-
-# Logs
-*.log
+# OS
+.DS_Store
+Thumbs.db
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 ```
