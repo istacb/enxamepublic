@@ -1,6 +1,6 @@
 #!/bin/bash
 # Enxame - Script de atualização
-# Atualiza a instalação do Enxame
+# Atualiza a instalação do Enxame preservando dados do usuário
 
 set -e
 
@@ -17,27 +17,79 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "Atualizando Enxame..."
+echo ""
 
 # Navega até o diretório raiz
 cd "$ENXAME_ROOT"
+
+# Backup das configurações do usuário
+BACKUP_DIR="/tmp/enxame_backup_$(date +%Y%m%d_%H%M%S)"
+echo "Criando backup das configurações em $BACKUP_DIR..."
+mkdir -p "$BACKUP_DIR"
+
+if [ -f "/etc/enxame/.env" ]; then
+    cp /etc/enxame/.env "$BACKUP_DIR/"
+    echo "  .env backup realizado."
+fi
+
+if [ -d "/var/lib/enxame/data" ]; then
+    cp -r /var/lib/enxame/data "$BACKUP_DIR/"
+    echo "  Dados do usuário backup realizados."
+fi
+
+echo ""
 
 # Atualiza código via git (se disponível)
 if [ -d ".git" ]; then
     echo "Atualizando código do repositório..."
     git pull --rebase || echo "Aviso: Não foi possível atualizar do repositório"
+else
+    echo "Repositório Git não encontrado. Pulando atualização de código."
 fi
+
+echo ""
 
 # Instala/atualiza dependências Python
 if [ -f "requirements.txt" ]; then
     echo "Atualizando dependências Python..."
     pip install -r requirements.txt --upgrade
+    echo "Dependências Python atualizadas."
+elif [ -d "kernel" ]; then
+    echo "Verificando dependências do Kernel..."
+    if [ -f "kernel/requirements.txt" ]; then
+        pip install -r kernel/requirements.txt --upgrade
+    fi
 fi
+
+echo ""
 
 # Instala/atualiza dependências Node (se disponível)
 if [ -f "package.json" ]; then
     echo "Atualizando dependências Node..."
     npm install --production
+    echo "Dependências Node atualizadas."
 fi
+
+echo ""
+
+# Restaura configurações do usuário
+echo "Restaurando configurações do usuário..."
+if [ -f "$BACKUP_DIR/.env" ]; then
+    mkdir -p /etc/enxame
+    cp "$BACKUP_DIR/.env" /etc/enxame/.env
+    echo "  Configuração .env restaurada."
+fi
+
+if [ -d "$BACKUP_DIR/data" ]; then
+    mkdir -p /var/lib/enxame
+    cp -r "$BACKUP_DIR/data" /var/lib/enxame/
+    echo "  Dados do usuário restaurados."
+fi
+
+# Limpa backup
+rm -rf "$BACKUP_DIR"
+
+echo ""
 
 # Reinicia serviços (se systemd estiver disponível)
 if command -v systemctl &> /dev/null; then
@@ -45,9 +97,13 @@ if command -v systemctl &> /dev/null; then
         echo "Reiniciando serviço Enxame..."
         systemctl daemon-reload
         systemctl restart enxame
+        echo "Serviço Enxame reiniciado."
     fi
 fi
 
 echo ""
 echo "=== Atualização concluída ==="
+echo ""
+echo "O Enxame foi atualizado com sucesso."
+echo "Seus dados e configurações foram preservados."
 echo ""

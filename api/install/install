@@ -17,8 +17,10 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "Instalando Enxame em $ENXAME_ROOT..."
+echo ""
 
 # Cria diretórios necessários
+echo "Criando diretórios de sistema..."
 mkdir -p /var/lib/enxame/data
 mkdir -p /var/log/enxame
 mkdir -p /etc/enxame
@@ -27,9 +29,21 @@ mkdir -p /etc/enxame
 if [ -f "$ENXAME_ROOT/.env.example" ]; then
     cp "$ENXAME_ROOT/.env.example" /etc/enxame/.env
     echo "Arquivo .env criado em /etc/enxame/"
+else
+    # Cria arquivo .env básico se não existir exemplo
+    cat > /etc/enxame/.env << 'EOF'
+# Configuração do Enxame
+ENXAME_ENV=production
+ENXAME_PORT=8080
+ENXAME_HOST=0.0.0.0
+ENXAME_DATA_PATH=/var/lib/enxame/data
+ENXAME_LOG_PATH=/var/log/enxame
+EOF
+    echo "Arquivo .env padrão criado em /etc/enxame/"
 fi
 
 # Configura permissões
+echo "Configurando permissões..."
 chown -R root:root /var/lib/enxame
 chown -R root:root /var/log/enxame
 chown -R root:root /etc/enxame
@@ -37,6 +51,15 @@ chown -R root:root /etc/enxame
 chmod 755 /var/lib/enxame/data
 chmod 755 /var/log/enxame
 chmod 755 /etc/enxame
+chmod 644 /etc/enxame/.env
+
+# Inicializa banco de dados
+DB_PATH="/var/lib/enxame/data/enxame.db"
+if [ ! -f "$DB_PATH" ]; then
+    echo "Criando banco de dados inicial..."
+    touch "$DB_PATH"
+    chmod 644 "$DB_PATH"
+fi
 
 echo ""
 echo "=== Instalação concluída ==="

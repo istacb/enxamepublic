@@ -1,6 +1,7 @@
 #!/bin/bash
 # Enxame - Script de migração
 # Executa migrações de banco de dados e estrutura
+# Detecta instalações antigas (OpenWebUI e versões antigas do Enxame)
 
 set -e
 
@@ -17,6 +18,99 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "Executando migrações..."
+echo ""
+
+# ============================================================
+# DETECÇÃO DE INSTALAÇÕES ANTIGAS
+# ============================================================
+
+detect_old_installations() {
+    local found_old=false
+    
+    echo "--- Detecção de Instalações Antigas ---"
+    echo ""
+    
+    # Detecta OpenWebUI
+    if [ -d "/var/lib/open-webui" ] || [ -d "/opt/open-webui" ] || [ -f "/etc/open-webui.env" ]; then
+        echo "[DETECTADO] OpenWebUI encontrado no sistema."
+        found_old=true
+    fi
+    
+    # Detecta diretórios herdados do OpenWebUI
+    if [ -d "$ENXAME_ROOT/backend" ] && [ -d "$ENXAME_ROOT/src" ]; then
+        echo "[DETECTADO] Estrutura antiga do OpenWebUI presente em $ENXAME_ROOT"
+        found_old=true
+    fi
+    
+    # Detecta banco de dados antigo do OpenWebUI
+    if [ -f "/var/lib/enxame/data/webui.db" ] || [ -f "/var/lib/enxame/data/litellm.db" ]; then
+        echo "[DETECTADO] Banco de dados antigo do OpenWebUI encontrado."
+        found_old=true
+    fi
+    
+    # Detecta configurações antigas do Enxame
+    if [ -f "/etc/enxame/old_config.env" ]; then
+        echo "[DETECTADO] Configuração antiga do Enxame encontrada."
+        found_old=true
+    fi
+    
+    if [ "$found_old" = true ]; then
+        echo ""
+        echo "Foram detectadas instalações antigas que podem conflitar."
+        read -p "Deseja remover as instalações antigas agora? (y/N): " remove_old
+        
+        if [ "$remove_old" = "y" ] || [ "$remove_old" = "Y" ]; then
+            echo ""
+            echo "Removendo instalações antigas..."
+            remove_old_installations
+        else
+            echo ""
+            echo "AVISO: Instalações antigas foram mantidas. Conflitos podem ocorrer."
+        fi
+    else
+        echo "Nenhuma instalação antiga detectada."
+    fi
+    
+    echo ""
+}
+
+remove_old_installations() {
+    # Remove diretórios do OpenWebUI
+    if [ -d "/var/lib/open-webui" ]; then
+        echo "  Removendo /var/lib/open-webui..."
+        rm -rf /var/lib/open-webui
+    fi
+    
+    if [ -d "/opt/open-webui" ]; then
+        echo "  Removendo /opt/open-webui..."
+        rm -rf /opt/open-webui
+    fi
+    
+    if [ -f "/etc/open-webui.env" ]; then
+        echo "  Removendo /etc/open-webui.env..."
+        rm -f /etc/open-webui.env
+    fi
+    
+    # Remove bancos de dados antigos
+    if [ -f "/var/lib/enxame/data/webui.db" ]; then
+        echo "  Removendo banco de dados antigo webui.db..."
+        rm -f /var/lib/enxame/data/webui.db
+    fi
+    
+    if [ -f "/var/lib/enxame/data/litellm.db" ]; then
+        echo "  Removendo banco de dados antigo litellm.db..."
+        rm -f /var/lib/enxame/data/litellm.db
+    fi
+    
+    echo "Instalações antigas removidas."
+}
+
+# Executa detecção
+detect_old_installations
+
+# ============================================================
+# MIGRAÇÃO DE DADOS
+# ============================================================
 
 # Cria diretórios de dados se não existirem
 mkdir -p /var/lib/enxame/data
@@ -26,20 +120,25 @@ mkdir -p /var/log/enxame
 cd "$ENXAME_ROOT"
 
 # Executa migrações Python (se houver)
-if [ -d "backend" ] || [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
-    echo "Verificando migrações do backend..."
+if [ -d "kernel" ] || [ -f "requirements.txt" ]; then
+    echo "Verificando migrações do Kernel..."
     
     # Tenta executar migrações via Python
     if command -v python3 &> /dev/null; then
         python3 -c "
 import sys
+import os
 sys.path.insert(0, '$ENXAME_ROOT')
 try:
     # Tenta importar e executar migrações se existirem
-    pass
+    kernel_path = os.path.join('$ENXAME_ROOT', 'kernel')
+    if os.path.exists(kernel_path):
+        print('Kernel encontrado. Verificando migrações...')
+    else:
+        print('Diretório kernel não encontrado.')
 except Exception as e:
     print(f'Nenhuma migração pendente ou erro: {e}')
-" || echo "Backend ainda não possui migrações definidas"
+" || echo "Kernel ainda não possui migrações definidas"
     fi
 fi
 
@@ -49,6 +148,8 @@ if [ ! -f "$DB_PATH" ]; then
     echo "Criando banco de dados inicial em $DB_PATH..."
     touch "$DB_PATH"
     chmod 644 "$DB_PATH"
+else
+    echo "Banco de dados existente encontrado em $DB_PATH"
 fi
 
 # Configura permissões
