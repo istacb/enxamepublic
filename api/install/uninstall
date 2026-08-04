@@ -1,6 +1,6 @@
 #!/bin/bash
 # Enxame - Script de desinstalação
-# Remove a instalação do Enxame
+# Remove completamente o Enxame do sistema
 
 set -e
 
@@ -16,7 +16,8 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo "ATENÇÃO: Isso removerá a instalação do Enxame."
+echo "ATENÇÃO: Isso removerá COMPLETAMENTE o Enxame do sistema."
+echo "Todos os dados, logs e configurações serão perdidos."
 echo ""
 read -p "Deseja continuar? (y/N): " confirm
 
@@ -36,28 +37,34 @@ if command -v systemctl &> /dev/null; then
         systemctl disable enxame || true
         rm -f /etc/systemd/system/enxame.service
         systemctl daemon-reload
+        echo "Serviço Enxame removido."
     fi
 fi
 
 # Remove diretórios de dados
 echo "Removendo dados em /var/lib/enxame..."
 rm -rf /var/lib/enxame
+echo "Dados removidos."
 
 # Remove logs
 echo "Removendo logs em /var/log/enxame..."
 rm -rf /var/log/enxame
+echo "Logs removidos."
 
 # Remove configuração
 echo "Removendo configuração em /etc/enxame..."
 rm -rf /etc/enxame
+echo "Configuração removida."
 
-# Opcional: remover código fonte (descomentado apenas se solicitado explicitamente)
-# echo "Removendo código fonte em $ENXAME_ROOT..."
-# rm -rf "$ENXAME_ROOT"
+# Remove sockets e arquivos temporários
+echo "Limpando arquivos temporários..."
+rm -rf /tmp/enxame*
+rm -f /run/enxame.sock
 
 echo ""
 echo "=== Desinstalação concluída ==="
 echo ""
-echo "O Enxame foi removido do sistema."
-echo "Os arquivos em $ENXAME_ROOT foram preservados."
+echo "O Enxame foi completamente removido do sistema."
+echo "Os arquivos de código em $ENXAME_ROOT foram preservados."
+echo "Para reinstalar, execute o script 'install' novamente."
 echo ""

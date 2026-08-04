@@ -108,32 +108,19 @@ Segurança e monitoramento:
 - **Arquivos principais**:
   - `guardian.py`: Implementação principal
 
-### 6. Backend Open WebUI (`/backend/open_webui`)
+### 6. Interface Web (`/web`)
 
-Interface web e integração:
+Interface web mínima do Enxame:
 
-- **`enxame/`**: Integração ENXAME no Open WebUI
-  - `core/controller.py`: Orquestração de missões
-  - `core/guard.py`: Validação de segurança
-  - `core/judge.py`: Avaliação de respostas
-  - `core/librarian.py`: Recuperação de contexto
-  - `core/scheduler.py`: Seleção de agentes
-  - `services/specialists.py`: Especialistas
+- **Responsabilidades**:
+  - Enviar mensagens para o Juiz
+  - Receber respostas em tempo real
+  - Exibir histórico de conversas
 
-- **Outros módulos**:
-  - `retrieval/`: Sistemas de retrieval (RAG)
-  - `tools/`: Ferramentas builtin
-  - `utils/`: Utilitários diversos
-
-### 7. Frontend (`/src`)
-
-Interface SvelteKit:
-
-- **`lib/`**: Biblioteca frontend
-  - `apis/`: Integração com APIs backend
-  - `components/`: Componentes UI
-  - `stores/`: Estado reativo
-  - `utils/`: Utilitários TypeScript
+- **Arquivos principais**:
+  - `index.html`: Estrutura HTML
+  - `app.js`: Lógica de UI
+  - `style.css`: Estilização
 
 ## Comunicação
 
@@ -216,15 +203,13 @@ Interface SvelteKit:
 
 ### Frontend
 
-- `SvelteKit`: Framework web
-- `TypeScript`: Linguagem
-- `TailwindCSS`: Estilização
+- HTML5, CSS3, JavaScript (Vanilla)
 
 ### Infraestrutura
 
 - `Ollama`: Modelos de linguagem locais
-- `Docker`: Containerização
 - `SQLite`, `PostgreSQL`: Bancos de dados
+- `Redis`: Cache e sessões
 
 ## Implantação
 
@@ -234,13 +219,6 @@ Interface SvelteKit:
 - `enxame-guardian.service`
 - `enxame-bibliotecario.service`
 - `enxame-agente.service`
-
-### Docker Compose
-
-- `docker-compose.yaml`: Configuração principal
-- `docker-compose.gpu.yaml`: Com suporte a GPU
-- `docker-compose.api.yaml`: Apenas API
-- `docker-compose.otel.yaml`: Com OpenTelemetry
 
 ## Estrutura de Diretórios
 
@@ -256,8 +234,6 @@ Interface SvelteKit:
 ├── bibliotecario/       # Indexação e pesquisa
 ├── agentes/             # Workers polimórficos
 ├── guardian/            # Segurança
-├── backend/open_webui/  # Backend Open WebUI
-│   └── enxame/          # Integração ENXAME
-├── src/                 # Frontend SvelteKit
+├── web/                 # Interface web mínima
 └── spec/                # Especificações arquiteturais
 ```

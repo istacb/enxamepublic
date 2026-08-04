@@ -1,61 +1,46 @@
 ```
+# Executable files
+*.exe
+*.dll
+*.so
+*.a
+*.out
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+*.env.*
+
 # Dependencies
+node_modules/
 .venv/
 venv/
-node_modules/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+.mypy_cache/
+.pytest_cache/
+target/
+.gradle/
 
 # Build artifacts
 dist/
 build/
-target/
-*.so
-*.dylib
-*.dll
-*.exe
+coverage/
+htmlcov/
+*.coverage
 
-# Logs
-*.log
-logs/
-
-# Environment
-.env
-.env.local
-.env.*
-
-# IDE
+# Editor/IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tmp
 
-# OS
+# System files
 .DS_Store
 Thumbs.db
-
-# Coverage
-.coverage
-htmlcov/
-coverage/
-
-# Distribution
-*.egg-info/
-pip-wheel-metadata/
-.installed.cfg
-
-# Backend specific
-backend/venv/
-backend/__pycache__/
-backend/*.pyc
-
-# Frontend specific
-node_modules/
-dist/
-build/
-.npm
 
 # Compressed files
 *.zip
@@ -80,8 +65,4 @@ build/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-
-# Web files
-static/pyodide/
-static/sql.js/
 ```
