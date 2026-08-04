@@ -1,50 +1,61 @@
 ```
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
-.env
-.env.local
-*.env.*
-
-# Editors
-.vscode/
-.idea/
-
 # Dependencies
-node_modules/
-venv/
 .venv/
+venv/
+node_modules/
 __pycache__/
-.mypy_cache/
-.pytest_cache/
-.julia/
-zig*/
+*.pyc
+*.pyo
+*.pyd
 
 # Build artifacts
 dist/
 build/
 target/
-*.pyc
-*.class
-*.o
-*.obj
-*.exe
-*.dll
 *.so
-*.a
-*.out
+*.dylib
+*.dll
+*.exe
 
-# System files
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
 
 # Coverage
-coverage/
-htmlcov/
 .coverage
+htmlcov/
+coverage/
+
+# Distribution
+*.egg-info/
+pip-wheel-metadata/
+.installed.cfg
+
+# Backend specific
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+
+# Frontend specific
+node_modules/
+dist/
+build/
+.npm
 
 # Compressed files
 *.zip
@@ -69,4 +80,8 @@ htmlcov/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
+
+# Web files
+static/pyodide/
+static/sql.js/
 ```

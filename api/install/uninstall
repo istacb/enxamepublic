@@ -1,0 +1,63 @@
+#!/bin/bash
+# Enxame - Script de desinstalação
+# Remove a instalação do Enxame
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENXAME_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo "=== Enxame - Desinstalação ==="
+echo ""
+
+# Verifica se está rodando como root ou com sudo
+if [ "$EUID" -ne 0 ]; then 
+    echo "Por favor, execute como root (use sudo)"
+    exit 1
+fi
+
+echo "ATENÇÃO: Isso removerá a instalação do Enxame."
+echo ""
+read -p "Deseja continuar? (y/N): " confirm
+
+if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+    echo "Desinstalação cancelada."
+    exit 0
+fi
+
+echo ""
+echo "Removendo Enxame..."
+
+# Para serviços (se systemd estiver disponível)
+if command -v systemctl &> /dev/null; then
+    if [ -f "/etc/systemd/system/enxame.service" ]; then
+        echo "Parando serviço Enxame..."
+        systemctl stop enxame || true
+        systemctl disable enxame || true
+        rm -f /etc/systemd/system/enxame.service
+        systemctl daemon-reload
+    fi
+fi
+
+# Remove diretórios de dados
+echo "Removendo dados em /var/lib/enxame..."
+rm -rf /var/lib/enxame
+
+# Remove logs
+echo "Removendo logs em /var/log/enxame..."
+rm -rf /var/log/enxame
+
+# Remove configuração
+echo "Removendo configuração em /etc/enxame..."
+rm -rf /etc/enxame
+
+# Opcional: remover código fonte (descomentado apenas se solicitado explicitamente)
+# echo "Removendo código fonte em $ENXAME_ROOT..."
+# rm -rf "$ENXAME_ROOT"
+
+echo ""
+echo "=== Desinstalação concluída ==="
+echo ""
+echo "O Enxame foi removido do sistema."
+echo "Os arquivos em $ENXAME_ROOT foram preservados."
+echo ""
