@@ -10,14 +10,32 @@
     <div class="container">
         <header>
             <h1>Enxame</h1>
+            <div class="status-bar">
+                <div class="status-item" id="status-kernel">
+                    <span class="status-indicator"></span>
+                    <span class="status-label">Kernel</span>
+                </div>
+                <div class="status-item" id="status-runtime">
+                    <span class="status-indicator"></span>
+                    <span class="status-label">Runtime</span>
+                </div>
+                <div class="status-item" id="status-bibliotecario">
+                    <span class="status-indicator"></span>
+                    <span class="status-label">Bibliotecário</span>
+                </div>
+                <div class="status-item" id="status-ollama">
+                    <span class="status-indicator"></span>
+                    <span class="status-label">Ollama</span>
+                </div>
+            </div>
         </header>
 
         <main>
             <div id="history" class="history"></div>
             
             <div class="input-area">
-                <textarea id="message-input" placeholder="Digite sua mensagem..." rows="3"></textarea>
-                <button id="send-btn">Enviar</button>
+                <textarea id="message-input" placeholder="Digite sua mensagem..." rows="1"></textarea>
+                <button id="send-btn" disabled>Enviar</button>
             </div>
         </main>
     </div>
