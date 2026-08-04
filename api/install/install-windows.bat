@@ -312,31 +312,55 @@ if "%IS_FIRST_INSTALL%"=="true" (
     
     if "!NODE_ROLE!"=="1" (
         set "ROLE_NAME=kernel"
+        set "ENXAME_PORT=8080"
         echo Configurando node como KERNEL...
     ) else if "!NODE_ROLE!"=="2" (
         set "ROLE_NAME=juiz"
+        set "ENXAME_PORT=8082"
         echo Configurando node como JUIZ...
     ) else if "!NODE_ROLE!"=="3" (
         set "ROLE_NAME=bibliotecario"
+        set "ENXAME_PORT=8081"
         echo Configurando node como BIBLIOTECARIO...
     ) else if "!NODE_ROLE!"=="4" (
         set "ROLE_NAME=agente"
+        set "ENXAME_PORT=8083"
         echo Configurando node como AGENTE...
     ) else if "!NODE_ROLE!"=="5" (
         set "ROLE_NAME=worker"
+        set "ENXAME_PORT=8084"
         echo Configurando node como WORKER...
     ) else (
         set "ROLE_NAME=kernel"
+        set "ENXAME_PORT=8080"
         echo Opcao invalida. Configurando como KERNEL por padrao...
     )
     
     :: Atualiza configuracao com a funcao
     echo ENXAME_NODE_ROLE=!ROLE_NAME! >> "%CONFIG_DIR%\\.env"
     for /f "delims=" %%i in ('hostname') do set "HOSTNAME=%%i"
-    echo ENXAME_NODE_ID=node-!HOSTNAME!-!DATE:~-4,4!!DATE:~-7,2!!DATE:~-10,2! >> "%CONFIG_DIR%\\.env"
+    set "NODE_ID=node-!HOSTNAME!-!DATE:~-4,4!!DATE:~-7,2!!DATE:~-10,2!"
+    echo ENXAME_NODE_ID=!NODE_ID! >> "%CONFIG_DIR%\\.env"
+    echo ENXAME_PORT=!ENXAME_PORT! >> "%CONFIG_DIR%\\.env"
     
     echo.
     echo [OK] Funcao do node configurada: !ROLE_NAME!
+    echo [OK] Porta configurada: !ENXAME_PORT!
+    
+    :: Descobre e registra node no cluster
+    echo.
+    echo >>> Descobrindo cluster e registrando node...
+    if exist "%INSTALL_DIR%\\api\\install\\discover_nodes.py" (
+        python "%INSTALL_DIR%\\api\\install\\discover_nodes.py" discover
+        python "%INSTALL_DIR%\\api\\install\\discover_nodes.py" advertise !NODE_ID! !ROLE_NAME! !ENXAME_PORT!
+        python "%INSTALL_DIR%\\api\\install\\discover_nodes.py" confirm !NODE_ID! !ROLE_NAME!
+        echo.
+        echo ══════════════════════════════════════════════════════════
+        echo   FUNCAO ASSUMIDA: !ROLE_NAME!
+        echo   NODE ID: !NODE_ID!
+        echo   STATUS: Ativo e descoberto na rede
+        echo ══════════════════════════════════════════════════════════
+    )
 )
 
 echo.

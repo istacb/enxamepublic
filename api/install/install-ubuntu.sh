@@ -4,7 +4,7 @@
 # Fluxo: Next > Next > Finish (Totalmente Automático)
 # =============================================================================
 # Este script:
-# 1. Varre a rede em busca de instâncias do Enxame
+# 1. Varre a rede em busca de instâncias do Enxame via mDNS e HTTP
 # 2. Detecta instalações antigas do Enxame ou OpenWebUI
 # 3. Para serviços antigos e remove completamente
 # 4. Faz backup dos dados do usuário
@@ -44,44 +44,69 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}>>> PASSO 1/7: Varrendo rede por instâncias do Enxame...${NC}"
+echo -e "${YELLOW}>>> PASSO 1/8: Varrendo rede por instâncias do Enxame...${NC}"
 
-# Varre a rede em busca de nós do Enxame via mDNS
+# Varre a rede em busca de nós do Enxame via mDNS e HTTP
 scan_enxame_nodes() {
     local nodes_found=0
     
     echo "Procurando nós do Enxame na rede local..."
     
-    # Tenta descobrir via mDNS (zeroconf)
+    # Tenta descobrir via mDNS (zeroconf) - protocolo de descoberta automática
     if command -v avahi-browse &> /dev/null; then
-        echo "Usando avahi-browse para descoberta mDNS..."
+        echo "Usando avahi-browse para descoberta mDNS (_enxame._tcp)..."
         avahi-browse -rt _enxame._tcp -T 2 2>/dev/null | grep -E "=|+" || true
     fi
     
-    # Tenta comunicação HTTP com portas conhecidas
-    for port in 8080 7700 8081 8082; do
+    # Tenta comunicação HTTP com portas conhecidas dos components
+    echo "Verificando components do Enxame via HTTP..."
+    
+    # Kernel (orquestrador principal)
+    if curl -s --max-time 2 http://localhost:8080/api/health > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Kernel respondendo em localhost:8080"
+        nodes_found=$((nodes_found + 1))
+        curl -s --max-time 2 -X POST http://localhost:8080/api/system/shutdown \
+            -H "Content-Type: application/json" \
+            -d '{"reason": "install", "graceful": true}' > /dev/null 2>&1 || true
+    fi
+    
+    # Bibliotecário (gerenciamento de documentos)
+    if curl -s --max-time 2 http://localhost:8081/api/health > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Bibliotecário respondendo em localhost:8081"
+        nodes_found=$((nodes_found + 1))
+        curl -s --max-time 2 -X POST http://localhost:8081/api/system/shutdown \
+            -H "Content-Type: application/json" \
+            -d '{"reason": "install", "graceful": true}' > /dev/null 2>&1 || true
+    fi
+    
+    # Juiz (distribuidor de tarefas)
+    if curl -s --max-time 2 http://localhost:8082/api/v1/health > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Juiz respondendo em localhost:8082"
+        nodes_found=$((nodes_found + 1))
+        curl -s --max-time 2 -X POST http://localhost:8082/api/system/shutdown \
+            -H "Content-Type: application/json" \
+            -d '{"reason": "install", "graceful": true}' > /dev/null 2>&1 || true
+    fi
+    
+    # Agentes/Workers
+    for port in 8083 8084 8085; do
         if curl -s --max-time 2 http://localhost:$port/api/health > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} Nó respondendo em localhost:$port"
+            echo -e "  ${GREEN}✓${NC} Worker respondendo em localhost:$port"
             nodes_found=$((nodes_found + 1))
-            
-            # Notifica shutdown gracioso
-            curl -s --max-time 2 -X POST http://localhost:$port/api/system/shutdown \
-                -H "Content-Type: application/json" \
-                -d '{"reason": "install", "graceful": true}' > /dev/null 2>&1 || true
         fi
     done
     
-    # Verifica Ollama
+    # Verifica Ollama (serviço de modelos)
     if curl -s --max-time 2 http://localhost:11434/api/tags > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} Ollama respondendo em localhost:11434"
         nodes_found=$((nodes_found + 1))
     fi
     
     if [ $nodes_found -eq 0 ]; then
-        echo -e "  ${YELLOW}!${NC} Nenhum nó ativo encontrado"
+        echo -e "  ${YELLOW}!${NC} Nenhum nó ativo encontrado (primeira instalação ou serviços parados)"
     else
-        echo "  Total: $nodes_found nó(s) encontrados"
-        echo "Notificando nós para shutdown gracioso..."
+        echo "  Total: $nodes_found component(s) encontrados"
+        echo "Notificando components para shutdown gracioso..."
         sleep 2
     fi
 }
@@ -357,6 +382,45 @@ rm -rf "$BACKUP_DIR"
 
 echo -e "${GREEN}✓ Serviço criado e iniciado${NC}"
 
+# Descobre nodes existentes antes de registrar
+echo ""
+echo -e "${YELLOW}>>> PASSO 8/8: Descobrindo cluster e registrando node...${NC}"
+echo ""
+
+# Tenta descobrir nodes existentes
+if command -v python3 &> /dev/null; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Descobre nodes existentes
+    echo "Descobrindo nodes do Enxame na rede..."
+    python3 "$SCRIPT_DIR/discover_nodes.py" discover 2>/dev/null || true
+    
+    if [ "$IS_FIRST_INSTALL" = true ]; then
+        NODE_ID="node-$(hostname)-$(date +%s)"
+        
+        # Anuncia o node na rede via mDNS
+        echo ""
+        python3 "$SCRIPT_DIR/discover_nodes.py" advertise "$NODE_ID" "$ROLE_NAME" "$ENXAME_PORT" 2>/dev/null || true
+        
+        # Confirma função assumida
+        echo ""
+        python3 "$SCRIPT_DIR/discover_nodes.py" confirm "$NODE_ID" "$ROLE_NAME" 2>/dev/null || true
+        
+        echo ""
+        echo -e "${GREEN}✓ Node registrado e anunciado no enxame${NC}"
+        
+        # Mensagem de confirmação de função
+        echo ""
+        echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}  FUNÇÃO ASSUMIDA: $ROLE_NAME${NC}"
+        echo -e "${BLUE}  NODE ID: $NODE_ID${NC}"
+        echo -e "${BLUE}  STATUS: Ativo e descoberto na rede${NC}"
+        echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
+    fi
+else
+    echo -e "${YELLOW}! Python não disponível para descoberta automática${NC}"
+fi
+
 # Pergunta sobre função inicial do node (apenas na primeira instalação)
 if [ "$IS_FIRST_INSTALL" = true ]; then
     echo ""
@@ -378,36 +442,45 @@ if [ "$IS_FIRST_INSTALL" = true ]; then
     case $node_role in
         1)
             ROLE_NAME="kernel"
+            ENXAME_PORT="8080"
             echo "Configurando node como KERNEL..."
             ;;
         2)
             ROLE_NAME="juiz"
+            ENXAME_PORT="8082"
             echo "Configurando node como JUIZ..."
             ;;
         3)
             ROLE_NAME="bibliotecario"
+            ENXAME_PORT="8081"
             echo "Configurando node como BIBLIOTECÁRIO..."
             ;;
         4)
             ROLE_NAME="agente"
+            ENXAME_PORT="8083"
             echo "Configurando node como AGENTE..."
             ;;
         5)
             ROLE_NAME="worker"
+            ENXAME_PORT="8084"
             echo "Configurando node como WORKER..."
             ;;
         *)
             ROLE_NAME="kernel"
+            ENXAME_PORT="8080"
             echo "Opção inválida. Configurando como KERNEL por padrão..."
             ;;
     esac
     
     # Atualiza configuração com a função
     echo "ENXAME_NODE_ROLE=$ROLE_NAME" >> "$CONFIG_DIR/.env"
-    echo "ENXAME_NODE_ID=node-$(hostname)-$(date +%s)" >> "$CONFIG_DIR/.env"
+    NODE_ID="node-$(hostname)-$(date +%s)"
+    echo "ENXAME_NODE_ID=$NODE_ID" >> "$CONFIG_DIR/.env"
+    echo "ENXAME_PORT=$ENXAME_PORT" >> "$CONFIG_DIR/.env"
     
     echo ""
     echo -e "${GREEN}✓ Função do node configurada: $ROLE_NAME${NC}"
+    echo -e "${GREEN}✓ Porta configurada: $ENXAME_PORT${NC}"
 fi
 
 echo ""

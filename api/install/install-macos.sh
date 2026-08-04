@@ -398,36 +398,61 @@ if [ "$IS_FIRST_INSTALL" = true ]; then
     case $node_role in
         1)
             ROLE_NAME="kernel"
+            ENXAME_PORT="8080"
             echo "Configurando node como KERNEL..."
             ;;
         2)
             ROLE_NAME="juiz"
+            ENXAME_PORT="8082"
             echo "Configurando node como JUIZ..."
             ;;
         3)
             ROLE_NAME="bibliotecario"
+            ENXAME_PORT="8081"
             echo "Configurando node como BIBLIOTECÁRIO..."
             ;;
         4)
             ROLE_NAME="agente"
+            ENXAME_PORT="8083"
             echo "Configurando node como AGENTE..."
             ;;
         5)
             ROLE_NAME="worker"
+            ENXAME_PORT="8084"
             echo "Configurando node como WORKER..."
             ;;
         *)
             ROLE_NAME="kernel"
+            ENXAME_PORT="8080"
             echo "Opção inválida. Configurando como KERNEL por padrão..."
             ;;
     esac
     
     # Atualiza configuração com a função
     echo "ENXAME_NODE_ROLE=$ROLE_NAME" >> "$CONFIG_DIR/.env"
-    echo "ENXAME_NODE_ID=node-$(hostname)-$(date +%s)" >> "$CONFIG_DIR/.env"
+    NODE_ID="node-$(hostname)-$(date +%s)"
+    echo "ENXAME_NODE_ID=$NODE_ID" >> "$CONFIG_DIR/.env"
+    echo "ENXAME_PORT=$ENXAME_PORT" >> "$CONFIG_DIR/.env"
     
     echo ""
     echo -e "${GREEN}✓ Função do node configurada: $ROLE_NAME${NC}"
+    echo -e "${GREEN}✓ Porta configurada: $ENXAME_PORT${NC}"
+    
+    # Descobre e registra node no cluster
+    echo ""
+    echo -e "${YELLOW}>>> Descobrindo cluster e registrando node...${NC}"
+    if command -v python3 &> /dev/null; then
+        python3 "$SCRIPT_DIR/discover_nodes.py" discover 2>/dev/null || true
+        python3 "$SCRIPT_DIR/discover_nodes.py" advertise "$NODE_ID" "$ROLE_NAME" "$ENXAME_PORT" 2>/dev/null || true
+        python3 "$SCRIPT_DIR/discover_nodes.py" confirm "$NODE_ID" "$ROLE_NAME" 2>/dev/null || true
+        
+        echo ""
+        echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}  FUNÇÃO ASSUMIDA: $ROLE_NAME${NC}"
+        echo -e "${BLUE}  NODE ID: $NODE_ID${NC}"
+        echo -e "${BLUE}  STATUS: Ativo e descoberto na rede${NC}"
+        echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
+    fi
 fi
 
 echo ""
