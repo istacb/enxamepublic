@@ -4,12 +4,13 @@
 # Fluxo: Next > Next > Finish (Totalmente Automático)
 # =============================================================================
 # Este script:
-# 1. Detecta instalações antigas do Enxame ou OpenWebUI
-# 2. Para serviços antigos
-# 3. Faz backup dos dados do usuário
-# 4. Remove completamente a instalação antiga
-# 5. Instala a nova versão limpa
-# 6. Restaura os dados
+# 1. Varre a rede em busca de instâncias do Enxame
+# 2. Detecta instalações antigas do Enxame ou OpenWebUI
+# 3. Para serviços antigos e remove completamente
+# 4. Faz backup dos dados do usuário
+# 5. Instala a nova versão usando o repositório local
+# 6. Restaura os dados e configura
+# 7. Pergunta a função inicial do node (apenas na primeira instalação)
 # =============================================================================
 
 set -e
@@ -28,6 +29,7 @@ DATA_DIR="$HOME/Library/Application Support/Enxame"
 LOG_DIR="$HOME/Library/Logs/Enxame"
 CONFIG_DIR="$HOME/Library/Preferences/Enxame"
 BACKUP_DIR="/tmp/enxame_backup_$(date +%Y%m%d_%H%M%S)"
+FIRST_INSTALL_FLAG="$DATA_DIR/.first_install"
 
 echo -e "${BLUE}"
 echo "╔══════════════════════════════════════════════════════════╗"
@@ -42,7 +44,45 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}>>> PASSO 1/6: Verificando requisitos do sistema...${NC}"
+echo -e "${YELLOW}>>> PASSO 1/7: Varrendo rede por instâncias do Enxame...${NC}"
+
+# Varre a rede em busca de nós do Enxame
+scan_enxame_nodes() {
+    local nodes_found=0
+    
+    echo "Procurando nós do Enxame na rede local..."
+    
+    # Tenta comunicação HTTP com portas conhecidas
+    for port in 8080 7700 8081 8082; do
+        if curl -s --max-time 2 http://localhost:$port/api/health > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} Nó respondendo em localhost:$port"
+            nodes_found=$((nodes_found + 1))
+            
+            # Notifica shutdown gracioso
+            curl -s --max-time 2 -X POST http://localhost:$port/api/system/shutdown \
+                -H "Content-Type: application/json" \
+                -d '{"reason": "install", "graceful": true}' > /dev/null 2>&1 || true
+        fi
+    done
+    
+    # Verifica Ollama
+    if curl -s --max-time 2 http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} Ollama respondendo em localhost:11434"
+        nodes_found=$((nodes_found + 1))
+    fi
+    
+    if [ $nodes_found -eq 0 ]; then
+        echo -e "  ${YELLOW}!${NC} Nenhum nó ativo encontrado"
+    else
+        echo "  Total: $nodes_found nó(s) encontrados"
+        echo "Notificando nós para shutdown gracioso..."
+        sleep 2
+    fi
+}
+
+scan_enxame_nodes
+
+echo -e "${YELLOW}>>> PASSO 2/7: Verificando requisitos do sistema...${NC}"
 
 # Verifica requisitos
 check_requirements() {
@@ -85,12 +125,13 @@ check_requirements() {
 check_requirements
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 2/6: Procurando instalações antigas...${NC}"
+echo -e "${YELLOW}>>> PASSO 3/7: Procurando instalações antigas...${NC}"
 
 # Detecta instalações antigas
 OLD_INSTALL_FOUND=false
 OPENWEBUI_FOUND=false
 ENXAME_OLD_FOUND=false
+IS_FIRST_INSTALL=true
 
 # Detecta OpenWebUI
 if [ -d "$HOME/Library/Application Support/open-webui" ] || \
@@ -100,6 +141,7 @@ if [ -d "$HOME/Library/Application Support/open-webui" ] || \
     echo -e "${RED}✗ OpenWebUI detectado no sistema${NC}"
     OPENWEBUI_FOUND=true
     OLD_INSTALL_FOUND=true
+    IS_FIRST_INSTALL=false
 fi
 
 # Detecta Enxame antigo
@@ -107,6 +149,12 @@ if [ -d "$INSTALL_DIR" ] || [ -d "$DATA_DIR/data" ]; then
     echo -e "${YELLOW}! Instalação antiga do Enxame detectada${NC}"
     ENXAME_OLD_FOUND=true
     OLD_INSTALL_FOUND=true
+    IS_FIRST_INSTALL=false
+fi
+
+# Verifica se é primeira instalação
+if [ -f "$FIRST_INSTALL_FLAG" ]; then
+    IS_FIRST_INSTALL=false
 fi
 
 # Detecta processos rodando
@@ -117,7 +165,7 @@ fi
 
 if [ "$OLD_INSTALL_FOUND" = true ]; then
     echo ""
-    echo -e "${YELLOW}>>> PASSO 3/6: Removendo instalação antiga...${NC}"
+    echo -e "${YELLOW}>>> PASSO 4/7: Removendo instalação antiga...${NC}"
     
     # Para processos
     echo "Parando processos antigos..."
@@ -173,7 +221,7 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 4/6: Instalando novo Enxame...${NC}"
+echo -e "${YELLOW}>>> PASSO 5/7: Instalando novo Enxame...${NC}"
 
 # Cria diretórios
 mkdir -p "$INSTALL_DIR"
@@ -181,26 +229,27 @@ mkdir -p "$DATA_DIR/data"
 mkdir -p "$LOG_DIR"
 mkdir -p "$CONFIG_DIR"
 
-# Copia arquivos (assumindo que o script está no repositório)
+# Copia arquivos do repositório local (não precisa clonar novamente)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "$SCRIPT_DIR/kernel" ]; then
-    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
-    echo "  ✓ Arquivos copiados"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+echo "Copiando arquivos do repositório local em $REPO_ROOT..."
+if [ -d "$REPO_ROOT/kernel" ] || [ -d "$REPO_ROOT/core" ]; then
+    cp -r "$REPO_ROOT"/* "$INSTALL_DIR/"
+    echo "  ✓ Arquivos copiados do repositório local"
 else
-    # Se estiver rodando de um download, baixa do repositório
-    echo "Baixando Enxame do repositório oficial..."
-    cd /tmp
-    git clone --depth 1 https://github.com/enxame/enxame.git enxame_temp
-    cp -r enxame_temp/* "$INSTALL_DIR/"
-    rm -rf enxame_temp
-    echo "  ✓ Arquivos baixados"
+    echo -e "${RED}Erro: Repositório não encontrado em $REPO_ROOT${NC}"
+    echo "Certifique-se de que o instalador está dentro do repositório do Enxame."
+    exit 1
 fi
 
 cd "$INSTALL_DIR"
 
 # Instala dependências Python
 echo "Instalando dependências Python..."
-if [ -f "requirements.txt" ]; then
+if [ -f "agentes/requirements.txt" ]; then
+    pip3 install -r agentes/requirements.txt --quiet --upgrade
+elif [ -f "requirements.txt" ]; then
     pip3 install -r requirements.txt --quiet --upgrade
 elif [ -d "kernel" ] && [ -f "kernel/requirements.txt" ]; then
     pip3 install -r kernel/requirements.txt --quiet --upgrade
@@ -217,7 +266,7 @@ fi
 echo -e "${GREEN}✓ Enxame instalado em $INSTALL_DIR${NC}"
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 5/6: Restaurando dados e configurando...${NC}"
+echo -e "${YELLOW}>>> PASSO 6/7: Restaurando dados e configurando...${NC}"
 
 # Restaura backup
 if [ -d "$BACKUP_DIR/data" ]; then
@@ -230,16 +279,22 @@ if [ -f "$BACKUP_DIR/.env" ]; then
     echo "  ✓ Configurações restauradas"
 else
     # Cria .env padrão
-    cat > "$CONFIG_DIR/.env" << 'EOF'
+    cat > "$CONFIG_DIR/.env" << EOF
 # Enxame Configuration
 ENXAME_ENV=production
 ENXAME_PORT=8080
 ENXAME_HOST=0.0.0.0
-ENXAME_DATA_PATH=/Users/$USER/Library/Application Support/Enxame/data
-ENXAME_LOG_PATH=/Users/$USER/Library/Logs/Enxame
+ENXAME_DATA_PATH=$HOME/Library/Application Support/Enxame/data
+ENXAME_LOG_PATH=$HOME/Library/Logs/Enxame
 OLLAMA_URL=http://localhost:11434
+EXP_SHARED_SECRET=enxame-secret-$(openssl rand -hex 16)
 EOF
     echo "  ✓ Configuração padrão criada"
+fi
+
+# Marca como não sendo mais primeira instalação
+if [ "$IS_FIRST_INSTALL" = true ]; then
+    touch "$FIRST_INSTALL_FLAG"
 fi
 
 # Configura permissões
@@ -253,7 +308,7 @@ chmod 644 "$CONFIG_DIR/.env"
 echo -e "${GREEN}✓ Configuração concluída${NC}"
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 6/6: Criando atalhos e serviço...${NC}"
+echo -e "${YELLOW}>>> PASSO 7/7: Criando atalhos e serviço...${NC}"
 
 # Cria script de inicialização
 cat > "$INSTALL_DIR/run.sh" << EOF
@@ -321,6 +376,59 @@ launchctl load "$LAUNCHAGENT_DIR/com.enxame.app.plist"
 rm -rf "$BACKUP_DIR"
 
 echo -e "${GREEN}✓ Serviço criado e iniciado${NC}"
+
+# Pergunta sobre função inicial do node (apenas na primeira instalação)
+if [ "$IS_FIRST_INSTALL" = true ]; then
+    echo ""
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║         CONFIGURAÇÃO INICIAL DO NODE                     ║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "Qual será a função inicial deste node no enxame?"
+    echo ""
+    echo "  1) Kernel (Orquestrador principal)"
+    echo "  2) Juiz (Distribuidor de tarefas)"
+    echo "  3) Bibliotecário (Gerenciamento de documentos)"
+    echo "  4) Agente (Executor de tarefas)"
+    echo "  5) Worker (Processamento distribuído)"
+    echo ""
+    read -p "Escolha uma opção [1-5] (padrão: 1): " node_role
+    node_role=${node_role:-1}
+    
+    case $node_role in
+        1)
+            ROLE_NAME="kernel"
+            echo "Configurando node como KERNEL..."
+            ;;
+        2)
+            ROLE_NAME="juiz"
+            echo "Configurando node como JUIZ..."
+            ;;
+        3)
+            ROLE_NAME="bibliotecario"
+            echo "Configurando node como BIBLIOTECÁRIO..."
+            ;;
+        4)
+            ROLE_NAME="agente"
+            echo "Configurando node como AGENTE..."
+            ;;
+        5)
+            ROLE_NAME="worker"
+            echo "Configurando node como WORKER..."
+            ;;
+        *)
+            ROLE_NAME="kernel"
+            echo "Opção inválida. Configurando como KERNEL por padrão..."
+            ;;
+    esac
+    
+    # Atualiza configuração com a função
+    echo "ENXAME_NODE_ROLE=$ROLE_NAME" >> "$CONFIG_DIR/.env"
+    echo "ENXAME_NODE_ID=node-$(hostname)-$(date +%s)" >> "$CONFIG_DIR/.env"
+    
+    echo ""
+    echo -e "${GREEN}✓ Função do node configurada: $ROLE_NAME${NC}"
+fi
 
 echo ""
 echo -e "${GREEN}"

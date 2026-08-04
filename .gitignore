@@ -1,33 +1,19 @@
-```
-# Environment and configuration
+```bash
+# Environment
 .env
 .env.local
 *.env.*
 
-# Logs and temporary files
+# Logs and temp files
 *.log
 *.tmp
+*.swp
 
-# Editors and IDEs
+# Editors
 .vscode/
+.idea/
 
-# Dependencies and build artifacts
-node_modules/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-dist/
-build/
-*.egg
-*.whl
-pip-log.txt
-.tox/
-.coverage
-htmlcov/
-.coverage.*
-.nyc_output/
-istanbul/
+# OS specific
+.DS_Store
+Thumbs.db
 ```
