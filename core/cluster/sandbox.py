@@ -95,7 +95,7 @@ class SecureSandbox:
                 with open(script_path, 'w', encoding='utf-8') as f:
                     f.write(code)
 
-                # Restrições básicas de segurança (em prod, usar Docker/gVisor)
+                # Restrições básicas de segurança (em prod, usar sandboxing nativo ou gVisor)
                 cmd = [language, script_path]
                 result = subprocess.run(
                     cmd,
