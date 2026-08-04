@@ -11,7 +11,11 @@ This directory contains conceptual specifications for the Enxame Domain Model.
 | `node.md` | Node |
 | `specialization.md` | Specialization |
 | `mission.md` | Mission |
+| `mission_lifecycle.md` | Mission Lifecycle |
 | `workflow.md` | Workflow |
+| `workflow_lifecycle.md` | Workflow Lifecycle |
+| `task_lifecycle.md` | Task Lifecycle |
+| `event_catalog.md` | Event Catalog |
 
 ## Principles
 

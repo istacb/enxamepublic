@@ -11,7 +11,11 @@ Este diretório contém especificações conceituais para o Modelo de Domínio E
 | `node.md` | Node |
 | `specialization.md` | Especialização |
 | `mission.md` | Missão |
+| `mission_lifecycle.md` | Ciclo de Vida da Missão |
 | `workflow.md` | Workflow |
+| `workflow_lifecycle.md` | Ciclo de Vida do Workflow |
+| `task_lifecycle.md` | Ciclo de Vida da Task |
+| `event_catalog.md` | Catálogo de Eventos |
 
 ## Princípios
 
