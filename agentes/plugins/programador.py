@@ -14,7 +14,6 @@ class ProgramadorPlugin(SpecialtyPlugin):
         'api',
         'algoritmo',
         'refator',
-        'docker',
         'teste',
         'backend',
         'frontend',
