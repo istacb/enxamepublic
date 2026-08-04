@@ -4,6 +4,13 @@
 
 O Enxame possui um sistema de instalação multi-plataforma totalmente automatizado com fluxo **Next > Next > Finish**. Os instaladores detectam automaticamente instalações antigas (Enxame ou OpenWebUI), fazem backup dos dados, removem a versão antiga e instalam a nova versão limpa.
 
+**Recursos principais:**
+- 🔍 Descoberta automática de nodes via mDNS e HTTP
+- 📡 Comunicação com todos os components do enxame (Kernel, Juiz, Bibliotecário, Agentes)
+- 🔄 Atualização preservando dados e configurações
+- 🎯 Configuração de função inicial do node (apenas na primeira instalação)
+- ✅ Registro automático no cluster existente
+
 ---
 
 ## 📦 Instaladores Disponíveis
@@ -29,14 +36,16 @@ sudo bash install-ubuntu.sh
 ```
 
 **O que acontece:**
-1. ✅ Verifica Python 3, Node.js e dependências
-2. ✅ Detecta instalações antigas (Enxame ou OpenWebUI)
+1. ✅ Varre rede por instâncias do Enxame via mDNS (_enxame._tcp) e HTTP
+2. ✅ Detecta installations antigas (Enxame ou OpenWebUI)
 3. ✅ Para serviços antigos e containers Docker
 4. ✅ Cria backup dos dados do usuário
 5. ✅ Remove completamente a instalação antiga
-6. ✅ Instala a nova versão do Enxame
+6. ✅ Instala a nova versão do Enxame usando repositório local
 7. ✅ Restaura dados e configurações
 8. ✅ Cria serviço systemd e atalhos
+9. ✅ Pergunta função inicial do node (primeira instalação apenas)
+10. ✅ Anuncia node na rede e registra no cluster
 
 **Localização da instalação:**
 - Código: `/opt/enxame`
@@ -57,14 +66,16 @@ sudo bash install-ubuntu.sh
 ```
 
 **O que acontece:**
-1. ✅ Verifica Python 3 e Node.js (instala via winget se necessário)
+1. ✅ Varre rede por instâncias do Enxame via HTTP
 2. ✅ Detecta instalações antigas
 3. ✅ Para processos antigos
 4. ✅ Cria backup dos dados
 5. ✅ Remove instalação antiga
-6. ✅ Instala nova versão
+6. ✅ Instala nova versão usando repositório local
 7. ✅ Restaura dados
 8. ✅ Cria atalho na Área de Trabalho
+9. ✅ Pergunta função inicial do node (primeira instalação apenas)
+10. ✅ Anuncia node na rede e registra no cluster
 
 **Localização da instalação:**
 - Código: `C:\Program Files\Enxame`
@@ -85,14 +96,16 @@ sudo bash install-macos.sh
 ```
 
 **O que acontece:**
-1. ✅ Verifica Python 3 e Node.js (instala via Homebrew se necessário)
+1. ✅ Varre rede por instâncias do Enxame via HTTP
 2. ✅ Detecta instalações antigas
 3. ✅ Para processos e containers
 4. ✅ Cria backup dos dados
 5. ✅ Remove instalação antiga
-6. ✅ Instala nova versão
+6. ✅ Instala nova versão usando repositório local
 7. ✅ Restaura dados
 8. ✅ Cria aplicativo .app e LaunchAgent
+9. ✅ Pergunta função inicial do node (primeira instalação apenas)
+10. ✅ Anuncia node na rede e registra no cluster
 
 **Localização da instalação:**
 - Código: `/Applications/Enxame`
@@ -172,19 +185,66 @@ Os instaladores detectam automaticamente instalações do OpenWebUI e oferecem m
 
 ---
 
-## 📡 Descoberta de Nodes
+## 📡 Descoberta de Nodes e Comunicação
 
 O sistema de instalação comunica-se automaticamente com todos os components do Enxame:
 
-| Componente | Porta | Endpoint de Saúde |
-|------------|-------|-------------------|
-| Kernel | 8080 | `/api/health` |
-| Bibliotecário | 8081 | `/api/health` |
-| Juiz | 8082 | `/api/health` |
-| Ollama | 11434 | `/api/tags` |
+| Componente | Porta | Endpoint de Saúde | Protocolo |
+|------------|-------|-------------------|-----------|
+| Kernel | 8080 | `/api/health` | HTTP + mDNS |
+| Bibliotecário | 8081 | `/api/health` | HTTP + mDNS |
+| Juiz | 8082 | `/api/v1/health` | HTTP + mDNS |
+| Agente | 8083 | `/api/health` | HTTP |
+| Worker | 8084-8085 | `/api/health` | HTTP |
+| Ollama | 11434 | `/api/tags` | HTTP |
+
+### Descoberta Automática (mDNS)
+
+Os instaladores usam o protocolo mDNS (_enxame._tcp) para descobrir nodes na rede local:
+
+```python
+# Usando core.discovery.browser
+from core.discovery.browser import ENXAMEMDNSBrowser
+
+browser = ENXAMEMDNSBrowser()
+browser.start()
+# Aguarda descoberta...
+for name, node in browser.nodes.items():
+    print(f"{node.role} em {node.host}:{node.port}")
+browser.stop()
+```
+
+### Script discover_nodes.py
+
+O script `discover_nodes.py` é usado pelos instaladores para:
+
+1. **discover** - Descobre nodes existentes na rede
+2. **advertise** - Anuncia o novo node via mDNS
+3. **register** - Registra o node com o cluster existente
+4. **confirm** - Confirma função assumida pelo node
+
+```bash
+# Exemplos de uso
+python discover_nodes.py discover
+python discover_nodes.py advertise node-123 kernel 8080
+python discover_nodes.py register node-123 kernel localhost 8080
+python discover_nodes.py confirm node-123 kernel
+```
+
+### Fluxo de Registro de Node
+
+1. Instalador varre rede via mDNS e HTTP
+2. Detecta nodes existentes (Kernel, Juiz, etc.)
+3. Notifica shutdown gracioso dos services
+4. Instala nova versão
+5. Pergunta função inicial do node (primeira instalação)
+6. Anuncia node na rede via mDNS
+7. Registra node com Kernel (se existir cluster)
+8. Envia ROLE_ACK para Juiz confirmando função
+9. Node aparece como "Ativo e descoberto na rede"
 
 Durante a atualização, o script:
-1. Varre todas as portas
+1. Varre todas as portas e mDNS
 2. Notifica cada node para shutdown gracioso
 3. Aguarda finalização das operações
 4. Procede com a atualização

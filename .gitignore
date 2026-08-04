@@ -1,19 +1,39 @@
-```bash
-# Environment
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# Environment files
 .env
 .env.local
 *.env.*
 
-# Logs and temp files
-*.log
-*.tmp
-*.swp
+# Coverage
+.coverage
+coverage/
+htmlcov/
 
-# Editors
+# IDE
 .vscode/
 .idea/
 
-# OS specific
-.DS_Store
-Thumbs.db
+# Build artifacts
+dist/
+build/
+target/
 ```
