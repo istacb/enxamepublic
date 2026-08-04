@@ -1,0 +1,53 @@
+#!/bin/bash
+# Enxame - Script de atualização
+# Atualiza a instalação do Enxame
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENXAME_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo "=== Enxame - Atualização ==="
+echo ""
+
+# Verifica se está rodando como root ou com sudo
+if [ "$EUID" -ne 0 ]; then 
+    echo "Por favor, execute como root (use sudo)"
+    exit 1
+fi
+
+echo "Atualizando Enxame..."
+
+# Navega até o diretório raiz
+cd "$ENXAME_ROOT"
+
+# Atualiza código via git (se disponível)
+if [ -d ".git" ]; then
+    echo "Atualizando código do repositório..."
+    git pull --rebase || echo "Aviso: Não foi possível atualizar do repositório"
+fi
+
+# Instala/atualiza dependências Python
+if [ -f "requirements.txt" ]; then
+    echo "Atualizando dependências Python..."
+    pip install -r requirements.txt --upgrade
+fi
+
+# Instala/atualiza dependências Node (se disponível)
+if [ -f "package.json" ]; then
+    echo "Atualizando dependências Node..."
+    npm install --production
+fi
+
+# Reinicia serviços (se systemd estiver disponível)
+if command -v systemctl &> /dev/null; then
+    if [ -f "/etc/systemd/system/enxame.service" ]; then
+        echo "Reiniciando serviço Enxame..."
+        systemctl daemon-reload
+        systemctl restart enxame
+    fi
+fi
+
+echo ""
+echo "=== Atualização concluída ==="
+echo ""

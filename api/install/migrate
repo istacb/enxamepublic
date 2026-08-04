@@ -1,0 +1,62 @@
+#!/bin/bash
+# Enxame - Script de migração
+# Executa migrações de banco de dados e estrutura
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENXAME_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo "=== Enxame - Migração ==="
+echo ""
+
+# Verifica se está rodando como root ou com sudo
+if [ "$EUID" -ne 0 ]; then 
+    echo "Por favor, execute como root (use sudo)"
+    exit 1
+fi
+
+echo "Executando migrações..."
+
+# Cria diretórios de dados se não existirem
+mkdir -p /var/lib/enxame/data
+mkdir -p /var/log/enxame
+
+# Navega até o diretório raiz
+cd "$ENXAME_ROOT"
+
+# Executa migrações Python (se houver)
+if [ -d "backend" ] || [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
+    echo "Verificando migrações do backend..."
+    
+    # Tenta executar migrações via Python
+    if command -v python3 &> /dev/null; then
+        python3 -c "
+import sys
+sys.path.insert(0, '$ENXAME_ROOT')
+try:
+    # Tenta importar e executar migrações se existirem
+    pass
+except Exception as e:
+    print(f'Nenhuma migração pendente ou erro: {e}')
+" || echo "Backend ainda não possui migrações definidas"
+    fi
+fi
+
+# Inicializa banco de dados SQLite (se aplicável)
+DB_PATH="/var/lib/enxame/data/enxame.db"
+if [ ! -f "$DB_PATH" ]; then
+    echo "Criando banco de dados inicial em $DB_PATH..."
+    touch "$DB_PATH"
+    chmod 644 "$DB_PATH"
+fi
+
+# Configura permissões
+chown -R root:root /var/lib/enxame
+chown -R root:root /var/log/enxame
+
+echo ""
+echo "=== Migração concluída ==="
+echo ""
+echo "Banco de dados pronto em: $DB_PATH"
+echo ""

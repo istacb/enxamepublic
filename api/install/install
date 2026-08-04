@@ -1,0 +1,48 @@
+#!/bin/bash
+# Enxame - Script de instalação
+# Instala a infraestrutura mínima do Enxame
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENXAME_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo "=== Enxame - Instalação ==="
+echo ""
+
+# Verifica se está rodando como root ou com sudo
+if [ "$EUID" -ne 0 ]; then 
+    echo "Por favor, execute como root (use sudo)"
+    exit 1
+fi
+
+echo "Instalando Enxame em $ENXAME_ROOT..."
+
+# Cria diretórios necessários
+mkdir -p /var/lib/enxame/data
+mkdir -p /var/log/enxame
+mkdir -p /etc/enxame
+
+# Copia arquivos de configuração de exemplo
+if [ -f "$ENXAME_ROOT/.env.example" ]; then
+    cp "$ENXAME_ROOT/.env.example" /etc/enxame/.env
+    echo "Arquivo .env criado em /etc/enxame/"
+fi
+
+# Configura permissões
+chown -R root:root /var/lib/enxame
+chown -R root:root /var/log/enxame
+chown -R root:root /etc/enxame
+
+chmod 755 /var/lib/enxame/data
+chmod 755 /var/log/enxame
+chmod 755 /etc/enxame
+
+echo ""
+echo "=== Instalação concluída ==="
+echo ""
+echo "Próximos passos:"
+echo "1. Configure o arquivo /etc/enxame/.env"
+echo "2. Execute './update' para atualizar dependências"
+echo "3. Execute './migrate' para preparar o banco de dados"
+echo ""
