@@ -45,7 +45,7 @@ if %errorLevel% neq 0 (
     exit /b 1
 )
 
-echo >>> PASSO 1/6: Verificando requisitos do sistema...
+echo >>> PASSO 1/7: Verificando requisitos do sistema...
 echo.
 
 :: Verifica Python
@@ -76,7 +76,7 @@ echo.
 echo [OK] Requisitos verificados
 echo.
 
-echo >>> PASSO 2/6: Procurando instalacoes antigas...
+echo >>> PASSO 2/7: Procurando instalacoes antigas...
 echo.
 
 set "OLD_INSTALL_FOUND=false"
@@ -117,7 +117,7 @@ if not errorlevel 1 (
 
 if "%OLD_INSTALL_FOUND%"=="true" (
     echo.
-    echo >>> PASSO 3/6: Removendo instalacao antiga...
+    echo >>> PASSO 3/7: Removendo instalacao antiga...
     echo.
     
     :: Para processos
@@ -174,7 +174,7 @@ if "%OLD_INSTALL_FOUND%"=="true" (
 )
 
 echo.
-echo >>> PASSO 4/6: Instalando novo Enxame...
+echo >>> PASSO 4/7: Instalando novo Enxame...
 echo.
 
 :: Cria diretórios
@@ -183,10 +183,28 @@ mkdir "%DATA_DIR%\data" 2>nul
 mkdir "%LOG_DIR%" 2>nul
 mkdir "%CONFIG_DIR%" 2>nul
 
-:: Copia arquivos
-echo Copiando arquivos do Enxame...
+:: Copia arquivos. O instalador é distribuído junto com o repositório
+:: (fica em api\install\ dentro do proprio checkout), entao nunca e
+:: necessario clonar nada aqui: subimos duas pastas (api\install -> raiz
+:: do repo) e copiamos o repositorio inteiro, nao so a pasta do instalador.
 set "SCRIPT_DIR=%~dp0"
-xcopy /E /I /Y "%SCRIPT_DIR%*" "%INSTALL_DIR%" >nul
+for %%I in ("%SCRIPT_DIR%..\..") do set "REPO_ROOT=%%~fI"
+
+if not exist "%REPO_ROOT%\juiz" (
+    echo Erro: nao encontrei o repositorio do Enxame a partir de %SCRIPT_DIR%.
+    echo Execute este script de dentro do checkout do repositorio ^(api\install\install-windows.bat^).
+    pause
+    exit /b 1
+)
+if not exist "%REPO_ROOT%\bibliotecario" (
+    echo Erro: nao encontrei o repositorio do Enxame a partir de %SCRIPT_DIR%.
+    echo Execute este script de dentro do checkout do repositorio ^(api\install\install-windows.bat^).
+    pause
+    exit /b 1
+)
+
+echo Copiando arquivos do Enxame de %REPO_ROOT%...
+xcopy /E /I /Y "%REPO_ROOT%\*" "%INSTALL_DIR%" >nul
 echo   [OK] Arquivos copiados
 
 cd /d "%INSTALL_DIR%"
@@ -211,7 +229,7 @@ echo.
 echo [OK] Enxame instalado em %INSTALL_DIR%
 
 echo.
-echo >>> PASSO 5/6: Restaurando dados e configurando...
+echo >>> PASSO 5/7: Restaurando dados e configurando...
 echo.
 
 :: Restaura backup
@@ -227,7 +245,6 @@ if exist "%BACKUP_DIR%\.env" (
     :: Cria .env padrão
     echo # Enxame Configuration > "%CONFIG_DIR%\.env"
     echo ENXAME_ENV=production >> "%CONFIG_DIR%\.env"
-    echo ENXAME_PORT=8080 >> "%CONFIG_DIR%\.env"
     echo ENXAME_HOST=0.0.0.0 >> "%CONFIG_DIR%\.env"
     echo ENXAME_DATA_PATH=%DATA_DIR% >> "%CONFIG_DIR%\.env"
     echo ENXAME_LOG_PATH=%LOG_DIR% >> "%CONFIG_DIR%\.env"
@@ -239,7 +256,7 @@ echo.
 echo [OK] Configuracao concluida
 
 echo.
-echo >>> PASSO 6/6: Criando atalhos...
+echo >>> PASSO 6/7: Criando atalhos...
 echo.
 
 :: Cria atalho na área de trabalho
@@ -249,7 +266,7 @@ set "SCRIPT_PATH=%INSTALL_DIR%\run.bat"
 :: Cria script de inicialização
 echo @echo off > "%SCRIPT_PATH%"
 echo cd /d "%INSTALL_DIR%" >> "%SCRIPT_PATH%"
-echo python -m kernel.start %%* >> "%SCRIPT_PATH%"
+echo python "%INSTALL_DIR%\api\install\run_node.py" --env-file "%CONFIG_DIR%\.env" %%* >> "%SCRIPT_PATH%"
 
 :: Cria atalho
 set "SHORTCUT_PATH=%DESKTOP%\Enxame.lnk"
@@ -262,6 +279,16 @@ setx ENXAME_HOME "%INSTALL_DIR%" /M >nul
 rmdir /S /Q "%BACKUP_DIR%" 2>nul
 
 echo   [OK] Atalhos criados
+
+echo.
+echo >>> PASSO 7/7: Configurando funcao do node...
+echo.
+
+:: Pergunta a funcao inicial do node (so pergunta de fato se o .env
+:: restaurado ainda nao tiver uma funcao salva de uma instalacao anterior),
+:: faz a varredura mDNS por outros nodes na rede e, na primeira instalacao,
+:: exibe a confirmacao de qual funcao cada node assumiu.
+python "%INSTALL_DIR%\api\install\node_role_setup.py" --env-file "%CONFIG_DIR%\.env"
 
 echo.
 echo ╔══════════════════════════════════════════════════════════╗
@@ -277,7 +304,7 @@ echo ║  Comandos uteis:                                         ║
 echo ║    • Clique duas vezes em Enxame na Area de Trabalho    ║
 echo ║    • Ou execute: %SCRIPT_PATH%
 echo ║                                                          ║
-echo ║  Acesse: http://localhost:8080                          ║
+echo ║  Funcao e porta deste node: ver %CONFIG_DIR%\.env
 echo ╚══════════════════════════════════════════════════════════╝
 echo.
 pause

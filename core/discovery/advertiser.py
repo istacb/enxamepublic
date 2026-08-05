@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from zeroconf import IPVersion, ServiceInfo, Zeroconf
 
@@ -15,10 +15,15 @@ class ENXAMEMDNSAdvertiser:
     port: int
     capabilities: str = 'exp,ws,http'
     models: str = ''
+    # Precisam ser declarados como campos do dataclass porque a classe usa
+    # slots=True: atribuir atributos não declarados em __post_init__
+    # levanta AttributeError com slots (bug corrigido aqui).
+    _zeroconf: Zeroconf = field(init=False, repr=False, compare=False)
+    _info: ServiceInfo | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self._zeroconf = Zeroconf(ip_version=IPVersion.V4Only)
-        self._info: ServiceInfo | None = None
+        self._info = None
 
     def start(self) -> None:
         full_name = f'{self.service_name}._enxame._tcp.local.'

@@ -42,7 +42,7 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}>>> PASSO 1/6: Verificando requisitos do sistema...${NC}"
+echo -e "${YELLOW}>>> PASSO 1/7: Verificando requisitos do sistema...${NC}"
 
 # Verifica requisitos
 check_requirements() {
@@ -85,7 +85,7 @@ check_requirements() {
 check_requirements
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 2/6: Procurando instalações antigas...${NC}"
+echo -e "${YELLOW}>>> PASSO 2/7: Procurando instalações antigas...${NC}"
 
 # Detecta instalações antigas
 OLD_INSTALL_FOUND=false
@@ -117,7 +117,7 @@ fi
 
 if [ "$OLD_INSTALL_FOUND" = true ]; then
     echo ""
-    echo -e "${YELLOW}>>> PASSO 3/6: Removendo instalação antiga...${NC}"
+    echo -e "${YELLOW}>>> PASSO 3/7: Removendo instalação antiga...${NC}"
     
     # Para processos
     echo "Parando processos antigos..."
@@ -173,7 +173,7 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 4/6: Instalando novo Enxame...${NC}"
+echo -e "${YELLOW}>>> PASSO 4/7: Instalando novo Enxame...${NC}"
 
 # Cria diretórios
 mkdir -p "$INSTALL_DIR"
@@ -181,20 +181,19 @@ mkdir -p "$DATA_DIR/data"
 mkdir -p "$LOG_DIR"
 mkdir -p "$CONFIG_DIR"
 
-# Copia arquivos (assumindo que o script está no repositório)
+# Copia arquivos. O instalador é distribuído junto com o repositório
+# (fica em api/install/ dentro do próprio checkout), então nunca é
+# necessário clonar nada aqui — e como o repositório é público, clonar
+# nunca pediria usuário/senha de qualquer forma.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "$SCRIPT_DIR/kernel" ]; then
-    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
-    echo "  ✓ Arquivos copiados"
-else
-    # Se estiver rodando de um download, baixa do repositório
-    echo "Baixando Enxame do repositório oficial..."
-    cd /tmp
-    git clone --depth 1 https://github.com/enxame/enxame.git enxame_temp
-    cp -r enxame_temp/* "$INSTALL_DIR/"
-    rm -rf enxame_temp
-    echo "  ✓ Arquivos baixados"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ ! -d "$REPO_ROOT/juiz" ] || [ ! -d "$REPO_ROOT/bibliotecario" ]; then
+    echo -e "${RED}Erro: não encontrei o repositório do Enxame a partir de $SCRIPT_DIR.${NC}"
+    echo -e "${RED}Execute este script de dentro do checkout do repositório (api/install/install-macos.sh).${NC}"
+    exit 1
 fi
+cp -r "$REPO_ROOT"/* "$INSTALL_DIR/"
+echo "  ✓ Arquivos copiados de $REPO_ROOT"
 
 cd "$INSTALL_DIR"
 
@@ -217,7 +216,7 @@ fi
 echo -e "${GREEN}✓ Enxame instalado em $INSTALL_DIR${NC}"
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 5/6: Restaurando dados e configurando...${NC}"
+echo -e "${YELLOW}>>> PASSO 5/7: Restaurando dados e configurando...${NC}"
 
 # Restaura backup
 if [ -d "$BACKUP_DIR/data" ]; then
@@ -230,14 +229,15 @@ if [ -f "$BACKUP_DIR/.env" ]; then
     echo "  ✓ Configurações restauradas"
 else
     # Cria .env padrão
-    cat > "$CONFIG_DIR/.env" << 'EOF'
+    cat > "$CONFIG_DIR/.env" << EOF
 # Enxame Configuration
 ENXAME_ENV=production
-ENXAME_PORT=8080
 ENXAME_HOST=0.0.0.0
-ENXAME_DATA_PATH=/Users/$USER/Library/Application Support/Enxame/data
-ENXAME_LOG_PATH=/Users/$USER/Library/Logs/Enxame
+ENXAME_DATA_PATH=$DATA_DIR/data
+ENXAME_LOG_PATH=$LOG_DIR
 OLLAMA_URL=http://localhost:11434
+# ENXAME_NODE_ROLE, ENXAME_NODE_ID e ENXAME_NODE_PORT são preenchidos
+# automaticamente pelo passo de configuração de função do node (mais abaixo).
 EOF
     echo "  ✓ Configuração padrão criada"
 fi
@@ -253,13 +253,13 @@ chmod 644 "$CONFIG_DIR/.env"
 echo -e "${GREEN}✓ Configuração concluída${NC}"
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 6/6: Criando atalhos e serviço...${NC}"
+echo -e "${YELLOW}>>> PASSO 6/7: Criando atalhos e serviço...${NC}"
 
 # Cria script de inicialização
 cat > "$INSTALL_DIR/run.sh" << EOF
 #!/bin/bash
 cd "$INSTALL_DIR"
-exec python3 -m kernel.start "\$@"
+exec python3 "$INSTALL_DIR/api/install/run_node.py" --env-file "$CONFIG_DIR/.env" "\$@"
 EOF
 chmod +x "$INSTALL_DIR/run.sh"
 
@@ -313,7 +313,19 @@ cat > "$LAUNCHAGENT_DIR/com.enxame.app.plist" << EOF
 </plist>
 EOF
 
-# Carrega o LaunchAgent
+echo -e "${GREEN}✓ Atalhos e LaunchAgent criados${NC}"
+
+echo ""
+echo -e "${YELLOW}>>> PASSO 7/7: Configurando função do node...${NC}"
+echo ""
+
+# Pergunta a função inicial do node (só pergunta de fato se o .env restaurado
+# ainda não tiver uma função salva de uma instalação anterior), faz a
+# varredura mDNS por outros nodes na rede e, na primeira instalação, exibe
+# a confirmação de qual função cada node assumiu.
+python3 "$INSTALL_DIR/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env"
+
+# Só agora carrega o LaunchAgent, já com a função definida no .env
 launchctl unload "$LAUNCHAGENT_DIR/com.enxame.app.plist" 2>/dev/null || true
 launchctl load "$LAUNCHAGENT_DIR/com.enxame.app.plist"
 
@@ -337,7 +349,7 @@ echo "║  Comandos úteis:                                         ║"
 echo "║    • $INSTALL_DIR/run.sh      - Iniciar Enxame          ║"
 echo "║    • Enxame.app              - Abrir aplicativo         ║"
 echo "║                                                          ║"
-echo "║  Acesse: http://localhost:8080                          ║"
+echo "║  Função e porta deste node: ver $CONFIG_DIR/.env"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 

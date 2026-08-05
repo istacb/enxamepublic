@@ -62,51 +62,41 @@ fi
 echo ">>> PASSO 1/5: Comunicando com nodes do Enxame..."
 echo ""
 
-# Descobre e notifica nodes
-discover_and_notify_nodes() {
+# Descobre nodes ativos localmente (portas oficiais: Juiz 7700,
+# Bibliotecário 7701, Ollama 11434 - ver spec/pt-BR/diagrams/deployment.mmd).
+# [Não verificado] Não há endpoint HTTP de shutdown gracioso no código
+# (juiz/app.py e bibliotecario/app.py só tratam o evento de shutdown do
+# próprio processo ASGI). Por isso o shutdown gracioso é feito pedindo ao
+# gerenciador de serviço (systemd/launchctl) para parar o processo, o que
+# dispara esse evento via SIGTERM — não por uma chamada HTTP.
+discover_local_nodes() {
     local nodes_found=0
-    
-    echo "Procurando nodes ativos..."
-    
-    # Tenta comunicar com Kernel
-    if curl -s --max-time 2 http://localhost:8080/api/health > /dev/null 2>&1; then
-        echo "  ✓ Kernel respondendo em :8080"
-        nodes_found=$((nodes_found + 1))
-        
-        # Notifica que vai atualizar
-        curl -s --max-time 2 -X POST http://localhost:8080/api/system/shutdown \
-            -H "Content-Type: application/json" \
-            -d '{"reason": "update", "graceful": true}' > /dev/null 2>&1 || true
-        echo "  ✓ Kernel notificado para shutdown gracioso"
-        sleep 2
-    fi
-    
-    # Tenta comunicar com Bibliotecário
-    if curl -s --max-time 2 http://localhost:8081/api/health > /dev/null 2>&1; then
-        echo "  ✓ Bibliotecário respondendo em :8081"
+
+    echo "Procurando nodes ativos neste host..."
+
+    if curl -s --max-time 2 http://localhost:7700/api/v1/health > /dev/null 2>&1; then
+        echo "  ✓ Juiz respondendo em :7700"
         nodes_found=$((nodes_found + 1))
     fi
-    
-    # Tenta comunicar com Juiz
-    if curl -s --max-time 2 http://localhost:8082/api/health > /dev/null 2>&1; then
-        echo "  ✓ Juiz respondendo em :8082"
+
+    if curl -s --max-time 2 http://localhost:7701/api/v1/health > /dev/null 2>&1; then
+        echo "  ✓ Bibliotecário respondendo em :7701"
         nodes_found=$((nodes_found + 1))
     fi
-    
-    # Verifica Ollama
+
     if curl -s --max-time 2 http://localhost:11434/api/tags > /dev/null 2>&1; then
         echo "  ✓ Ollama respondendo em :11434"
         nodes_found=$((nodes_found + 1))
     fi
-    
+
     if [ $nodes_found -eq 0 ]; then
-        echo "  ! Nenhum node ativo encontrado (serviços podem estar parados)"
+        echo "  ! Nenhum node ativo encontrado neste host (serviço pode estar parado)"
     else
-        echo "  Total: $nodes_found node(s) encontrados"
+        echo "  Total: $nodes_found node(s) encontrados neste host"
     fi
 }
 
-discover_and_notify_nodes
+discover_local_nodes
 
 echo ""
 echo ">>> PASSO 2/5: Criando backup completo..."
@@ -235,13 +225,25 @@ esac
 # Aguarda serviços iniciarem
 sleep 3
 
+# Reanuncia este node na rede com a MESMA função salva anteriormente.
+# Update nunca pergunta a função de novo — isso só acontece na primeira
+# instalação.
+if [[ "$OS_TYPE" != "windows" ]] && [ -f "$CONFIG_DIR/.env" ]; then
+    echo ""
+    echo "Reconfirmando função do node na rede..."
+    python3 "$ENXAME_ROOT/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env" --non-interactive --scan-seconds 3 || true
+fi
+
 # Verifica saúde dos serviços
 echo ""
 echo "Verificando saúde dos serviços..."
-if curl -s --max-time 5 http://localhost:8080/api/health > /dev/null 2>&1; then
-    echo "  ✓ Kernel online"
+if curl -s --max-time 5 http://localhost:7700/api/v1/health > /dev/null 2>&1; then
+    echo "  ✓ Juiz online (:7700)"
 else
-    echo "  ! Kernel não respondeu (pode estar inicializando)"
+    echo "  ! Juiz não respondeu em :7700 (pode estar inicializando, ou este node não é o Juiz)"
+fi
+if curl -s --max-time 5 http://localhost:7701/api/v1/health > /dev/null 2>&1; then
+    echo "  ✓ Bibliotecário online (:7701)"
 fi
 
 echo ""
@@ -252,7 +254,8 @@ echo "║  • Código atualizado                                     ║"
 echo "║  • Dependências atualizadas                              ║"
 echo "║  • Dados preservados                                     ║"
 echo "║  • Configurações preservadas                             ║"
+echo "║  • Função do node preservada (sem nova pergunta)          ║"
 echo "║                                                          ║"
-echo "║  Acesse: http://localhost:8080                          ║"
+echo "║  Função e porta deste node: ver $CONFIG_DIR/.env"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""

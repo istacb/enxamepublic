@@ -34,10 +34,13 @@ else
     cat > /etc/enxame/.env << 'EOF'
 # Configuração do Enxame
 ENXAME_ENV=production
-ENXAME_PORT=8080
 ENXAME_HOST=0.0.0.0
 ENXAME_DATA_PATH=/var/lib/enxame/data
 ENXAME_LOG_PATH=/var/log/enxame
+OLLAMA_URL=http://localhost:11434
+# ENXAME_NODE_ROLE, ENXAME_NODE_ID e ENXAME_NODE_PORT são preenchidos
+# automaticamente ao rodar api/install/node_role_setup.py (portas oficiais:
+# Juiz=7700, Bibliotecário=7701 - não existe uma única "ENXAME_PORT" fixa).
 EOF
     echo "Arquivo .env padrão criado em /etc/enxame/"
 fi
@@ -68,4 +71,6 @@ echo "Próximos passos:"
 echo "1. Configure o arquivo /etc/enxame/.env"
 echo "2. Execute './update' para atualizar dependências"
 echo "3. Execute './migrate' para preparar o banco de dados"
+echo "4. Execute 'python3 $SCRIPT_DIR/node_role_setup.py --env-file /etc/enxame/.env'"
+echo "   para escolher a função inicial deste node (Juiz/Bibliotecário/Agente/Automático)"
 echo ""

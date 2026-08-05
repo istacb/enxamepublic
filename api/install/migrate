@@ -57,16 +57,8 @@ detect_old_installations() {
     if [ "$found_old" = true ]; then
         echo ""
         echo "Foram detectadas instalações antigas que podem conflitar."
-        read -p "Deseja remover as instalações antigas agora? (y/N): " remove_old
-        
-        if [ "$remove_old" = "y" ] || [ "$remove_old" = "Y" ]; then
-            echo ""
-            echo "Removendo instalações antigas..."
-            remove_old_installations
-        else
-            echo ""
-            echo "AVISO: Instalações antigas foram mantidas. Conflitos podem ocorrer."
-        fi
+        echo "Removendo automaticamente (fluxo Next > Next > Finish, sem confirmação manual)..."
+        remove_old_installations
     else
         echo "Nenhuma instalação antiga detectada."
     fi

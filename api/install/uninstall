@@ -18,14 +18,7 @@ fi
 
 echo "ATENÇÃO: Isso removerá COMPLETAMENTE o Enxame do sistema."
 echo "Todos os dados, logs e configurações serão perdidos."
-echo ""
-read -p "Deseja continuar? (y/N): " confirm
-
-if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-    echo "Desinstalação cancelada."
-    exit 0
-fi
-
+echo "Fluxo Next > Next > Finish: removendo automaticamente, sem confirmação manual."
 echo ""
 echo "Removendo Enxame..."
 

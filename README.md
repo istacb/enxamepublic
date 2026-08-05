@@ -109,17 +109,37 @@ Eficiência é requisito não negociável:
 - Ollama instalado e configurado
 
 ### Instalação Rápida
+
+Use os instaladores oficiais por plataforma (Next > Next > Finish), que já
+cuidam de dependências, backup/migração de instalações antigas e do start
+do serviço — veja `api/install/README.md` para o passo a passo completo:
+
 ```bash
-# Clonar repositório
-git clone https://github.com/enxame/enxame.git
-cd enxame
+# Clonar repositório (público, sem necessidade de login)
+git clone https://github.com/istacb/enxamepublic.git
+cd enxamepublic
 
-# Executar instalador oficial
-./api/install/install
+# Ubuntu/Debian ou macOS (como root/sudo)
+sudo bash api/install/install-ubuntu.sh   # ou install-macos.sh
 
-# Iniciar o Enxame
-python -m kernel.main
+# Windows: execute api\install\install-windows.bat como Administrador
 ```
+
+Para iniciar manualmente um node sem os instaladores (ex.: ambiente de
+desenvolvimento), use o runner unificado, que lê a função do node
+(`ENXAME_NODE_ROLE`) do arquivo `.env` informado:
+
+```bash
+python3 api/install/run_node.py --env-file /caminho/para/.env
+```
+
+> **[Não verificado]** `python -m kernel.main`, citado em versões
+> anteriores deste README, não corresponde ao código atual: `kernel/` é um
+> pacote TypeScript (`kernel.ts`, `index.ts`) sem `package.json` no
+> repositório, então esse comando não executa nada. Os serviços que de
+> fato rodam em Python hoje são `juiz/app.py`, `bibliotecario/app.py`
+> (FastAPI, servidos via uvicorn) e `agentes/service.py` (worker
+> assíncrono) — é isso que `run_node.py` inicia.
 
 ### Scripts Oficiais
 

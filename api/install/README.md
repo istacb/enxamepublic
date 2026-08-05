@@ -20,12 +20,17 @@ O Enxame possui um sistema de instalação multi-plataforma totalmente automatiz
 
 ### Ubuntu/Debian Linux
 
+Os instaladores **não clonam nada sozinhos** — eles esperam rodar de dentro
+de um checkout completo do repositório (o script fica em `api/install/` e
+sobe até a raiz para copiar tudo). Baixe o repositório inteiro primeiro:
+
 ```bash
-# Baixe o instalador
-wget https://github.com/enxame/enxame/releases/latest/download/install-ubuntu.sh
+# Baixe o repositório completo (público, sem necessidade de login)
+git clone https://github.com/istacb/enxamepublic.git
+cd enxamepublic
 
 # Execute como root
-sudo bash install-ubuntu.sh
+sudo bash api/install/install-ubuntu.sh
 ```
 
 **O que acontece:**
@@ -49,11 +54,12 @@ sudo bash install-ubuntu.sh
 ### Windows
 
 ```powershell
-# Baixe o instalador
-# Clique direito em install-windows.bat > Salvar como
+# Baixe o repositório completo (público, sem necessidade de login):
+# botão "Code > Download ZIP" em github.com/istacb/enxamepublic, e extraia
+# — ou, se tiver Git for Windows: git clone https://github.com/istacb/enxamepublic.git
 
-# Execute como Administrador
-# Clique direito em install-windows.bat > Executar como Administrador
+# Dentro da pasta extraída/clonada, vá até api\install\
+# e clique direito em install-windows.bat > Executar como Administrador
 ```
 
 **O que acontece:**
@@ -77,11 +83,12 @@ sudo bash install-ubuntu.sh
 ### macOS
 
 ```bash
-# Baixe o instalador
-curl -LO https://github.com/enxame/enxame/releases/latest/download/install-macos.sh
+# Baixe o repositório completo (público, sem necessidade de login)
+git clone https://github.com/istacb/enxamepublic.git
+cd enxamepublic
 
 # Execute como root
-sudo bash install-macos.sh
+sudo bash api/install/install-macos.sh
 ```
 
 **O que acontece:**
@@ -174,22 +181,45 @@ Os instaladores detectam automaticamente instalações do OpenWebUI e oferecem m
 
 ## 📡 Descoberta de Nodes
 
-O sistema de instalação comunica-se automaticamente com todos os components do Enxame:
+Portas e endpoints reais, conforme o código (`juiz/app.py`, `bibliotecario/app.py`) e
+`spec/pt-BR/diagrams/deployment.mmd`:
 
 | Componente | Porta | Endpoint de Saúde |
 |------------|-------|-------------------|
-| Kernel | 8080 | `/api/health` |
-| Bibliotecário | 8081 | `/api/health` |
-| Juiz | 8082 | `/api/health` |
+| Juiz | 7700 | `/api/v1/health` |
+| Bibliotecário | 7701 | `/api/v1/health` |
 | Ollama | 11434 | `/api/tags` |
 
-Durante a atualização, o script:
-1. Varre todas as portas
-2. Notifica cada node para shutdown gracioso
-3. Aguarda finalização das operações
-4. Procede com a atualização
-5. Reinicia os serviços
-6. Verifica se todos os nodes estão online
+> **[Não verificado]** O diagrama de deployment também lista um "Guardião" na
+> porta 7702, mas `guardian/guardian.py` no repositório é hoje uma classe
+> importada por outros serviços, não um processo HTTP próprio — por isso
+> ele não aparece na varredura de saúde dos instaladores. Confirme se isso
+> ainda reflete a arquitetura pretendida.
+
+Durante a atualização (`./api/install/update`), o script:
+1. Verifica quais desses serviços estão respondendo neste host
+2. Faz backup completo
+3. Atualiza código (via `git pull`, se o diretório for um checkout git) e dependências
+4. Restaura dados e configurações
+5. Reinicia o serviço via systemd/LaunchAgent (o que dispara o shutdown gracioso interno de cada processo)
+6. Reconfirma a função do node na rede (mDNS) **sem perguntar novamente** — a função só é escolhida na primeira instalação
+7. Verifica se os serviços voltaram a responder
+
+### 🧭 Função inicial do node (somente na primeira instalação)
+
+Ao final da instalação (Ubuntu, macOS e Windows), o instalador roda
+`node_role_setup.py`, que:
+1. Pergunta qual a função inicial deste node: **Juiz**, **Bibliotecário**,
+   **Agente dinâmico** (worker com as especialidades `engenheiro`, `jurista`,
+   `matematico`, `medico`, `programador`, `redator`, `tradutor`) ou
+   **Automático** (decide pelo benchmark de hardware / eleição de cluster).
+2. Varre a rede local por outros nodes via mDNS (zeroconf).
+3. Anuncia este node na rede com a função escolhida.
+4. Só nesta primeira instalação, imprime a confirmação de qual função cada
+   node encontrado (incluindo este) assumiu.
+
+Em updates e migrações, essa pergunta **não é repetida**: a função salva em
+`.env` (`ENXAME_NODE_ROLE`) é reaproveitada e apenas reanunciada na rede.
 
 ---
 

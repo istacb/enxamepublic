@@ -42,7 +42,7 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}>>> PASSO 1/6: Verificando requisitos do sistema...${NC}"
+echo -e "${YELLOW}>>> PASSO 1/7: Verificando requisitos do sistema...${NC}"
 
 # Verifica requisitos
 check_requirements() {
@@ -74,7 +74,7 @@ check_requirements() {
 check_requirements
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 2/6: Procurando instalações antigas...${NC}"
+echo -e "${YELLOW}>>> PASSO 2/7: Procurando instalações antigas...${NC}"
 
 # Detecta instalações antigas
 OLD_INSTALL_FOUND=false
@@ -106,7 +106,7 @@ fi
 
 if [ "$OLD_INSTALL_FOUND" = true ]; then
     echo ""
-    echo -e "${YELLOW}>>> PASSO 3/6: Removendo instalação antiga...${NC}"
+    echo -e "${YELLOW}>>> PASSO 3/7: Removendo instalação antiga...${NC}"
     
     # Para serviços
     echo "Parando serviços antigos..."
@@ -172,7 +172,7 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 4/6: Instalando novo Enxame...${NC}"
+echo -e "${YELLOW}>>> PASSO 4/7: Instalando novo Enxame...${NC}"
 
 # Cria diretórios
 mkdir -p "$INSTALL_DIR"
@@ -180,20 +180,19 @@ mkdir -p "$DATA_DIR/data"
 mkdir -p "$LOG_DIR"
 mkdir -p "$CONFIG_DIR"
 
-# Copia arquivos (assumindo que o script está no repositório)
+# Copia arquivos. O instalador é distribuído junto com o repositório
+# (ele fica em api/install/ dentro do próprio checkout), então nunca é
+# necessário clonar nada aqui — e como o repositório é público, clonar
+# nunca pediria usuário/senha de qualquer forma.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "$SCRIPT_DIR/kernel" ]; then
-    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
-    echo "  ✓ Arquivos copiados"
-else
-    # Se estiver rodando de um download, baixa do repositório
-    echo "Baixando Enxame do repositório oficial..."
-    cd /tmp
-    git clone --depth 1 https://github.com/enxame/enxame.git enxame_temp
-    cp -r enxame_temp/* "$INSTALL_DIR/"
-    rm -rf enxame_temp
-    echo "  ✓ Arquivos baixados"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ ! -d "$REPO_ROOT/juiz" ] || [ ! -d "$REPO_ROOT/bibliotecario" ]; then
+    echo -e "${RED}Erro: não encontrei o repositório do Enxame a partir de $SCRIPT_DIR.${NC}"
+    echo -e "${RED}Execute este script de dentro do checkout do repositório (api/install/install-ubuntu.sh).${NC}"
+    exit 1
 fi
+cp -r "$REPO_ROOT"/* "$INSTALL_DIR/"
+echo "  ✓ Arquivos copiados de $REPO_ROOT"
 
 cd "$INSTALL_DIR"
 
@@ -216,7 +215,7 @@ fi
 echo -e "${GREEN}✓ Enxame instalado em $INSTALL_DIR${NC}"
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 5/6: Restaurando dados e configurando...${NC}"
+echo -e "${YELLOW}>>> PASSO 5/7: Restaurando dados e configurando...${NC}"
 
 # Restaura backup
 if [ -d "$BACKUP_DIR/data" ]; then
@@ -232,11 +231,12 @@ else
     cat > "$CONFIG_DIR/.env" << 'EOF'
 # Enxame Configuration
 ENXAME_ENV=production
-ENXAME_PORT=8080
 ENXAME_HOST=0.0.0.0
 ENXAME_DATA_PATH=/var/lib/enxame/data
 ENXAME_LOG_PATH=/var/log/enxame
 OLLAMA_URL=http://localhost:11434
+# ENXAME_NODE_ROLE, ENXAME_NODE_ID e ENXAME_NODE_PORT são preenchidos
+# automaticamente pelo passo de configuração de função do node (mais abaixo).
 EOF
     echo "  ✓ Configuração padrão criada"
 fi
@@ -252,7 +252,7 @@ chmod 644 "$CONFIG_DIR/.env"
 echo -e "${GREEN}✓ Configuração concluída${NC}"
 
 echo ""
-echo -e "${YELLOW}>>> PASSO 6/6: Criando serviço e atalhos...${NC}"
+echo -e "${YELLOW}>>> PASSO 6/7: Criando serviço e atalhos...${NC}"
 
 # Cria serviço systemd
 cat > /etc/systemd/system/enxame.service << EOF
@@ -265,7 +265,7 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$CONFIG_DIR/.env
-ExecStart=/usr/bin/python3 -m kernel.start
+ExecStart=/usr/bin/python3 $INSTALL_DIR/api/install/run_node.py --env-file $CONFIG_DIR/.env
 Restart=on-failure
 RestartSec=5
 
@@ -274,21 +274,33 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable enxame
-systemctl start enxame
 
 # Cria atalho
 cat > /usr/local/bin/enxame << EOF
 #!/bin/bash
 cd $INSTALL_DIR
-exec python3 -m kernel.start "\$@"
+exec python3 api/install/run_node.py --env-file $CONFIG_DIR/.env "\$@"
 EOF
 chmod +x /usr/local/bin/enxame
 
+echo -e "${GREEN}✓ Serviço criado${NC}"
+
+echo ""
+echo -e "${YELLOW}>>> PASSO 7/7: Configurando função do node...${NC}"
+echo ""
+
+# Pergunta a função inicial do node (só pergunta de fato se o .env restaurado
+# ainda não tiver uma função salva de uma instalação anterior), faz a
+# varredura mDNS por outros nodes na rede e, na primeira instalação, exibe
+# a confirmação de qual função cada node assumiu.
+python3 "$INSTALL_DIR/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env"
+
+# Só agora inicia o serviço, já com a função definida no .env
+systemctl enable enxame
+systemctl start enxame
+
 # Limpa backup
 rm -rf "$BACKUP_DIR"
-
-echo -e "${GREEN}✓ Serviço criado e iniciado${NC}"
 
 echo ""
 echo -e "${GREEN}"
@@ -302,11 +314,10 @@ echo "║  Dados: $DATA_DIR"
 echo "║  Config: $CONFIG_DIR"
 echo "║                                                          ║"
 echo "║  Comandos úteis:                                         ║"
-echo "║    • enxame              - Iniciar Enxame               ║"
-echo "║    • systemctl status enxame - Ver status               ║"
+echo "║    • systemctl status enxame  - Ver status               ║"
 echo "║    • systemctl restart enxame - Reiniciar               ║"
 echo "║                                                          ║"
-echo "║  Acesse: http://localhost:8080                          ║"
+echo "║  Função e porta deste node: ver $CONFIG_DIR/.env"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
