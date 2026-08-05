@@ -47,27 +47,49 @@ echo -e "${YELLOW}>>> PASSO 1/7: Verificando requisitos do sistema...${NC}"
 # Verifica requisitos
 check_requirements() {
     local missing=()
-    
-    if ! command -v python3 &> /dev/null; then
+
+    # Busca primeiro se já existe Python 3 instalado (e qual versão), em
+    # vez de simplesmente mandar instalar por cima de uma instalação
+    # existente.
+    if command -v python3 &> /dev/null; then
+        echo -e "${GREEN}✓ Python 3 encontrado: $(python3 --version)${NC}"
+    else
+        echo -e "${YELLOW}Python 3 não encontrado, será instalado.${NC}"
         missing+=("python3")
     fi
-    
-    if ! command -v pip3 &> /dev/null; then
+
+    if command -v pip3 &> /dev/null; then
+        echo -e "${GREEN}✓ pip3 encontrado: $(pip3 --version | cut -d' ' -f1-2)${NC}"
+    else
         missing+=("python3-pip")
     fi
-    
+
     if ! command -v node &> /dev/null; then
         echo -e "${YELLOW}Node.js não encontrado. Instalando...${NC}"
         apt-get update -qq
         apt-get install -y -qq nodejs npm
+    else
+        echo -e "${GREEN}✓ Node.js encontrado: $(node --version)${NC}"
     fi
-    
+
     if [ ${#missing[@]} -ne 0 ]; then
         echo -e "${YELLOW}Instalando dependências: ${missing[*]}${NC}"
         apt-get update -qq
         apt-get install -y -qq "${missing[@]}"
     fi
-    
+
+    # A partir do Ubuntu/Debian com Python 3.12 (PEP 668), o ambiente
+    # Python do sistema é "externally managed" e recusa `pip install`
+    # direto. Em vez de forçar com --break-system-packages (que arrisca
+    # quebrar o Python do sistema), instalamos as dependências em um
+    # venv isolado — por isso o pacote de venv precisa estar presente.
+    if ! python3 -m venv --help &> /dev/null; then
+        echo -e "${YELLOW}Módulo venv do Python não encontrado, instalando...${NC}"
+        apt-get update -qq
+        apt-get install -y -qq python3-venv python3-full 2>/dev/null \
+            || apt-get install -y -qq python3-venv
+    fi
+
     echo -e "${GREEN}✓ Requisitos verificados${NC}"
 }
 
@@ -196,14 +218,22 @@ echo "  ✓ Arquivos copiados de $REPO_ROOT"
 
 cd "$INSTALL_DIR"
 
-# Instala dependências Python
+# Instala dependências Python em um venv isolado (evita o erro
+# "externally-managed-environment" do PEP 668 no Python 3.12+ do
+# Ubuntu/Debian, sem precisar de --break-system-packages).
+echo "Criando ambiente virtual Python em $INSTALL_DIR/.venv..."
+python3 -m venv "$INSTALL_DIR/.venv"
+VENV_PIP="$INSTALL_DIR/.venv/bin/pip"
+VENV_PYTHON="$INSTALL_DIR/.venv/bin/python3"
+"$VENV_PIP" install --quiet --upgrade pip
+
 echo "Instalando dependências Python..."
 if [ -f "requirements.txt" ]; then
-    pip3 install -r requirements.txt --quiet --upgrade
+    "$VENV_PIP" install -r requirements.txt --quiet --upgrade
 elif [ -d "kernel" ] && [ -f "kernel/requirements.txt" ]; then
-    pip3 install -r kernel/requirements.txt --quiet --upgrade
+    "$VENV_PIP" install -r kernel/requirements.txt --quiet --upgrade
 fi
-echo "  ✓ Dependências Python instaladas"
+echo "  ✓ Dependências Python instaladas em $INSTALL_DIR/.venv"
 
 # Instala dependências Node se necessário
 if [ -f "package.json" ]; then
@@ -265,7 +295,7 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$CONFIG_DIR/.env
-ExecStart=/usr/bin/python3 $INSTALL_DIR/api/install/run_node.py --env-file $CONFIG_DIR/.env
+ExecStart=$INSTALL_DIR/.venv/bin/python3 $INSTALL_DIR/api/install/run_node.py --env-file $CONFIG_DIR/.env
 Restart=on-failure
 RestartSec=5
 
@@ -279,7 +309,7 @@ systemctl daemon-reload
 cat > /usr/local/bin/enxame << EOF
 #!/bin/bash
 cd $INSTALL_DIR
-exec python3 api/install/run_node.py --env-file $CONFIG_DIR/.env "\$@"
+exec "$INSTALL_DIR/.venv/bin/python3" api/install/run_node.py --env-file $CONFIG_DIR/.env "\$@"
 EOF
 chmod +x /usr/local/bin/enxame
 
@@ -293,7 +323,7 @@ echo ""
 # ainda não tiver uma função salva de uma instalação anterior), faz a
 # varredura mDNS por outros nodes na rede e, na primeira instalação, exibe
 # a confirmação de qual função cada node assumiu.
-python3 "$INSTALL_DIR/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env"
+"$INSTALL_DIR/.venv/bin/python3" "$INSTALL_DIR/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env"
 
 # Só agora inicia o serviço, já com a função definida no .env
 systemctl enable enxame

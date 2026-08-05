@@ -149,15 +149,28 @@ else
     echo "Repositório Git não encontrado."
 fi
 
-# Atualiza dependências Python
+# Atualiza dependências Python. Usa o venv isolado criado pelo instalador
+# (evita o erro "externally-managed-environment" do PEP 668 em Python
+# 3.12+). Se não existir venv (instalação antiga, pré-correção), cria um
+# agora e migra para esse modelo.
+if [ ! -x "$ENXAME_ROOT/.venv/bin/pip" ]; then
+    echo "Criando ambiente virtual Python em $ENXAME_ROOT/.venv..."
+    python3 -m venv "$ENXAME_ROOT/.venv" 2>/dev/null || true
+fi
+
+if [ -x "$ENXAME_ROOT/.venv/bin/pip" ]; then
+    VENV_PIP="$ENXAME_ROOT/.venv/bin/pip"
+else
+    # Fallback defensivo: sem venv disponível, tenta o pip do sistema.
+    VENV_PIP="pip3"
+fi
+
 echo "Atualizando dependências Python..."
 if [ -f "requirements.txt" ]; then
-    pip3 install -r requirements.txt --quiet --upgrade 2>/dev/null || \
-    pip install -r requirements.txt --quiet --upgrade 2>/dev/null || true
+    "$VENV_PIP" install -r requirements.txt --quiet --upgrade 2>/dev/null || true
     echo "  ✓ Dependências Python atualizadas"
 elif [ -d "kernel" ] && [ -f "kernel/requirements.txt" ]; then
-    pip3 install -r kernel/requirements.txt --quiet --upgrade 2>/dev/null || \
-    pip install -r kernel/requirements.txt --quiet --upgrade 2>/dev/null || true
+    "$VENV_PIP" install -r kernel/requirements.txt --quiet --upgrade 2>/dev/null || true
     echo "  ✓ Dependências do Kernel atualizadas"
 fi
 
@@ -231,7 +244,9 @@ sleep 3
 if [[ "$OS_TYPE" != "windows" ]] && [ -f "$CONFIG_DIR/.env" ]; then
     echo ""
     echo "Reconfirmando função do node na rede..."
-    python3 "$ENXAME_ROOT/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env" --non-interactive --scan-seconds 3 || true
+    ROLE_SETUP_PY="python3"
+    [ -x "$ENXAME_ROOT/.venv/bin/python3" ] && ROLE_SETUP_PY="$ENXAME_ROOT/.venv/bin/python3"
+    "$ROLE_SETUP_PY" "$ENXAME_ROOT/api/install/node_role_setup.py" --env-file "$CONFIG_DIR/.env" --non-interactive --scan-seconds 3 || true
 fi
 
 # Verifica saúde dos serviços

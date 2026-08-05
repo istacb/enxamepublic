@@ -78,6 +78,16 @@ check_requirements() {
         echo -e "${YELLOW}Instalando dependências: ${missing[*]}${NC}"
         # macOS geralmente já tem o necessário
     fi
+
+    # Confirma que o módulo venv funciona (normalmente já vem com o
+    # Python do macOS/Homebrew, mas confirmamos antes de depender dele).
+    if ! python3 -m venv --help &> /dev/null; then
+        echo -e "${YELLOW}Módulo venv do Python não encontrado.${NC}"
+        if command -v brew &> /dev/null; then
+            echo "Tentando reinstalar Python via Homebrew..."
+            brew install python3 || true
+        fi
+    fi
     
     echo -e "${GREEN}✓ Requisitos verificados${NC}"
 }
@@ -197,14 +207,21 @@ echo "  ✓ Arquivos copiados de $REPO_ROOT"
 
 cd "$INSTALL_DIR"
 
-# Instala dependências Python
+# Instala dependências Python em um venv isolado (evita o erro
+# "externally-managed-environment" do PEP 668, presente também no Python
+# 3.12+ instalado via Homebrew/python.org no macOS).
+echo "Criando ambiente virtual Python em $INSTALL_DIR/.venv..."
+python3 -m venv "$INSTALL_DIR/.venv"
+VENV_PIP="$INSTALL_DIR/.venv/bin/pip"
+"$VENV_PIP" install --quiet --upgrade pip
+
 echo "Instalando dependências Python..."
 if [ -f "requirements.txt" ]; then
-    pip3 install -r requirements.txt --quiet --upgrade
+    "$VENV_PIP" install -r requirements.txt --quiet --upgrade
 elif [ -d "kernel" ] && [ -f "kernel/requirements.txt" ]; then
-    pip3 install -r kernel/requirements.txt --quiet --upgrade
+    "$VENV_PIP" install -r kernel/requirements.txt --quiet --upgrade
 fi
-echo "  ✓ Dependências Python instaladas"
+echo "  ✓ Dependências Python instaladas em $INSTALL_DIR/.venv"
 
 # Instala dependências Node se necessário
 if [ -f "package.json" ]; then
@@ -255,11 +272,11 @@ echo -e "${GREEN}✓ Configuração concluída${NC}"
 echo ""
 echo -e "${YELLOW}>>> PASSO 6/7: Criando atalhos e serviço...${NC}"
 
-# Cria script de inicialização
+# Cria script de inicialização (usa o Python do venv isolado criado acima)
 cat > "$INSTALL_DIR/run.sh" << EOF
 #!/bin/bash
 cd "$INSTALL_DIR"
-exec python3 "$INSTALL_DIR/api/install/run_node.py" --env-file "$CONFIG_DIR/.env" "\$@"
+exec "$INSTALL_DIR/.venv/bin/python3" "$INSTALL_DIR/api/install/run_node.py" --env-file "$CONFIG_DIR/.env" "\$@"
 EOF
 chmod +x "$INSTALL_DIR/run.sh"
 
