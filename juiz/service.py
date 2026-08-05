@@ -68,6 +68,25 @@ class JuizService:
         self.zim_distribution: dict[str, list[str]] = {}
         self.lock = asyncio.Lock()
         self.agent_timeout = timedelta(seconds=20)
+        # Estado de segurança agregado pelo Guardião (ver guardian/patrol.py).
+        # O Juiz recebe a ronda local (mesmo processo) e as rondas dos
+        # demais nodes (via POST assinado em /api/v1/guardian/report) e
+        # mantém aqui um histórico curto por node para auditoria.
+        self.guardian_alerts: dict[str, list[dict[str, Any]]] = {}
+        self._guardian_alerts_max_per_node = 50
+
+    def record_guardian_alert(self, node_id: str, alert: dict[str, Any]) -> None:
+        bucket = self.guardian_alerts.setdefault(node_id, [])
+        bucket.append(alert)
+        if len(bucket) > self._guardian_alerts_max_per_node:
+            del bucket[: len(bucket) - self._guardian_alerts_max_per_node]
+
+    def guardian_summary(self) -> dict[str, Any]:
+        return {
+            'nodes_reportando': list(self.guardian_alerts.keys()),
+            'total_alertas': sum(len(v) for v in self.guardian_alerts.values()),
+            'alertas_por_node': self.guardian_alerts,
+        }
 
     async def _emit(self, task: TaskState, event: str, data: dict[str, Any]) -> None:
         payload = {'event': event, **data, 'timestamp': datetime.now(UTC).isoformat()}

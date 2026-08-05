@@ -8,13 +8,16 @@ import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import httpx
 import websockets
 
 from core.cluster import HardwareBenchmark, LocalSearchEngine
 from core.exp.envelope import EXPEnvelope, EXPNode
+from core.exp.http import build_auth_headers
 from core.exp.security import EXPSecurity
 from core.exp.types import EXPMessageType
 from core.ollama.client import OllamaClient, OllamaGenerateRequest
+from guardian import GuardianPatrol
 
 from .metrics import MetricsCollector
 from .plugin_manager import PluginManager
@@ -31,6 +34,7 @@ class DynamicAgentService:
         self.role = os.getenv('ROLE', 'dynamic')
         self.cluster_role = os.getenv('CLUSTER_ROLE', 'agente')
         self.juiz_url = os.getenv('JUIZ_URL', 'ws://localhost:7700/exp')
+        self.juiz_http_url = os.getenv('JUIZ_HTTP_URL', 'http://localhost:7700')
         self.secret = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
         self.model = os.getenv('AGENT_MODEL', 'gemma2:2b-it-qat')
@@ -38,6 +42,7 @@ class DynamicAgentService:
         self.reconnect_interval = float(os.getenv('RECONNECT_INTERVAL', '2'))
         self.task_timeout = float(os.getenv('TASK_TIMEOUT', '90'))
         self.plugin_refresh_interval = float(os.getenv('PLUGIN_REFRESH_INTERVAL', '2'))
+        self.guardian_patrol_interval = float(os.getenv('GUARDIAN_PATROL_INTERVAL', '15'))
 
         max_workers = int(os.getenv('WORKER_POOL_SIZE', '4'))
         max_queue = int(os.getenv('WORKER_MAX_QUEUE', '128'))
@@ -59,10 +64,27 @@ class DynamicAgentService:
         self._task_specialty_override: dict[str, str] = {}
         self._running = False
 
+        # Ronda do Guardião: este node não é o Juiz, então os alertas são
+        # reportados via POST assinado em /api/v1/guardian/report.
+        self.guardian_patrol = GuardianPatrol(
+            node_id=self.node_id,
+            interval_seconds=self.guardian_patrol_interval,
+            remote_reporter=self._report_guardian_alert,
+        )
+        self._guardian_task: asyncio.Task | None = None
+
+    async def _report_guardian_alert(self, alert: dict) -> None:
+        body = json.dumps(alert, ensure_ascii=False).encode('utf-8')
+        headers = build_auth_headers(self.security, body)
+        headers['content-type'] = 'application/json'
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f'{self.juiz_http_url}/api/v1/guardian/report', content=body, headers=headers)
+
     async def run_forever(self) -> None:
         self.plugin_manager.load_all()
         await self.pool.start(self._execute_item)
         self._running = True
+        self._guardian_task = asyncio.create_task(self.guardian_patrol.run_forever())
 
         while self._running:
             try:
@@ -87,6 +109,9 @@ class DynamicAgentService:
 
     async def stop(self) -> None:
         self._running = False
+        self.guardian_patrol.stop()
+        if self._guardian_task is not None:
+            self._guardian_task.cancel()
         await self.pool.stop()
 
     async def _send(self, ws, envelope: EXPEnvelope) -> None:

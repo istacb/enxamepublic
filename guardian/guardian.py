@@ -5,6 +5,15 @@ from datetime import datetime
 
 
 class Guardian:
+    """Instância de segurança do Enxame.
+
+    O Guardião não é um serviço que o usuário acessa: ele roda em ronda
+    (patrol) dentro de cada node, monitorando comportamento local e
+    detectando tentativas de ataque/injeção. Ver guardian/patrol.py para o
+    laço assíncrono que usa esta classe e envia os alertas encontrados
+    para o Juiz, que agrega o estado de segurança de todo o cluster.
+    """
+
     def __init__(self, node_id):
         self.node_id = node_id
         self.suspicious_nodes = set()
@@ -19,7 +28,24 @@ class Guardian:
             anomalies.append('LATENCIA_CRITICA')
         if node_metrics.get('cpu', 0) > 95:
             anomalies.append('CPU_EXHAUSTAO')
+        if node_metrics.get('mem', 0) > 95:
+            anomalies.append('MEMORIA_EXHAUSTAO')
         return anomalies
+
+    def build_alert(self, node_metrics: dict) -> dict | None:
+        """Roda monitor_behavior e monta um alerta pronto para ser enviado
+        ao Juiz (ou agregado localmente, se este node for o Juiz). Retorna
+        None quando nenhuma anomalia é encontrada, para que a ronda não
+        gere tráfego/ruído desnecessário."""
+        anomalies = self.monitor_behavior(node_metrics)
+        if not anomalies:
+            return None
+        return {
+            'node_id': self.node_id,
+            'anomalies': anomalies,
+            'metrics': node_metrics,
+            'timestamp': datetime.now().isoformat(),
+        }
 
     def detect_injection(self, text):
         patterns = ['ignore previous', 'you are now', 'system prompt', 'desconsidere']

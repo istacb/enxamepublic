@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,12 +17,16 @@ from core.exp.input_sanitizer import get_sanitizer
 from core.exp.security import EXPAuthError, EXPSecurity
 from core.exp.server import EXPServerAdapter
 from core.exp.types import EXPMessageType
+from guardian import GuardianPatrol
 
 from .service import JuizService
+
+logger = logging.getLogger('juiz.guardian')
 
 NODE_ID = os.getenv('NODE_ID', 'juiz-01')
 OLLAMA_URL = os.getenv('OLLAMA_URL', 'http://localhost:11434')
 EXP_SHARED_SECRET = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
+GUARDIAN_PATROL_INTERVAL = float(os.getenv('GUARDIAN_PATROL_INTERVAL', '15'))
 
 security = EXPSecurity(EXP_SHARED_SECRET)
 sanitizer = get_sanitizer(strict_mode=False)
@@ -35,6 +40,34 @@ installed_plugins: list[dict] = []
 static_path = Path(__file__).parent / 'static'
 if static_path.exists():
     app.mount('/', StaticFiles(directory=str(static_path), html=True), name='static')
+
+# Ronda do Guardião: como este node é o Juiz, os alertas são entregues por
+# chamada direta em processo (sem rede) via service.record_guardian_alert.
+# O Juiz também agrega, no mesmo dicionário, os alertas que os demais nodes
+# reportam via POST em /api/v1/guardian/report (ver abaixo).
+_guardian_patrol = GuardianPatrol(
+    node_id=NODE_ID,
+    interval_seconds=GUARDIAN_PATROL_INTERVAL,
+    local_callback=lambda alert: service.record_guardian_alert(NODE_ID, alert),
+)
+_guardian_task: asyncio.Task | None = None
+
+
+@app.on_event('startup')
+async def start_guardian_patrol() -> None:
+    global _guardian_task
+    _guardian_task = asyncio.create_task(_guardian_patrol.run_forever())
+
+
+@app.on_event('shutdown')
+async def stop_guardian_patrol() -> None:
+    _guardian_patrol.stop()
+    if _guardian_task is not None:
+        _guardian_task.cancel()
+        try:
+            await _guardian_task
+        except asyncio.CancelledError:
+            pass
 
 
 @app.get('/api/v1/health')
@@ -62,6 +95,21 @@ async def submit_task(request: Request) -> dict:
     prompt = str(payload.get('prompt', '')).strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="Campo 'prompt' é obrigatório")
+
+    # Guardião: sinaliza tentativas de prompt injection (não bloqueia — o
+    # sanitizer abaixo já neutraliza o conteúdo — apenas registra o alerta
+    # para auditoria de segurança do cluster).
+    if _guardian_patrol.guardian.detect_injection(prompt):
+        service.record_guardian_alert(
+            NODE_ID,
+            {
+                'node_id': NODE_ID,
+                'anomalies': ['TENTATIVA_DE_PROMPT_INJECTION'],
+                'metrics': {},
+                'timestamp': datetime.now(UTC).isoformat(),
+            },
+        )
+        logger.warning('Guardião: possível prompt injection detectada em tarefa recebida')
 
     # Sanitiza o prompt para prevenir prompt injection
     safe_prompt = sanitizer.sanitize_for_llm(prompt)
@@ -134,6 +182,28 @@ async def cluster_state(request: Request) -> dict:
         'roles': service.current_roles,
         'zim_distribution': service.zim_distribution,
     }
+
+
+@app.post('/api/v1/guardian/report')
+async def guardian_report(request: Request) -> dict:
+    """Recebe a ronda de segurança de nodes que NÃO são o Juiz (Bibliotecário,
+    Agentes). A ronda do próprio Juiz é entregue localmente por chamada
+    direta (ver start_guardian_patrol), não por este endpoint."""
+    body = await verify_hmac_request(request)
+    payload = json.loads(body.decode('utf-8'))
+    node_id = str(payload.get('node_id', '')).strip()
+    if not node_id:
+        raise HTTPException(status_code=400, detail="Campo 'node_id' é obrigatório")
+    service.record_guardian_alert(node_id, payload)
+    return {'status': 'recorded'}
+
+
+@app.get('/api/v1/guardian')
+async def guardian_state(request: Request) -> dict:
+    """Estado de segurança agregado pelo Juiz: ronda local + rondas
+    reportadas por todos os demais nodes do cluster."""
+    await verify_hmac_request(request)
+    return service.guardian_summary()
 
 
 @app.post('/api/v1/election')

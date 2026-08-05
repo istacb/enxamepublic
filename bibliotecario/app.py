@@ -5,12 +5,15 @@ import json
 import logging
 import os
 from contextlib import suppress
+from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from core.exp.http import EXP_SIGNATURE_HEADER, EXP_TIMESTAMP_HEADER
+from core.exp.http import build_auth_headers, EXP_SIGNATURE_HEADER, EXP_TIMESTAMP_HEADER
 from core.exp.security import EXPAuthError, EXPSecurity
+from guardian import GuardianPatrol
 
 from .exp_agent import BibliotecarioEXPAgent
 from .search_service import SearchPipelineService
@@ -20,12 +23,32 @@ logger = logging.getLogger('bibliotecario')
 
 NODE_ID = os.getenv('NODE_ID', 'bib-01')
 EXP_SHARED_SECRET = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
+JUIZ_HTTP_URL = os.getenv('JUIZ_HTTP_URL', 'http://localhost:7700')
+GUARDIAN_PATROL_INTERVAL = float(os.getenv('GUARDIAN_PATROL_INTERVAL', '15'))
 
 security = EXPSecurity(EXP_SHARED_SECRET)
 pipeline = SearchPipelineService()
 agent = BibliotecarioEXPAgent(pipeline)
 
 app = FastAPI(title='ENXAME Bibliotecário', version='1.0.0')
+
+
+async def _report_guardian_alert_to_juiz(alert: dict[str, Any]) -> None:
+    """Este node NÃO é o Juiz: a ronda do Guardião é reportada via POST
+    assinado em /api/v1/guardian/report, para que o Juiz agregue o estado
+    de segurança de todo o cluster."""
+    body = json.dumps(alert, ensure_ascii=False).encode('utf-8')
+    headers = build_auth_headers(security, body)
+    headers['content-type'] = 'application/json'
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        await client.post(f'{JUIZ_HTTP_URL}/api/v1/guardian/report', content=body, headers=headers)
+
+
+guardian_patrol = GuardianPatrol(
+    node_id=NODE_ID,
+    interval_seconds=GUARDIAN_PATROL_INTERVAL,
+    remote_reporter=_report_guardian_alert_to_juiz,
+)
 
 
 class QueryRequest(BaseModel):
@@ -55,12 +78,14 @@ async def startup_event() -> None:
     await pipeline.initialize()
     app.state.agent_task = asyncio.create_task(agent.run_forever())
     app.state.index_task = asyncio.create_task(pipeline.auto_reindex_loop())
+    app.state.guardian_task = asyncio.create_task(guardian_patrol.run_forever())
     logger.info('Bibliotecário inicializado e conectado ao Juiz')
 
 
 @app.on_event('shutdown')
 async def shutdown_event() -> None:
-    for key in ('agent_task', 'index_task'):
+    guardian_patrol.stop()
+    for key in ('agent_task', 'index_task', 'guardian_task'):
         task = getattr(app.state, key, None)
         if task:
             task.cancel()

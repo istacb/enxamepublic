@@ -190,11 +190,13 @@ Portas e endpoints reais, conforme o código (`juiz/app.py`, `bibliotecario/app.
 | Bibliotecário | 7701 | `/api/v1/health` |
 | Ollama | 11434 | `/api/tags` |
 
-> **[Não verificado]** O diagrama de deployment também lista um "Guardião" na
-> porta 7702, mas `guardian/guardian.py` no repositório é hoje uma classe
-> importada por outros serviços, não um processo HTTP próprio — por isso
-> ele não aparece na varredura de saúde dos instaladores. Confirme se isso
-> ainda reflete a arquitetura pretendida.
+> **Guardião**: não aparece nessa tabela porque não é um serviço que o
+> usuário acessa. Ele roda em ronda (patrol) dentro de cada node (Juiz,
+> Bibliotecário e Agentes), monitorando CPU/RAM locais e tentativas de
+> prompt injection. Cada node reporta suas anomalias ao Juiz — via
+> chamada direta em processo quando o próprio node é o Juiz, ou via POST
+> assinado em `/api/v1/guardian/report` nos demais casos — e o Juiz agrega
+> tudo, consultável em `GET /api/v1/guardian`. Ver `guardian/patrol.py`.
 
 Durante a atualização (`./api/install/update`), o script:
 1. Verifica quais desses serviços estão respondendo neste host
