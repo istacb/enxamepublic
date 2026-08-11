@@ -1,39 +1,60 @@
 ```
-# Python
+# Dependencies
+node_modules/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Dependencies
-.venv/
+*.pyc
+*.pyo
+.Python
 venv/
 env/
+ENV/
+.venv/
+.env
+.env.local
+.env.
+.envrc
+*.env
+*.env.*
+
+# Build and distribution artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
 
 # Logs
 *.log
 
-# Temporary files
-*.tmp
+# IDE specific
+.vscode/
+.idea/
 *.swp
 *.swo
-
-# Environment files
-.env
-.env.local
-*.env.*
+*~
+.DS_Store
+Thumbs.db
 
 # Coverage
 .coverage
-coverage/
 htmlcov/
+coverage/
 
-# IDE
-.vscode/
-.idea/
+# Testing
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
 
-# Build artifacts
-dist/
-build/
-target/
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 ```
