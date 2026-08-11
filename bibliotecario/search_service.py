@@ -11,7 +11,7 @@ from core.ollama.client import OllamaClient, OllamaGenerateRequest
 
 from .embeddings import EmbeddingService
 from .indexer import IndexedChunk, LocalDocumentIndexer
-from .qdrant_store import QdrantStore
+from .lancedb_store import LanceDBStore
 from .translator import PTBRTranslator
 from .web_client import WebSearchClient
 from .zim_reader import ZimSearchClient
@@ -41,41 +41,23 @@ class SearchPipelineService:
         self.translator = PTBRTranslator(enabled=os.getenv('TRANSLATION_ENABLED', '1') == '1')
         self.embeddings = EmbeddingService()
         self.indexer = LocalDocumentIndexer(docs_dir=docs_dir, embeddings=self.embeddings)
-        self.qdrant = QdrantStore(embeddings=self.embeddings)
+        self.vector_store = LanceDBStore(embeddings=self.embeddings)
         self.zim = ZimSearchClient(zim_dir=zim_dir)
         self.web = WebSearchClient()
         self.ollama = OllamaClient(ollama_url)
 
-        self._cache = None
         self._memory_cache: dict[str, str] = {}
-        self._cache_ttl = int(os.getenv('REDIS_CACHE_TTL_SECONDS', '3600'))
+        self._cache_ttl = int(os.getenv('CACHE_TTL_SECONDS', '3600'))
 
     async def initialize(self) -> None:
-        await self._init_cache()
+        # Cache em memória (Redis removido)
         chunks = self.indexer.rebuild()
-        await self.qdrant.upsert_chunks(chunks)
-
-    async def _init_cache(self) -> None:
-        redis_url = os.getenv('REDIS_URL', 'redis://redis-bibliotecario:6379/0')
-        try:
-            from redis.asyncio import from_url  # type: ignore
-
-            self._cache = from_url(redis_url, decode_responses=True)
-            await self._cache.ping()
-            logger.info('Redis conectado em %s', redis_url)
-        except Exception as exc:  # pragma: no cover - depende de runtime
-            logger.warning('Redis indisponível, cache em memória: %s', exc)
-            self._cache = None
+        await self.vector_store.upsert_chunks(chunks)
 
     async def _cache_get(self, key: str) -> str | None:
-        if self._cache is not None:
-            return await self._cache.get(key)
         return self._memory_cache.get(key)
 
     async def _cache_set(self, key: str, value: str) -> None:
-        if self._cache is not None:
-            await self._cache.set(key, value, ex=self._cache_ttl)
-            return
         self._memory_cache[key] = value
 
     async def _local_file_search(self, query: str, limit: int = 5) -> list[IndexedChunk]:
@@ -102,7 +84,7 @@ class SearchPipelineService:
         return self.translator.to_pt_br(response)
 
     async def reindex_callback(self, chunks: list[IndexedChunk]) -> None:
-        await self.qdrant.upsert_chunks(chunks)
+        await self.vector_store.upsert_chunks(chunks)
 
     async def auto_reindex_loop(self) -> None:
         await self.indexer.auto_reindex_loop(self.reindex_callback)
@@ -127,11 +109,11 @@ class SearchPipelineService:
         query_pt = self.translator.to_pt_br(query)
         trace: list[dict[str, Any]] = []
 
-        logger.info('[pipeline] etapa=1 redis_cache')
-        # 1) Cache Redis
+        logger.info('[pipeline] etapa=1 memory_cache')
+        # 1) Cache em memória
         cache_key = f'bibliotecario:query:{hash(query_pt.strip().lower())}'
         cached = await self._cache_get(cache_key)
-        trace.append({'stage': 'redis_cache', 'hit': bool(cached)})
+        trace.append({'stage': 'memory_cache', 'hit': bool(cached)})
         if cached:
             payload = json.loads(cached)
             payload.setdefault('metadata', {}).setdefault('pipeline', trace)
@@ -139,26 +121,26 @@ class SearchPipelineService:
             logger.info('[pipeline] cache_hit=true latency_ms=%d', payload['metadata']['latency_ms'])
             return SearchResult(answer=str(payload.get('answer', '')), metadata=payload.get('metadata', {}))
 
-        logger.info('[pipeline] etapa=2 qdrant')
-        # 2) Qdrant
-        qdrant_hits = await self.qdrant.search(query_pt, limit=4)
-        trace.append({'stage': 'qdrant', 'hit': bool(qdrant_hits), 'count': len(qdrant_hits)})
-        if qdrant_hits:
-            context = '\n\n'.join(f'[score={h.score:.3f}] {h.text}\n(origem: {h.source_path})' for h in qdrant_hits)
-            answer = await self._synthesize(query_pt, context, source='qdrant')
+        logger.info('[pipeline] etapa=2 lancedb')
+        # 2) LanceDB (vetorial)
+        vector_hits = await self.vector_store.search(query_pt, limit=4)
+        trace.append({'stage': 'lancedb', 'hit': bool(vector_hits), 'count': len(vector_hits)})
+        if vector_hits:
+            context = '\n\n'.join(f'[score={h.score:.3f}] {h.text}\n(origem: {h.source_path})' for h in vector_hits)
+            answer = await self._synthesize(query_pt, context, source='lancedb')
             metadata = {
-                'source': 'qdrant',
-                'sources': [h.source_path for h in qdrant_hits],
+                'source': 'lancedb',
+                'sources': [h.source_path for h in vector_hits],
                 'pipeline': trace,
                 'translated': True,
                 'latency_ms': int((time.perf_counter() - started) * 1000),
             }
             await self._cache_set(cache_key, json.dumps({'answer': answer, 'metadata': metadata}, ensure_ascii=False))
-            logger.info('[pipeline] qdrant_success=true latency_ms=%d', metadata['latency_ms'])
+            logger.info('[pipeline] lancedb_success=true latency_ms=%d', metadata['latency_ms'])
             return SearchResult(answer=answer, metadata=metadata)
 
         logger.info('[pipeline] etapa=3 local_files')
-        # 3) Arquivos locais
+        # 3) Arquivos locais (busca textual)
         local_hits = await self._local_file_search(query_pt, limit=4)
         trace.append({'stage': 'local_files', 'hit': bool(local_hits), 'count': len(local_hits)})
         if local_hits:
