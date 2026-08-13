@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -39,23 +40,84 @@ def load_env_file(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
+def get_local_ip() -> str:
+    """Obtém o IP local da máquina."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+
 def run_juiz(port: int) -> None:
+    from core.discovery.mdns_discovery import NodeAnnouncer
+
+    node_id = os.environ.get("ENXAME_NODE_ID", "juiz")
+    host_ip = get_local_ip()
+    announcer = NodeAnnouncer(
+        node_id=node_id,
+        role="juiz",
+        host_ip=host_ip,
+        port=port,
+    )
+    announcer.start()
+    print(f"[mDNS] Anunciando nó '{node_id}' (juiz) em {host_ip}:{port}")
+
     import uvicorn
 
-    uvicorn.run("juiz.app:app", host="0.0.0.0", port=port, log_level="info")
+    try:
+        uvicorn.run("juiz.app:app", host="0.0.0.0", port=port, log_level="info")
+    finally:
+        announcer.stop()
 
 
 def run_bibliotecario(port: int) -> None:
+    from core.discovery.mdns_discovery import NodeAnnouncer
+
+    node_id = os.environ.get("ENXAME_NODE_ID", "bibliotecario")
+    host_ip = get_local_ip()
+    announcer = NodeAnnouncer(
+        node_id=node_id,
+        role="bibliotecario",
+        host_ip=host_ip,
+        port=port,
+    )
+    announcer.start()
+    print(f"[mDNS] Anunciando nó '{node_id}' (bibliotecario) em {host_ip}:{port}")
+
     import uvicorn
 
-    uvicorn.run("bibliotecario.app:app", host="0.0.0.0", port=port, log_level="info")
+    try:
+        uvicorn.run("bibliotecario.app:app", host="0.0.0.0", port=port, log_level="info")
+    finally:
+        announcer.stop()
 
 
 def run_agente() -> None:
     from agentes.service import DynamicAgentService
+    from core.discovery.mdns_discovery import NodeAnnouncer
+
+    node_id = os.environ.get("ENXAME_NODE_ID", "agente")
+    port = int(os.environ.get("ENXAME_NODE_PORT", "0") or 0)
+    host_ip = get_local_ip()
+    announcer = NodeAnnouncer(
+        node_id=node_id,
+        role="agente",
+        host_ip=host_ip,
+        port=port or 0,
+    )
+    announcer.start()
+    print(f"[mDNS] Anunciando nó '{node_id}' (agente) em {host_ip}")
 
     service = DynamicAgentService()
-    asyncio.run(service.run_forever())
+    try:
+        asyncio.run(service.run_forever())
+    finally:
+        announcer.stop()
 
 
 def main() -> int:
