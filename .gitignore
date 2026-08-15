@@ -1,34 +1,25 @@
-```gitignore
-# Python compiled files
-*.pyc
+```
 __pycache__/
-
-# Dependencies
+*.pyc
+*.pyo
+*.pyd
+.beets_cache*
+.coverage
+htmlcov/
+.coverage.*
+.mypy_cache/
+.pytest_cache/
+.tox/
 .venv/
 venv/
-node_modules/
-
-# Logs and temp files
-*.log
-*.tmp
-
-# Editors
-.vscode/
-.idea/
-
-# Environment files
 .env
 .env.local
 *.env.*
-
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# MyPy cache
-.mypy_cache/
-
-# Pytest cache
-.pytest_cache/
+*.log
+*.tmp
+*.swp
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
 ```
