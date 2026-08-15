@@ -495,11 +495,27 @@ def main():
     log("="*60)
     
     # 1. Detectar hardware
-    log("Passo 1: Detectando hardware...")
-    hardware = scan_hardware()
+    log("\nPasso 1: Detectando hardware...")
+    hw_caps = scan_hardware()
     os_info = get_os_info()
-    hardware["os"] = f"{os_info['system']} {os_info.get('release', '')}"
-    hardware["os_details"] = os_info
+    
+    # Converter HardwareCapabilities para dict compatível com o instalador
+    hardware = {
+        "os": f"{os_info['system']} {os_info.get('release', '')}".strip(),
+        "os_details": os_info,
+        "architecture": hw_caps.architecture,
+        "cpu_model": platform.processor() or hw_caps.architecture,
+        "cpu_cores": hw_caps.cpu_cores,
+        "cpu_logical": hw_caps.cpu_logical,
+        "cpu_freq_ghz": hw_caps.cpu_freq_ghz,
+        "total_ram_gb": round(hw_caps.ram_total_gb, 1),
+        "available_ram_gb": round(hw_caps.ram_available_gb, 1),
+        "has_gpu": hw_caps.gpu_available,
+        "gpu_name": hw_caps.gpu_name,
+        "gpu_vram_gb": round(hw_caps.gpu_vram_gb, 1) if hw_caps.gpu_vram_gb > 0 else None,
+        "storage_total_gb": round(hw_caps.storage_total_gb, 1),
+        "storage_free_gb": round(hw_caps.storage_free_gb, 1),
+    }
     
     log(f"  OS: {hardware['os']}")
     log(f"  CPU: {hardware.get('cpu_model', 'Unknown')} ({hardware.get('cpu_cores', 0)} cores)")
