@@ -1,0 +1,45 @@
+# Bees - Dependências Python
+# Instalar com: pip install -r requirements.txt
+
+# Core
+zeroconf>=0.38.0
+aiohttp>=3.9.0
+httpx>=0.26.0
+pydantic>=2.6.0
+PyYAML>=6.0.0
+
+# Banco de dados
+lancedb>=0.8.0
+
+# ML/Embeddings
+sentence-transformers>=3.0.0
+torch>=2.2.0
+numpy>=1.26.0
+
+# Ollama client
+ollama>=0.2.0
+
+# OCR (opcional)
+pytesseract>=0.3.10
+
+# ZIM (opcional)
+zimply>=0.1.0
+
+# Crypto (para identidade Ed25519)
+cryptography>=42.0.0
+
+# Sistema
+psutil>=5.9.0
+platformdirs>=4.0.0
+
+# Logging
+rich>=13.0.0
+
+# Testes
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# Type checking (dev)
+mypy>=1.8.0
+ruff>=0.3.0
