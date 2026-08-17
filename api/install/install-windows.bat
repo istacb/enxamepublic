@@ -209,12 +209,12 @@ echo   [OK] Arquivos copiados
 
 cd /d "%INSTALL_DIR%"
 
-:: Instala dependências Python
-echo Instalando dependencias Python...
+:: Instala dependências Python (usando --user para evitar PEP 668 no Python 3.12+)
+echo Instalando dependências Python...
 if exist "requirements.txt" (
-    pip install -r requirements.txt --quiet --upgrade
+    pip install --user -r requirements.txt --quiet --upgrade
 ) else if exist "kernel\requirements.txt" (
-    pip install -r kernel\requirements.txt --quiet --upgrade
+    pip install --user -r kernel\requirements.txt --quiet --upgrade
 )
 echo   [OK] Dependencias Python instaladas
 

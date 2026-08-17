@@ -100,16 +100,24 @@ install_dependencies() {
         "psutil"
     )
     
+    # Determinar site-packages path baseado na versão do Python
+    PY_VER=$($PYTHON_CMD --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
+    SITE_PACKAGES="$HOME/.local/lib/python${PY_VER}/site-packages"
+    
     for dep in "${DEPS[@]}"; do
         if ! $PYTHON_CMD -c "import $dep" &> /dev/null; then
             log_info "Instalando $dep..."
-            $PYTHON_CMD -m pip install --user "$dep" || {
-                log_warn "Falha ao instalar $dep globalmente, tentando local..."
-                $PYTHON_CMD -m pip install --user --target ~/.local/lib/python/site-packages "$dep" || {
+            # Tentar instalação user-first
+            if $PYTHON_CMD -m pip install --user "$dep" &> /dev/null; then
+                log_info "$dep instalado via --user"
+            else
+                # Fallback: instalar diretamente no site-packages do usuário (evita PEP 668)
+                log_warn "Falha --user, tentando instalação direta no site-packages..."
+                $PYTHON_CMD -m pip install --target "$SITE_PACKAGES" "$dep" || {
                     log_error "Falha crítica: não foi possível instalar $dep"
                     exit 1
                 }
-            }
+            fi
         fi
     done
     
@@ -179,8 +187,8 @@ run_installer() {
         echo "════════════════════════════════════════════"
         echo ""
         echo "Próximos passos:"
-        echo "  1. Execute: bee status"
-        echo "  2. Para iniciar: bee start"
+        echo "  1. Execute: python3 -m bees.cli status"
+        echo "  2. Para iniciar: python3 -m bees.cli start"
         echo "  3. Documentação: bees/docs/"
         echo ""
     else
