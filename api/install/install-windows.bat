@@ -1,6 +1,6 @@
 @echo off
 REM =============================================================================
-REM ENXAME - Instalador Oficial para Windows
+REM ENXAME - Instalador Oficial para Windows v1.0.0
 REM Fluxo: Next > Next > Finish (Totalmente Automático)
 REM =============================================================================
 REM Este script:

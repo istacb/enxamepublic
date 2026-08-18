@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BEE-0008 — Instalador da Abelha
+BEE-0008 — Instalador da Abelha v1.0.0
 
 Instalação automática de:
 1. Ollama (se não existir)

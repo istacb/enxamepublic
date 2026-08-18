@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# BEE-0008 — Instalador Rápido da Abelha (Linux/macOS)
+# BEE-0008 — Instalador Rápido da Abelha v1.0.0 (Linux/macOS)
 #
 # Script wrapper que:
 # 1. Verifica dependências do sistema
@@ -11,6 +11,10 @@
 #   curl -fsSL https://.../install-bee.sh | bash
 #   ou
 #   ./install-bee.sh [--force-ollama] [--dry-run]
+#   # Para instalação inteligente (recomendado):
+#   ./install-bee.sh  # Detecta existente ou instala do zero
+#   # Para forçar reinstalação:
+#   ./install-bee.sh --force-ollama --force-model-download
 #
 
 set -e  # Sair em caso de erro
@@ -98,6 +102,13 @@ install_dependencies() {
     DEPS=(
         "requests"
         "psutil"
+        "httpx"
+        "pydantic"
+        "zeroconf"
+        "pyyaml"
+        "cryptography"
+        "platformdirs"
+        "rich"
     )
     
     # Determinar site-packages path baseado na versão do Python
@@ -173,8 +184,14 @@ run_installer() {
     INSTALLER_PATH="$SCRIPT_DIR/install_bee.py"
     
     log_info "Executando instalador Python..."
-    log_info "Opções: $@"
+    log_info "Modo: instalação inteligente (verifica existente, instala o necessário)"
+    log_info "O instalador:"
+    log_info "  1. Verifica se Ollama já está instalado"
+    log_info "  2. Verifica se modelo já foi baixado"
+    log_info "  3. Instala apenas o necessário"
+    log_info "  4. Sempre testa inferência se modelo disponível"
     
+    # Modo inteligente: sem flags de força - o Python decide o que fazer
     $PYTHON_CMD "$INSTALLER_PATH" "$@"
     
     EXIT_CODE=$?

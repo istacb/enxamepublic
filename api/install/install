@@ -1,5 +1,5 @@
 #!/bin/bash
-# Enxame - Script de instalação
+# Enxame - Script de instalação v1.0.0
 # Instala a infraestrutura mínima do Enxame
 
 set -e

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# ENXAME - Instalador Oficial para macOS
+# ENXAME - Instalador Oficial para macOS v1.0.0
 # Fluxo: Next > Next > Finish (Totalmente Automático)
 # =============================================================================
 # Este script:

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# ENXAME - Instalador Oficial para Ubuntu/Debian Linux
+# ENXAME - Instalador Oficial para Ubuntu/Debian Linux v1.0.0
 # Fluxo: Next > Next > Finish (Totalmente Automático)
 # =============================================================================
 # Este script:
