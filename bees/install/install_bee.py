@@ -25,6 +25,23 @@ from typing import Optional, Dict, Any, List, Tuple
 # Adicionar bees ao path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Instalar dependências mínimas antes de importar capabilities
+def _ensure_deps():
+    """Instala dependências mínimas via pip se não estiverem disponíveis."""
+    required = [
+        "httpx", "pydantic", "pydantic-settings", "psutil", "zeroconf",
+        "cryptography", "rich", "pyyaml"
+    ]
+    for pkg in required:
+        try:
+            __import__(pkg.replace("-", "_"))
+        except ImportError:
+            print(f"[INFO] Instalando dependência: {pkg}")
+            subprocess.run([sys.executable, "-m", "pip", "install", "--user", pkg],
+                         capture_output=True, check=False)
+
+_ensure_deps()
+
 from capabilities.discovery import scan_hardware, scan_ollama, discover_capabilities
 from capabilities.selector import recommend_model
 from capabilities.provider import create_provider
@@ -58,14 +75,15 @@ MODEL_CATEGORIES = {
 
 def log(message: str, level: str = "INFO"):
     """Registra mensagem no log e stdout"""
-    timestamp = subprocess.getoutput("date '+%Y-%m-%d %H:%M:%S'")
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"[{timestamp}] [{level}] {message}"
     print(log_line)
     
     # Garantir que o diretório existe
     BEE_HOME.mkdir(parents=True, exist_ok=True)
     
-    with open(INSTALL_LOG, "a") as f:
+    with open(INSTALL_LOG, "a", encoding="utf-8") as f:
         f.write(log_line + "\n")
 
 
@@ -450,8 +468,14 @@ def save_manifest(model_name: str, model_metadata: Dict[str, Any],
 
 def print_status(manifest: Dict[str, Any]):
     """Imprime status final da instalação"""
+    # Detectar se console suporta Unicode
+    import sys
+    use_emoji = sys.stdout.encoding and 'utf' in sys.stdout.encoding.lower()
+    bee_icon = "🐝" if use_emoji else "[BEE]"
+    warn_icon = "⚠️" if use_emoji else "[WARN]"
+    
     print("\n" + "="*60)
-    print("🐝 ABELHA READY" if manifest["status"] == "READY" else "🐝 ABELHA DEGRADED")
+    print(f"{bee_icon} ABELHA READY" if manifest["status"] == "READY" else f"{bee_icon} ABELHA DEGRADED")
     print("="*60)
     
     hw = manifest.get("hardware", {})
@@ -471,7 +495,7 @@ def print_status(manifest: Dict[str, Any]):
     print(f"Status:          {manifest['status']}")
     
     if not model.get('test_passed'):
-        print(f"\n⚠️  AVISO: Teste do modelo falhou: {model.get('test_message')}")
+        print(f"\n{warn_icon}  AVISO: Teste do modelo falhou: {model.get('test_message')}")
         print("A Abelha funcionará com capacidades limitadas.")
     
     print("\n" + "="*60)
