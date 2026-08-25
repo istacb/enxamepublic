@@ -26,6 +26,8 @@ class BeeMessageType(StrEnum):
     RESEARCH_RESULT = "BEE_RESEARCH_RESULT"
     MODEL_REQUEST = "BEE_MODEL_REQUEST"
     MODEL_RESPONSE = "BEE_MODEL_RESPONSE"
+    VISION_REQUEST = "BEE_VISION_REQUEST"
+    VISION_RESPONSE = "BEE_VISION_RESPONSE"
 
     # Estado
     STATE_CHANGE = "BEE_STATE_CHANGE"
@@ -502,6 +504,74 @@ class BeeModelResponse:
             tokens_used=data.get("tokens_used", 0),
             processing_time_ms=data.get("processing_time_ms", 0),
             finish_reason=data.get("finish_reason", "stop"),
+        )
+
+
+# ============================================================================
+# Mensagens de Consulta - Vision Request
+# ============================================================================
+
+
+@dataclass(slots=True)
+class BeeVisionRequest:
+    """Solicitação de análise de imagem usando modelo de visão."""
+
+    request_id: str
+    image_base64: str
+    prompt: str = "Descreva esta imagem em detalhes."
+    system_prompt: str | None = None
+    structured_output: bool = False
+    timeout_ms: int = 60000
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "image_base64": self.image_base64,
+            "prompt": self.prompt,
+            "system_prompt": self.system_prompt,
+            "structured_output": self.structured_output,
+            "timeout_ms": self.timeout_ms,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BeeVisionRequest:
+        return cls(
+            request_id=data["request_id"],
+            image_base64=data["image_base64"],
+            prompt=data.get("prompt", "Descreva esta imagem em detalhes."),
+            system_prompt=data.get("system_prompt"),
+            structured_output=data.get("structured_output", False),
+            timeout_ms=data.get("timeout_ms", 60000),
+        )
+
+
+@dataclass(slots=True)
+class BeeVisionResponse:
+    """Resposta de análise de imagem."""
+
+    request_id: str
+    description: str
+    model_used: str | None = None
+    processing_time_ms: int = 0
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "description": self.description,
+            "model_used": self.model_used,
+            "processing_time_ms": self.processing_time_ms,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BeeVisionResponse:
+        return cls(
+            request_id=data["request_id"],
+            description=data["description"],
+            model_used=data.get("model_used"),
+            processing_time_ms=data.get("processing_time_ms", 0),
+            error=data.get("error"),
         )
 
 

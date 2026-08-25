@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from aiohttp import web
+
 from bees import BeeService, BeeConfig, load_config
 from bees.protocol.messages import BeeState
 
@@ -52,7 +54,7 @@ class EnxameKernel:
     - Criar e gerenciar perfis de agentes dinamicamente
     - Processar multimodal (OCR, imagens, arquivos)
     - Orquestrar tarefas conforme EIPs/Sprints
-    - Expor API unificada para Web UI
+    - Expor API unificada para Web UI (servidor HTTP único)
     """
 
     def __init__(self, config: BeeConfig | None = None) -> None:
@@ -69,35 +71,43 @@ class EnxameKernel:
         self._orchestrator: TaskOrchestrator | None = None
         self._sprint_planner: SprintPlanner | None = None
         
+        # Servidor HTTP unificado
+        self._http_app: web.Application | None = None
+        self._http_runner: web.AppRunner | None = None
+        
         # Estado
         self.state = BeeState.STARTING
         self._running = False
         self._tasks: list[asyncio.Task] = []
-        self._http_runner = None
 
     async def start(self) -> None:
-        """Inicializa todo o Enxame Evoluído."""
+        """Inicializa todo o Enxame Evoluído com servidor HTTP unificado."""
         logger.info(f"Iniciando Enxame Kernel {self.node_id}...")
         
-        # 1. Iniciar Abelha local (base offline-first)
+        # 1. Criar aplicação HTTP unificada
+        self._http_app = web.Application()
+        self._setup_http_routes()
+        
+        # 2. Iniciar Abelha local (base offline-first) - passa a app HTTP
         self._bee = BeeService(self.config)
-        await self._bee.start()
-        logger.info("Abelha local iniciada")
+        await self._bee.start(start_http=True, http_app=self._http_app)
+        logger.info("Abelha local iniciada (rotas registradas no servidor unificado)")
 
-        # 2. Auto-descoberta avançada
+        # 3. Auto-descoberta avançada
         self._discovery = AutoDiscoveryService(
             node_id=self.node_id,
             host=self.config.host,
             port=self.config.port,
             capabilities=self._get_full_capabilities(),
             models=self._bee._get_models_list() if self._bee else [],
+            profiles=self._get_all_profiles(),
             on_peer_found=self._on_peer_discovered,
             on_peer_lost=self._on_peer_lost,
         )
         await self._discovery.start()
         logger.info("Auto-descoberta iniciada")
 
-        # 3. Gerenciador de Perfis de Agentes
+        # 4. Gerenciador de Perfis de Agentes
         self._profiles = AgentProfileManager(
             node_id=self.node_id,
             discovery=self._discovery,
@@ -106,7 +116,7 @@ class EnxameKernel:
         await self._profiles.initialize()
         logger.info("Perfis de agentes inicializados")
 
-        # 4. Processador Multimodal
+        # 5. Processador Multimodal
         self._multimodal = MultimodalProcessor(
             data_dir=self.config.data_dir,
             ollama_url=self.config.ollama_base_url,
@@ -115,7 +125,7 @@ class EnxameKernel:
         await self._multimodal.initialize()
         logger.info("Processador multimodal inicializado")
 
-        # 5. Orquestrador de Tarefas
+        # 6. Orquestrador de Tarefas
         self._orchestrator = TaskOrchestrator(
             kernel=self,
             profiles=self._profiles,
@@ -126,7 +136,7 @@ class EnxameKernel:
         await self._orchestrator.initialize()
         logger.info("Orquestrador de tarefas inicializado")
 
-        # 6. Planejador de Sprints/EIPs
+        # 7. Planejador de Sprints/EIPs
         self._sprint_planner = SprintPlanner(
             orchestrator=self._orchestrator,
             profiles=self._profiles,
@@ -134,12 +144,11 @@ class EnxameKernel:
         await self._sprint_planner.initialize()
         logger.info("Planejador de sprints inicializado")
 
-        # 7. Iniciar servidor HTTP unificado (Web Server)
-        from .web.server import create_web_server
-        self._web_server = await create_web_server(self, self.config.host, self.config.port)
-        logger.info(f"Web Server iniciado em {self.config.host}:{self.config.port}")
+        # 8. Iniciar servidor HTTP unificado
+        await self._start_unified_http_server()
+        logger.info(f"Servidor HTTP unificado iniciado em {self.config.host}:{self.config.port}")
 
-        # 8. Loops de background
+        # 9. Loops de background
         self._running = True
         self._tasks = [
             asyncio.create_task(self._health_loop()),
@@ -173,9 +182,11 @@ class EnxameKernel:
             await self._discovery.stop()
         if self._bee:
             await self._bee.stop()
-        # Fechar web server
-        if self._web_server:
-            await self._web_server.stop()
+        
+        # Fechar servidor HTTP unificado
+        if self._http_runner:
+            await self._http_runner.cleanup()
+            self._http_runner = None
 
         self.state = BeeState.STOPPED
         logger.info(f"Enxame Kernel {self.node_id} OFFLINE")
@@ -192,6 +203,179 @@ class EnxameKernel:
         if self.config.allow_web:
             base.append("web_fallback")
         return base + evolved
+
+    def _get_all_profiles(self) -> list[str]:
+        """Retorna lista de perfis base para anúncio mDNS."""
+        return ["generalist", "coder", "researcher", "analyst", "creative", "legal", "medical", "architect"]
+
+    def _setup_http_routes(self) -> None:
+        """Configura rotas HTTP unificadas (Bee + Enxame)."""
+        from aiohttp.web import Request, Response
+        
+        # Middleware CORS
+        async def cors_middleware(app, handler):
+            async def middleware_handler(request):
+                resp = await handler(request)
+                resp.headers['Access-Control-Allow-Origin'] = '*'
+                resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+                resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+                return resp
+            return middleware_handler
+        self._http_app.middlewares.append(cors_middleware)
+
+        # Health endpoint
+        async def health(request: Request) -> Response:
+            return web.json_response({"status": "ok", "node": self.node_id, "state": self.state.value})
+
+        # Status completo
+        async def status(request: Request) -> Response:
+            return web.json_response(await self.get_system_status())
+
+        # Chat endpoint
+        async def chat(request: Request) -> Response:
+            try:
+                data = await request.json()
+                message = data.get("message", "")
+                context = data.get("context", {})
+                if not message:
+                    return web.json_response({"error": "message required"}, status=400)
+                result = await self.process_chat(message, context)
+                return web.json_response(result)
+            except Exception as e:
+                logger.error(f"Erro no chat: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+
+        # Multimodal upload
+        async def upload(request: Request) -> Response:
+            try:
+                reader = await request.multipart()
+                files = []
+                async for part in reader:
+                    if part.filename:
+                        content = await part.read()
+                        files.append({
+                            "filename": part.filename,
+                            "content": content,
+                            "content_type": part.content_type,
+                        })
+                if not files:
+                    return web.json_response({"error": "no files"}, status=400)
+                result = await self._multimodal.process_files(files)
+                return web.json_response(result)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+
+        # Perfis
+        async def list_profiles(request: Request) -> Response:
+            profiles = await self._profiles.list_profiles() if self._profiles else []
+            return web.json_response({"profiles": profiles})
+
+        async def create_profile(request: Request) -> Response:
+            data = await request.json()
+            result = await self.create_agent_profile(data)
+            return web.json_response(result)
+
+        # Sprint/EIP
+        async def sprint_status(request: Request) -> Response:
+            return web.json_response(self._sprint_planner.get_stats() if self._sprint_planner else {})
+
+        async def sprint_execute(request: Request) -> Response:
+            data = await request.json()
+            result = await self.execute_sprint_task(data.get("sprint_id", ""), data.get("task", {}))
+            return web.json_response(result)
+
+        # Peers
+        async def peers(request: Request) -> Response:
+            peers = self._discovery.get_active_peers() if self._discovery else []
+            return web.json_response({"peers": [
+                {
+                    "node_id": p.node_id,
+                    "role": p.role,
+                    "host": p.host,
+                    "port": p.port,
+                    "state": p.state.value,
+                    "load": p.load,
+                    "capabilities": p.capabilities,
+                    "models": p.models,
+                    "profiles": p.profiles,
+                    "latency_ms": p._latency_ms,
+                    "reliability": p._reliability_score,
+                }
+                for p in peers
+            ]})
+
+        # Registrar rotas Enxame
+        self._http_app.router.add_get("/health", health)
+        self._http_app.router.add_get("/api/v1/status", status)
+        self._http_app.router.add_post("/api/v1/chat", chat)
+        self._http_app.router.add_post("/api/v1/upload", upload)
+        self._http_app.router.add_get("/api/v1/profiles", list_profiles)
+        self._http_app.router.add_post("/api/v1/profiles", create_profile)
+        self._http_app.router.add_get("/api/v1/sprint", sprint_status)
+        self._http_app.router.add_post("/api/v1/sprint/execute", sprint_execute)
+        self._http_app.router.add_get("/api/v1/peers", peers)
+
+        # WebSocket para tempo real
+        self._http_app.router.add_get("/ws", self._handle_websocket)
+
+        # Dashboard HTML (opcional - servir arquivo estático)
+        self._setup_static_files()
+
+    def _setup_static_files(self) -> None:
+        """Configura arquivos estáticos para dashboard."""
+        web_dir = Path(__file__).parent / "web"
+        static_dir = web_dir / "static"
+        templates_dir = web_dir / "templates"
+        
+        if static_dir.exists():
+            self._http_app.router.add_static("/static/", path=str(static_dir), name="static")
+        
+        # Dashboard route
+        async def dashboard(request: Request) -> Response:
+            if templates_dir.exists():
+                from jinja2 import Environment, FileSystemLoader
+                jinja_env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=True)
+                template = jinja_env.get_template("index.html")
+                html = template.render(node_id=self.node_id, version="2.0.0")
+                return web.Response(text=html, content_type="text/html")
+            return web.Response(text="Dashboard não disponível", content_type="text/plain")
+        
+        self._http_app.router.add_get("/", dashboard)
+        self._http_app.router.add_get("/dashboard", dashboard)
+
+    async def _start_unified_http_server(self) -> None:
+        """Inicia servidor HTTP unificado."""
+        self._http_runner = web.AppRunner(self._http_app)
+        await self._http_runner.setup()
+        site = web.TCPSite(self._http_runner, self.config.host, self.config.port)
+        await site.start()
+        logger.info(f"HTTP Server unificado iniciado em {self.config.host}:{self.config.port}")
+
+    async def _handle_websocket(self, request: Request) -> web.WebSocketResponse:
+        """WebSocket para updates em tempo real."""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        
+        # Adicionar à lista de conexões (simplificado)
+        try:
+            # Enviar status inicial
+            status = await self.get_system_status()
+            await ws.send_json({"type": "status", "data": status})
+            
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                        if data.get("type") == "ping":
+                            await ws.send_json({"type": "pong"})
+                    except Exception:
+                        pass
+                elif msg.type == web.WSMsgType.ERROR:
+                    logger.error(f"WebSocket error: {ws.exception()}")
+        finally:
+            pass
+        
+        return ws
 
     # =========================================================================
     # Callbacks de Descoberta
@@ -416,110 +600,8 @@ Retorne JSON:
         return await self._profiles.create_profile(spec)
 
     # =========================================================================
-    # Servidor HTTP Unificado
+    # Servidor HTTP Unificado (configurado em start())
     # =========================================================================
-
-    async def _start_http_server(self) -> None:
-        """Inicia servidor HTTP com API unificada."""
-        from aiohttp import web
-        from aiohttp.web import Request, Response
-
-        app = web.Application()
-
-        # Middleware CORS
-        async def cors_middleware(app, handler):
-            async def middleware_handler(request):
-                resp = await handler(request)
-                resp.headers['Access-Control-Allow-Origin'] = '*'
-                resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-                resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-                return resp
-            return middleware_handler
-        app.middlewares.append(cors_middleware)
-
-        # Health
-        async def health(request: Request) -> Response:
-            return web.json_response({"status": "ok", "node": self.node_id, "state": self.state.value})
-
-        # Status completo
-        async def status(request: Request) -> Response:
-            return web.json_response(await self.get_system_status())
-
-        # Chat endpoint
-        async def chat(request: Request) -> Response:
-            try:
-                data = await request.json()
-                message = data.get("message", "")
-                context = data.get("context", {})
-                if not message:
-                    return web.json_response({"error": "message required"}, status=400)
-                result = await self.process_chat(message, context)
-                return web.json_response(result)
-            except Exception as e:
-                logger.error(f"Erro no chat: {e}")
-                return web.json_response({"error": str(e)}, status=500)
-
-        # Multimodal upload
-        async def upload(request: Request) -> Response:
-            try:
-                reader = await request.multipart()
-                files = []
-                async for part in reader:
-                    if part.filename:
-                        content = await part.read()
-                        files.append({
-                            "filename": part.filename,
-                            "content": content,
-                            "content_type": part.content_type,
-                        })
-                if not files:
-                    return web.json_response({"error": "no files"}, status=400)
-                result = await self._multimodal.process_files(files)
-                return web.json_response(result)
-            except Exception as e:
-                return web.json_response({"error": str(e)}, status=500)
-
-        # Perfis
-        async def list_profiles(request: Request) -> Response:
-            profiles = await self._profiles.list_profiles() if self._profiles else []
-            return web.json_response({"profiles": profiles})
-
-        async def create_profile(request: Request) -> Response:
-            data = await request.json()
-            result = await self.create_agent_profile(data)
-            return web.json_response(result)
-
-        # Sprint/EIP
-        async def sprint_status(request: Request) -> Response:
-            return web.json_response(self._sprint_planner.get_stats() if self._sprint_planner else {})
-
-        async def sprint_execute(request: Request) -> Response:
-            data = await request.json()
-            result = await self.execute_sprint_task(data.get("sprint_id", ""), data.get("task", {}))
-            return web.json_response(result)
-
-        # Peers
-        async def peers(request: Request) -> Response:
-            peers = self._discovery.get_active_peers() if self._discovery else []
-            return web.json_response({"peers": [p.__dict__ for p in peers]})
-
-        # Rotas
-        app.router.add_get("/health", health)
-        app.router.add_get("/api/v1/status", status)
-        app.router.add_post("/api/v1/chat", chat)
-        app.router.add_post("/api/v1/upload", upload)
-        app.router.add_get("/api/v1/profiles", list_profiles)
-        app.router.add_post("/api/v1/profiles", create_profile)
-        app.router.add_get("/api/v1/sprint", sprint_status)
-        app.router.add_post("/api/v1/sprint/execute", sprint_execute)
-        app.router.add_get("/api/v1/peers", peers)
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.config.host, self.config.port)
-        await site.start()
-        self._http_runner = runner
-        logger.info(f"HTTP Server iniciado em {self.config.host}:{self.config.port}")
 
 
 async def main() -> int:

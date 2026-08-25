@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-AutoDiscoveryService — Descoberta Automática Avançada
-=====================================================
-Estende a descoberta mDNS da Abelha com:
-- Detecção de capacidades remotas
-- Classificação automática de peers
-- Health monitoring contínuo
+AutoDiscoveryService — Descoberta Automática Avançada (Extensão do bees.discovery)
+==================================================================================
+Estende a descoberta mDNS da Abelha (bees.discovery.BeeDiscoveryService) com:
+- Detecção de capacidades remotas expandidas
+- Classificação automática de peers por perfil
+- Health monitoring contínuo com latency tracking
 - Network topology mapping
+- Peer capability profiling para delegação inteligente
+
+NÃO duplica código - usa BeeDiscoveryService como base.
 """
 
 from __future__ import annotations
@@ -20,34 +23,55 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from zeroconf import IPVersion, ServiceBrowser, ServiceInfo, ServiceStateChange, Zeroconf
-
+from bees.discovery import BeeDiscoveryService, DiscoveredPeer as BeeDiscoveredPeer
 from bees.protocol.messages import BeeState
 
 logger = logging.getLogger("enxame.discovery")
 
-SERVICE_TYPE = "_enxame._tcp.local."
-ENXAME_SERVICE_TYPE = "_enxame-evolved._tcp.local."
+# Tipos de serviço mDNS
+SERVICE_TYPE = "_enxame._tcp.local."          # Compatível com bees
+ENXAME_SERVICE_TYPE = "_enxame-evolved._tcp.local."  # Evoluído com profiles
 
 
 @dataclass(slots=True)
 class DiscoveredPeer:
-    """Peer descoberto com metadados ricos."""
+    """Peer descoberto com metadados ricos (estende BeeDiscoveredPeer)."""
+    # Campos base (compatíveis com BeeDiscoveredPeer)
     node_id: str
     role: str
     host: str
     port: int
     capabilities: list[str] = field(default_factory=list)
     models: list[str] = field(default_factory=list)
-    profiles: list[str] = field(default_factory=list)
     load: float = 0.0
     state: BeeState = BeeState.RUNNING
-    version: str = "1.0"
     last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_heartbeat_seq: int = 0
+    
+    # Campos evoluídos
+    profiles: list[str] = field(default_factory=list)
+    version: str = "2.0"
     metadata: dict[str, Any] = field(default_factory=dict)
     _latency_ms: float = 0.0
     _reliability_score: float = 1.0
+
+    @classmethod
+    def from_bee_peer(cls, bee_peer: BeeDiscoveredPeer) -> "DiscoveredPeer":
+        """Converte BeeDiscoveredPeer para DiscoveredPeer evoluído."""
+        return cls(
+            node_id=bee_peer.node_id,
+            role=bee_peer.role,
+            host=bee_peer.host,
+            port=bee_peer.port,
+            capabilities=bee_peer.capabilities,
+            models=bee_peer.models,
+            load=bee_peer.load,
+            state=bee_peer.state,
+            last_seen=bee_peer.last_seen,
+            last_heartbeat_seq=bee_peer.last_heartbeat_seq,
+            profiles=bee_peer.metadata.get("profiles", []) if hasattr(bee_peer, "metadata") and bee_peer.metadata else [],
+            version=bee_peer.metadata.get("version", "1.0") if hasattr(bee_peer, "metadata") and bee_peer.metadata else "1.0",
+        )
 
 
 @dataclass(slots=True)
@@ -63,15 +87,10 @@ class AutoDiscoveryService:
     """
     Serviço de auto-descoberta avançada para Enxame Evoluído.
     
-    Funcionalidades:
-    - mDNS para descoberta local
-    - Anúncio de capacidades expandidas
-    - Health monitoring com latency tracking
-    - Classificação automática de peers por能力
-    - Network topology mapping
-    - Peer capability profiling
+    COMPOSIÇÃO sobre herança: usa BeeDiscoveryService internamente
+    e estende com funcionalidades evoluídas.
     """
-
+    
     def __init__(
         self,
         node_id: str,
@@ -91,74 +110,122 @@ class AutoDiscoveryService:
         self.capabilities = capabilities
         self.models = models
         self.profiles = profiles or []
-        self.on_peer_found = on_peer_found
-        self.on_peer_lost = on_peer_lost
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
-
+        
+        # Callbacks adaptados
+        self._on_peer_found = on_peer_found
+        self._on_peer_lost = on_peer_lost
+        
+        # Serviço base (bees.discovery)
+        self._bee_discovery = BeeDiscoveryService(
+            node_id=node_id,
+            host=host,
+            port=port,
+            capabilities=capabilities,
+            models=models,
+            on_peer_found=self._on_bee_peer_found,
+            on_peer_lost=self._on_bee_peer_lost,
+            heartbeat_interval=heartbeat_interval,
+            heartbeat_timeout=heartbeat_timeout,
+        )
+        
+        # Estado evoluído
         self._peers: dict[str, DiscoveredPeer] = {}
-        self._zeroconf: Zeroconf | None = None
-        self._browser: ServiceBrowser | None = None
-        self._info: ServiceInfo | None = None
+        self._zeroconf = None
+        self._browser = None
+        self._evolved_info = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._topology = NetworkTopology()
         self._local_ip = self._get_local_ip()
 
+    # =========================================================================
+    # Delegação para BeeDiscoveryService
+    # =========================================================================
+    
     async def start(self) -> None:
-        """Inicia descoberta automática."""
+        """Inicia descoberta (base + evoluída)."""
+        # 1. Iniciar descoberta base (mDNS standard)
+        await self._bee_discovery.start()
+        
+        # 2. Iniciar descoberta evoluída (segundo tipo de serviço)
+        from zeroconf import IPVersion, ServiceBrowser, Zeroconf
         self._zeroconf = Zeroconf(ip_version=IPVersion.V4Only)
         
-        # Browser para ambos tipos de serviço
         self._browser = ServiceBrowser(
             self._zeroconf,
-            [SERVICE_TYPE, ENXAME_SERVICE_TYPE],
-            handlers=[self._on_service_state_change],
+            ENXAME_SERVICE_TYPE,
+            handlers=[self._on_evolved_service_state_change],
         )
-
+        
         self._running = True
         self._tasks = [
             asyncio.create_task(self._announcement_loop()),
             asyncio.create_task(self._health_monitor_loop()),
             asyncio.create_task(self._topology_update_loop()),
         ]
-        logger.info(f"AutoDiscovery iniciado para {self.node_id}")
+        logger.info(f"AutoDiscovery evoluído iniciado para {self.node_id}")
 
     async def stop(self) -> None:
         """Para descoberta."""
         self._running = False
         for task in self._tasks:
             task.cancel()
+            from contextlib import suppress
             with suppress(asyncio.CancelledError):
                 await task
+        
         if self._browser:
             self._browser.cancel()
         if self._zeroconf:
             self._zeroconf.close()
-        logger.info("AutoDiscovery parado")
+        
+        # Parar descoberta base
+        await self._bee_discovery.stop()
+        
+        logger.info("AutoDiscovery evoluído parado")
 
-    def _on_service_state_change(
+    def _on_bee_peer_found(self, bee_peer: BeeDiscoveredPeer) -> None:
+        """Callback quando bee discovery encontra peer - converte para evoluído."""
+        peer = DiscoveredPeer.from_bee_peer(bee_peer)
+        self._peers[peer.node_id] = peer
+        self._topology.nodes[peer.node_id] = peer
+        
+        logger.info(f"Peer descoberto (base): {peer.node_id} caps={len(peer.capabilities)}")
+        if self._on_peer_found:
+            self._on_peer_found(peer)
+
+    def _on_bee_peer_lost(self, node_id: str) -> None:
+        """Callback quando bee discovery perde peer."""
+        self._remove_peer(node_id)
+        if self._on_peer_lost:
+            self._on_peer_lost(node_id)
+
+    def _on_evolved_service_state_change(
         self,
-        zeroconf: Zeroconf,
+        zeroconf,
         service_type: str,
         name: str,
-        state_change: ServiceStateChange,
+        state_change,
     ) -> None:
-        """Callback para mudanças de serviços mDNS."""
+        """Callback para serviços evoluídos (_enxame-evolved)."""
+        from zeroconf import ServiceStateChange
+        
         if state_change is ServiceStateChange.Removed:
             self._remove_peer_by_name(name)
             return
-
+        
         if state_change is ServiceStateChange.Added:
             info = zeroconf.get_service_info(service_type, name)
             if info:
-                self._process_service_info(info, service_type)
+                self._process_evolved_service_info(info)
 
-    def _process_service_info(self, info: ServiceInfo, service_type: str) -> None:
-        """Processa informações de serviço descoberto."""
+    def _process_evolved_service_info(self, info) -> None:
+        """Processa informações de serviço evoluído (com profiles)."""
         if not info.addresses:
             return
-
+        
         props = {}
         for k, v in info.properties.items():
             try:
@@ -167,28 +234,28 @@ class AutoDiscoveryService:
                 props[key] = val
             except Exception:
                 continue
-
+        
         node_id = props.get("node_id")
         if not node_id or node_id == self.node_id:
             return
-
+        
         host = socket.inet_ntoa(info.addresses[0])
         port = info.port
-
-        # Parse capabilities
+        
+        # Parse campos evoluídos
+        profiles = self._parse_json_list(props.get("profiles", "[]"))
         caps = self._parse_json_list(props.get("capabilities", "[]"))
         models = self._parse_json_list(props.get("models", "[]"))
-        profiles = self._parse_json_list(props.get("profiles", "[]"))
-
+        
         load = float(props.get("load", 0.0))
         state_str = props.get("state", "RUNNING")
-        version = props.get("version", "1.0")
+        version = props.get("version", "2.0")
         
         try:
             state = BeeState(state_str)
         except Exception:
             state = BeeState.RUNNING
-
+        
         peer = DiscoveredPeer(
             node_id=node_id,
             role=props.get("role", "enxame-node"),
@@ -201,20 +268,17 @@ class AutoDiscoveryService:
             state=state,
             version=version,
             last_seen=datetime.now(UTC),
-            metadata={
-                "service_type": service_type,
-                "raw_props": props,
-            },
+            metadata={"service_type": "evolved", "raw_props": props},
         )
-
+        
         is_new = node_id not in self._peers
         self._peers[node_id] = peer
         self._topology.nodes[node_id] = peer
-
+        
         if is_new:
-            logger.info(f"Peer descoberto: {node_id} ({peer.role}) caps={len(caps)} models={len(models)} profiles={len(profiles)}")
-            if self.on_peer_found:
-                self.on_peer_found(peer)
+            logger.info(f"Peer descoberto (evoluído): {node_id} profiles={profiles} caps={len(caps)}")
+            if self._on_peer_found:
+                self._on_peer_found(peer)
 
     def _parse_json_list(self, value: str) -> list[str]:
         """Parse seguro de lista JSON."""
@@ -224,12 +288,11 @@ class AutoDiscoveryService:
                 return [str(x) for x in parsed]
         except Exception:
             pass
-        # Fallback: split por vírgula
         return [x.strip() for x in value.split(",") if x.strip()]
 
     def _remove_peer_by_name(self, name: str) -> None:
         """Remove peer pelo nome do serviço."""
-        for node_id, peer in list(self._peers.items()):
+        for node_id in list(self._peers.keys()):
             expected_names = [
                 f"{node_id}.{SERVICE_TYPE}",
                 f"{node_id}.{ENXAME_SERVICE_TYPE}",
@@ -244,17 +307,26 @@ class AutoDiscoveryService:
             del self._peers[node_id]
         if node_id in self._topology.nodes:
             del self._topology.nodes[node_id]
-        # Remover edges relacionados
         self._topology.edges = [
             (f, t, l) for f, t, l in self._topology.edges
             if f != node_id and t != node_id
         ]
         logger.warning(f"Peer removido: {node_id}")
-        if self.on_peer_lost:
-            self.on_peer_lost(node_id)
+        if self._on_peer_lost:
+            self._on_peer_lost(node_id)
 
+    # =========================================================================
+    # API Pública (compatível + evoluída)
+    # =========================================================================
+    
     def get_active_peers(self) -> list[DiscoveredPeer]:
-        """Retorna peers ativos (com heartbeat recente)."""
+        """Retorna peers ativos (merge base + evoluído)."""
+        # Sincronizar com base
+        for bee_peer in self._bee_discovery.get_active_peers():
+            if bee_peer.node_id not in self._peers:
+                self._peers[bee_peer.node_id] = DiscoveredPeer.from_bee_peer(bee_peer)
+                self._topology.nodes[bee_peer.node_id] = self._peers[bee_peer.node_id]
+        
         now = datetime.now(UTC)
         active = []
         for peer in self._peers.values():
@@ -265,11 +337,17 @@ class AutoDiscoveryService:
 
     def get_peer(self, node_id: str) -> DiscoveredPeer | None:
         """Retorna peer específico se ativo."""
+        # Tentar na cache evoluída
         peer = self._peers.get(node_id)
         if peer:
             elapsed = (datetime.now(UTC) - peer.last_seen).total_seconds()
             if elapsed < self.heartbeat_timeout:
                 return peer
+        
+        # Fallback: buscar na base
+        bee_peer = self._bee_discovery.get_peer(node_id)
+        if bee_peer:
+            return DiscoveredPeer.from_bee_peer(bee_peer)
         return None
 
     def get_peers_by_capability(self, capability: str) -> list[DiscoveredPeer]:
@@ -302,16 +380,18 @@ class AutoDiscoveryService:
         return max(candidates, key=score)
 
     # =========================================================================
-    # Loops de Background
+    # Loops de Background (Evoluídos)
     # =========================================================================
-
+    
     async def _announcement_loop(self) -> None:
-        """Loop de anúncio mDNS periódico."""
+        """Loop de anúncio mDNS periódico (base + evoluído)."""
         while self._running:
             try:
-                self._announce()
+                # Anúncio base é feito pelo BeeDiscoveryService via update_announcement
+                # Apenas anúncio evoluído aqui
+                self._announce_evolved()
             except Exception as e:
-                logger.error(f"Erro no anúncio: {e}")
+                logger.error(f"Erro no anúncio evoluído: {e}")
             await asyncio.sleep(self.heartbeat_interval)
 
     async def _health_monitor_loop(self) -> None:
@@ -332,34 +412,20 @@ class AutoDiscoveryService:
                 logger.error(f"Erro no topology update: {e}")
             await asyncio.sleep(60)
 
-    def _announce(self) -> None:
-        """Anuncia este nó via mDNS."""
+    def _announce_evolved(self) -> None:
+        """Anuncia este nó via mDNS evoluído (com profiles)."""
         if not self._zeroconf:
             return
 
-        # Anúncio padrão (compatibilidade)
-        self._info = ServiceInfo(
-            type_=SERVICE_TYPE,
-            name=f"{self.node_id}.{SERVICE_TYPE}",
-            addresses=[socket.inet_aton(self._local_ip)],
-            port=self.port,
-            properties={
-                "node_id": self.node_id,
-                "role": "enxame-node",
-                "capabilities": json.dumps(self.capabilities),
-                "models": json.dumps(self.models),
-                "profiles": json.dumps(self.profiles),
-                "load": str(self._calculate_load()),
-                "state": "RUNNING",
-                "version": "2.0",
-                "protocol_version": "1.0",
-            },
-            server=f"{self.node_id}.local.",
-        )
-        self._zeroconf.register_service(self._info)
+        self._evolved_info = self._create_evolved_service_info()
+        self._zeroconf.register_service(self._evolved_info)
 
-        # Anúncio evoluído
-        evolved_info = ServiceInfo(
+    def _create_evolved_service_info(self):
+        """Cria ServiceInfo para anúncio evoluído."""
+        from zeroconf import ServiceInfo
+        import json
+        
+        return ServiceInfo(
             type_=ENXAME_SERVICE_TYPE,
             name=f"{self.node_id}.{ENXAME_SERVICE_TYPE}",
             addresses=[socket.inet_aton(self._local_ip)],
@@ -376,14 +442,12 @@ class AutoDiscoveryService:
             },
             server=f"{self.node_id}.local.",
         )
-        self._zeroconf.register_service(evolved_info)
 
     async def _check_peer_health(self) -> None:
         """Verifica saúde dos peers com ping/latency."""
         for peer in list(self._peers.values()):
             try:
                 start = time.time()
-                # Ping simples via HTTP
                 import aiohttp
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
@@ -427,9 +491,12 @@ class AutoDiscoveryService:
         return (cpu + mem) / 2.0
 
     def update_announcement(self, load: float, state: BeeState = BeeState.RUNNING) -> None:
-        """Atualiza anúncio com nova carga/estado."""
-        if self._zeroconf and self._info:
-            self._info.properties = {
+        """Atualiza anúncio base (delega para BeeDiscoveryService)."""
+        self._bee_discovery.update_announcement(load, state)
+        # Atualizar evoluído se rodando
+        if self._zeroconf and self._evolved_info:
+            import json
+            self._evolved_info.properties = {
                 "node_id": self.node_id,
                 "role": "enxame-node",
                 "capabilities": json.dumps(self.capabilities),
@@ -438,14 +505,15 @@ class AutoDiscoveryService:
                 "load": str(load),
                 "state": state.value,
                 "version": "2.0",
-                "protocol_version": "1.0",
             }
-            self._zeroconf.update_service(self._info)
+            self._zeroconf.update_service(self._evolved_info)
 
     def get_stats(self) -> dict[str, Any]:
-        """Estatísticas da descoberta."""
+        """Estatísticas da descoberta (merge base + evoluído)."""
+        base_stats = self._bee_discovery.get_stats()
         active = self.get_active_peers()
         return {
+            "base": base_stats,
             "total_discovered": len(self._peers),
             "active_peers": len(active),
             "peers": [
@@ -480,6 +548,3 @@ class AutoDiscoveryService:
             return ip
         except Exception:
             return "127.0.0.1"
-
-
-from contextlib import suppress

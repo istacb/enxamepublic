@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import logging
 import os
 import signal
@@ -25,7 +26,7 @@ from core.exp.security import EXPSecurity
 
 from .protocol.envelope import BeeEnvelope
 from .protocol.handler import BeeProtocolHandler
-from .protocol.messages import BeeMessageType, BeeState
+from .protocol.messages import BeeMessageType, BeeState, BeeVisionRequest, BeeVisionResponse
 from .librarian import LocalBeeLibrarian
 from .memory import BeeMemory
 from .discovery import BeeDiscoveryService
@@ -86,10 +87,18 @@ class BeeService:
         self._handler.register_handler(BeeMessageType.KNOWLEDGE_QUERY, self._handle_knowledge_query)
         self._handler.register_handler(BeeMessageType.RESEARCH_REQUEST, self._handle_research_request)
         self._handler.register_handler(BeeMessageType.MODEL_REQUEST, self._handle_model_request)
+        self._handler.register_handler(BeeMessageType.VISION_REQUEST, self._handle_vision_request)
         self._handler.register_handler(BeeMessageType.CAPABILITY_QUERY, self._handle_capability_query)
 
-    async def start(self) -> None:
-        """Inicializa todos os componentes da Abelha."""
+    async def start(self, *, start_http: bool = True, http_app: "web.Application | None" = None) -> None:
+        """
+        Inicializa todos os componentes da Abelha.
+        
+        Args:
+            start_http: Se True, inicia servidor HTTP próprio.
+                       Se False, usa http_app fornecido (para integração com EnxameKernel).
+            http_app: Aplicação aiohttp externa para adicionar rotas da Abelha.
+        """
         logger.info(f"Iniciando Abelha {self.node_id}...")
 
         # 1. Carregar identidade persistente
@@ -135,8 +144,16 @@ class BeeService:
         self._announcer.start()
         logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
 
-        # 6. Iniciar servidor HTTP para API e WebSocket
-        await self._start_http_server()
+        # 6. Servidor HTTP
+        self._own_http_server = False
+        if start_http:
+            if http_app is not None:
+                # Modo integração: adicionar rotas da Abelha à app externa
+                await self._add_routes_to_app(http_app)
+            else:
+                # Modo standalone: iniciar servidor próprio
+                await self._start_http_server()
+                self._own_http_server = True
 
         # 7. Iniciar loops de background
         self._running = True
@@ -161,6 +178,11 @@ class BeeService:
             with suppress(asyncio.CancelledError):
                 await task
 
+        # Parar servidor HTTP próprio (se iniciamos)
+        if self._own_http_server and self._http_runner:
+            await self._http_runner.cleanup()
+            self._http_runner = None
+
         # Parar anunciações
         if self._announcer:
             self._announcer.stop()
@@ -182,9 +204,11 @@ class BeeService:
 
     def _get_capabilities_list(self) -> list[str]:
         """Retorna lista de capabilities da Abelha."""
-        caps = ["rag", "vector_search", "embeddings", "query", "index"]
+        caps = ["rag", "vector_search", "embeddings", "query", "index", "memory"]
         if self._librarian and self._librarian.has_ocr():
             caps.append("ocr")
+        if self._librarian and self._librarian.has_vision():
+            caps.append("vision")
         if self._librarian and self._librarian.has_zim():
             caps.append("zim")
         if self.config.allow_web:
@@ -286,6 +310,66 @@ class BeeService:
         logger.info(f"Servidor HTTP iniciado em {self.config.host}:{self.config.port}")
 
         self._http_runner = runner
+
+    async def _add_routes_to_app(self, app: "web.Application") -> None:
+        """Adiciona rotas da Abelha a uma aplicação aiohttp externa (para EnxameKernel)."""
+        from aiohttp.web import Request, Response
+
+        # Health check
+        async def health(request: Request) -> Response:
+            return web.json_response({
+                "status": "ok",
+                "node_id": self.node_id,
+                "state": self.state.value,
+                "peers": len(self._discovery.get_active_peers()) if self._discovery else 0,
+            })
+
+        # Query endpoint (processa LOCAL -> ENXAME -> WEB)
+        async def query(request: Request) -> Response:
+            try:
+                data = await request.json()
+                query_text = data.get("query", "").strip()
+                if not query_text:
+                    return web.json_response({"error": "query required"}, status=400)
+
+                result = await self.process_query(query_text)
+                return web.json_response(result)
+            except Exception as e:
+                logger.error(f"Erro no query: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+
+        # Capabilities endpoint
+        async def capabilities(request: Request) -> Response:
+            return web.json_response({
+                "capabilities": self._get_capabilities_list(),
+                "models": self._get_models_list(),
+                "indexes": ["documents"] if self._librarian else [],
+                "load": self._calculate_load(),
+            })
+
+        # Peer discovery endpoint
+        async def peers(request: Request) -> Response:
+            if not self._discovery:
+                return web.json_response({"peers": []})
+            peers = self._discovery.get_active_peers()
+            return web.json_response({"peers": [
+                {
+                    "node_id": p.node_id,
+                    "role": p.role,
+                    "host": p.host,
+                    "port": p.port,
+                    "capabilities": p.capabilities,
+                    "models": p.models,
+                }
+                for p in peers
+            ]})
+
+        app.router.add_get("/health", health)
+        app.router.add_post("/api/v1/query", query)
+        app.router.add_get("/api/v1/capabilities", capabilities)
+        app.router.add_get("/api/v1/peers", peers)
+        
+        logger.info("Rotas da Abelha registradas na aplicação externa")
 
     def _calculate_load(self) -> float:
         """Calcula carga atual da Abelha (0.0 a 1.0)."""
@@ -446,6 +530,47 @@ class BeeService:
             request_id=request.request_id,
             generation=generation,
             model_used=self.config.model,
+            correlation_id=envelope.correlation_id,
+        )
+
+    async def _handle_vision_request(self, envelope: BeeEnvelope) -> BeeEnvelope:
+        """Handler para VISION_REQUEST - análise de imagem usando modelo de visão."""
+        from .protocol.messages import BeeVisionRequest
+        request = BeeVisionRequest.from_dict(envelope.payload)
+
+        description = ""
+        model_used = None
+        error = None
+        processing_time_ms = 0
+
+        if self._librarian:
+            import time
+            start = time.perf_counter()
+            try:
+                image_bytes = base64.b64decode(request.image_base64)
+                if request.structured_output:
+                    result = await self._librarian.analyze_image_with_structured_output(image_bytes)
+                else:
+                    result = await self._librarian.analyze_image(
+                        image_bytes,
+                        request.prompt,
+                        request.system_prompt,
+                    )
+                description = result.get("description", "")
+                model_used = result.get("model")
+                error = result.get("error")
+            except Exception as e:
+                error = str(e)
+                logger.error(f"Erro na visão: {e}")
+            processing_time_ms = int((time.perf_counter() - start) * 1000)
+
+        return self._handler.create_vision_response(
+            target_node_id=envelope.source_node_id,
+            request_id=request.request_id,
+            description=description,
+            model_used=model_used,
+            processing_time_ms=processing_time_ms,
+            error=error,
             correlation_id=envelope.correlation_id,
         )
 

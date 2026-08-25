@@ -21,3 +21,9 @@ zeroconf==0.135.0
 # locais. Já estava pinado em agentes/requirements.txt; repetido aqui
 # porque juiz/ e bibliotecario/ também rodam a própria ronda local.
 psutil==5.9.8
+# Multimodal/Vision dependencies
+pillow>=10.0.0
+pymupdf>=1.23.0
+pdfplumber>=0.10.0
+python-docx>=1.1.0
+pytesseract>=0.3.10

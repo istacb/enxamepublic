@@ -32,6 +32,8 @@ from .messages import (
     BeeResearchRequest,
     BeeResearchResult,
     BeeState,
+    BeeVisionRequest,
+    BeeVisionResponse,
 )
 
 
@@ -476,6 +478,60 @@ class BeeProtocolHandler:
             source_node_id=self.node_id,
             target_node_id=target_node_id,
             msg_type=BeeMessageType.MODEL_RESPONSE,
+            payload=response.to_dict(),
+            correlation_id=correlation_id or request_id,
+        )
+
+    def create_vision_request(
+        self,
+        target_node_id: str,
+        image_base64: str,
+        prompt: str = "Descreva esta imagem em detalhes.",
+        system_prompt: str | None = None,
+        structured_output: bool = False,
+        timeout_ms: int = 60000,
+    ) -> BeeEnvelope:
+        """Cria mensagem VISION_REQUEST."""
+        request = BeeVisionRequest(
+            request_id=f"vision_{time.time()}_{self.node_id[:8]}",
+            image_base64=image_base64,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            structured_output=structured_output,
+            timeout_ms=timeout_ms,
+        )
+
+        return BeeEnvelope.create_request(
+            source_node_id=self.node_id,
+            target_node_id=target_node_id,
+            msg_type=BeeMessageType.VISION_REQUEST,
+            payload=request.to_dict(),
+            timeout_ms=timeout_ms + 10000,
+        )
+
+    def create_vision_response(
+        self,
+        target_node_id: str,
+        request_id: str,
+        description: str,
+        model_used: str | None = None,
+        processing_time_ms: int = 0,
+        error: str | None = None,
+        correlation_id: str | None = None,
+    ) -> BeeEnvelope:
+        """Cria mensagem VISION_RESPONSE."""
+        response = BeeVisionResponse(
+            request_id=request_id,
+            description=description,
+            model_used=model_used,
+            processing_time_ms=processing_time_ms,
+            error=error,
+        )
+
+        return BeeEnvelope.create_response(
+            source_node_id=self.node_id,
+            target_node_id=target_node_id,
+            msg_type=BeeMessageType.VISION_RESPONSE,
             payload=response.to_dict(),
             correlation_id=correlation_id or request_id,
         )

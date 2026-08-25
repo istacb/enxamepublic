@@ -135,6 +135,43 @@ class LocalBeeLibrarian:
         zim_dir = self.data_dir / "zim"
         return zim_dir.exists() and any(zim_dir.glob("*.zim"))
 
+    def has_vision(self) -> bool:
+        """Verifica se modelo de visão está disponível."""
+        try:
+            import httpx
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(f"{self.ollama_url}/api/tags")
+                if resp.status_code == 200:
+                    models = [m["name"] for m in resp.json().get("models", [])]
+                    vision_keywords = ["llava", "bakllava", "moondream", "vision", "minicpm-v", "qwen2-vl", "vl"]
+                    return any(any(kw in m.lower() for kw in vision_keywords) for m in models)
+        except Exception:
+            pass
+        return False
+
+    def get_vision_model(self) -> str | None:
+        """Retorna modelo de visão disponível."""
+        try:
+            import httpx
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(f"{self.ollama_url}/api/tags")
+                if resp.status_code == 200:
+                    models = [m["name"] for m in resp.json().get("models", [])]
+                    vision_models = [
+                        "llava:13b", "llava:7b", "bakllava:7b",
+                        "moondream:1.8b", "minicpm-v:8b", "qwen2-vl:7b",
+                        "llava:34b", "llava-phi3:3.8b"
+                    ]
+                    for vm in vision_models:
+                        if vm in models:
+                            return vm
+                    for m in models:
+                        if any(kw in m.lower() for kw in ["llava", "vision", "vl", "bakllava", "moondream", "minicpm-v"]):
+                            return m
+        except Exception:
+            pass
+        return None
+
     def get_available_models(self) -> list[str]:
         """Retorna modelos disponíveis no Ollama."""
         try:
@@ -382,6 +419,60 @@ class LocalBeeLibrarian:
         except Exception as e:
             logger.error(f"Erro na geração: {e}")
             return {"generation": f"Erro: {e}", "model": self.model}
+
+    async def analyze_image(
+        self,
+        image_bytes: bytes,
+        prompt: str = "Descreva esta imagem em detalhes.",
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
+        """Análise de imagem usando modelo de visão."""
+        vision_model = self.get_vision_model()
+        if not vision_model:
+            return {"error": "Nenhum modelo de visão disponível", "description": ""}
+
+        try:
+            import base64
+            b64 = base64.b64encode(image_bytes).decode()
+
+            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+
+            response = await self.ollama.generate(
+                OllamaGenerateRequest(
+                    model=vision_model,
+                    prompt=full_prompt,
+                    images=[b64],
+                    temperature=0.1,
+                    num_ctx=4096,
+                )
+            )
+            return {"description": response.strip(), "model": vision_model}
+        except Exception as e:
+            logger.error(f"Erro na análise de imagem: {e}")
+            return {"error": str(e), "description": "", "model": vision_model}
+
+    async def analyze_image_with_structured_output(
+        self,
+        image_bytes: bytes,
+        output_schema: dict | None = None,
+    ) -> dict[str, Any]:
+        """Análise de imagem com saída estruturada (JSON)."""
+        schema_prompt = ""
+        if output_schema:
+            import json
+            schema_prompt = f"\nRetorne APENAS JSON válido seguindo este schema:\n{json.dumps(output_schema, ensure_ascii=False)}"
+
+        prompt = f"""Analise esta imagem e retorne JSON com:
+{{
+  "description": "descrição detalhada da imagem",
+  "objects": ["objeto1", "objeto2"],
+  "text_content": "texto visível na imagem (OCR)",
+  "colors": ["cor1", "cor2"],
+  "scene_type": "tipo de cena (documento, foto, screenshot, diagrama, etc.)",
+  "confidence": 0.9
+}}{schema_prompt}"""
+
+        return await self.analyze_image(image_bytes, prompt, system_prompt="Você é um analista visual preciso. Retorne apenas JSON válido.")
 
     def _result_to_dict(self, result: SearchResult) -> dict[str, Any]:
         return {
