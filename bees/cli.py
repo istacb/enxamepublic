@@ -44,7 +44,9 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     try:
         loop.run_until_complete(bee.start())
-        print(f"\n✅ Abelha {config.node_id} ONLINE")
+        use_emoji = sys.stdout.encoding and 'utf' in sys.stdout.encoding.lower()
+        ok = "✅" if use_emoji else "[OK]"
+        print(f"\n{ok} Abelha {config.node_id} ONLINE")
         print("Pressione Ctrl+C para parar\n")
         loop.run_forever()
     except KeyboardInterrupt:

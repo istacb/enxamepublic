@@ -19,6 +19,8 @@ import subprocess
 import shutil
 import json
 import argparse
+import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -209,9 +211,23 @@ def install_ollama(force: bool = False, dry_run: bool = False) -> bool:
             # Implementação simplificada - na prática precisaria de mais lógica
             
         elif system == "Windows":
-            log("Para Windows, execute o installer manual em: https://ollama.com/download/windows", "INFO")
-            log("Após instalar manualmente, execute este script novamente", "INFO")
-            return False
+            # Baixar e executar installer do Windows
+            installer_url = "https://ollama.com/download/OllamaSetup.exe"
+            with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
+                installer_path = f.name
+            try:
+                log(f"Baixando {installer_url}...", "INFO")
+                urllib.request.urlretrieve(installer_url, installer_path)
+                log("Executando installer (pode requerer admin)...", "INFO")
+                result = subprocess.run([installer_path, "/S"], shell=False, timeout=300, check=False)
+                if result.returncode != 0:
+                    log("Installer silencioso falhou, tentando modo interativo...", "WARN")
+                    subprocess.run([installer_path], shell=False, timeout=300, check=False)
+            finally:
+                try:
+                    os.unlink(installer_path)
+                except Exception:
+                    pass
         
         # Verificar instalação
         if detect_ollama():

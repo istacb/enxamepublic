@@ -636,7 +636,10 @@ async def main() -> int:
 
     try:
         await kernel.start()
-        print(f"\n✅ Enxame Kernel {config.node_id} ONLINE")
+        # Detectar suporte a Unicode no console
+        use_emoji = sys.stdout.encoding and 'utf' in sys.stdout.encoding.lower()
+        ok = "✅" if use_emoji else "[OK]"
+        print(f"\n{ok} Enxame Kernel {config.node_id} ONLINE")
         print(f"   HTTP: http://{config.host}:{config.port}")
         print(f"   Health: http://{config.host}:{config.port}/health")
         print(f"   Status: http://{config.host}:{config.port}/api/v1/status")
