@@ -1,0 +1,19 @@
+{
+  "node_id": "",
+  "host": "0.0.0.0",
+  "port": 8765,
+  "host_ip": "127.0.0.1",
+  "ollama_base_url": "http://localhost:11434",
+  "model": "llama3.2:3b",
+  "data_dir": "~/.enxame/bee",
+  "allow_web": false,
+  "shared_secret": null,
+  "log_level": "INFO",
+  "confidence_threshold_enxame": 0.7,
+  "confidence_threshold_web": 0.8,
+  "heartbeat_interval": 5.0,
+  "heartbeat_timeout": 15.0,
+  "max_concurrent_queries": 4,
+  "query_timeout_seconds": 60,
+  "max_cache_items": 1000
+}

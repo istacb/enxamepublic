@@ -1,128 +1,188 @@
 #!/bin/bash
-# ENXAME Universal Installer - macOS/Linux Wrapper
-# Uso: curl -fsSL https://.../install_enxame.sh | bash
-#      ou ./install_enxame.sh [--auto] [--force-ollama] ...
+# =============================================================================
+# ENXAME Bee - Universal Installer (Shell Wrapper)
+# Detecta plataforma e executa instalador apropriado
+# =============================================================================
 
-set -e
+set -euo pipefail
 
-# Cores
-RED='\033[0;31m'
+# Colors
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[AVISO]${NC} $*"; }
-log_error() { echo -e "${RED}[ERRO]${NC} $*" >&2; }
+log() { echo -e "${GREEN}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+step() { echo -e "\n${BLUE}=== $1 ===${NC}"; }
 
-print_banner() {
-    echo -e "\n${BLUE}============================================"
-    echo -e "  ENXAME UNIVERSAL INSTALLER - macOS/Linux"
-    echo -e "============================================${NC}\n"
-}
-
-# Detectar Python
-detect_python() {
-    if command -v python3 &>/dev/null; then
-        PYTHON_CMD="python3"
-    elif command -v python &>/dev/null; then
-        PYTHON_CMD="python"
-    else
-        log_warn "Python não encontrado. Instalando..."
-        install_python
-    fi
+# Detect platform
+detect_platform() {
+    local system=$(uname -s | tr '[:upper:]' '[:lower:]')
     
-    PY_VER=$($PYTHON_CMD --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-    log_ok "Python encontrado: $PYTHON_CMD ($PY_VER)"
-    
-    # Verificar versão >= 3.10
-    MAJOR=$($PYTHON_CMD -c "import sys; print(sys.version_info.major)")
-    MINOR=$($PYTHON_CMD -c "import sys; print(sys.version_info.minor)")
-    if [ "$MAJOR" -lt 3 ] || { [ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 10 ]; }; then
-        log_error "Python 3.10+ necessário (encontrado $MAJOR.$MINOR)"
-        exit 1
-    fi
-}
-
-install_python() {
-    OS=$(uname -s)
-    if [ "$OS" = "Darwin" ]; then
-        if ! command -v brew &>/dev/null; then
-            log_info "Instalando Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [[ "$system" == "linux" ]]; then
+        if [[ -f /etc/os-release ]]; then
+            . /etc/os-release
+            case "$ID" in
+                ubuntu|debian|mint|pop|elementary|zorin)
+                    echo "debian"
+                    return
+                    ;;
+                arch|manjaro|endeavouros|garuda|artix)
+                    echo "arch"
+                    return
+                    ;;
+                fedora|rhel|centos|rocky|alma)
+                    echo "fedora"
+                    return
+                    ;;
+                opensuse*|suse)
+                    echo "opensuse"
+                    return
+                    ;;
+            esac
         fi
-        brew install python@3.11
-    elif [ "$OS" = "Linux" ]; then
-        if command -v apt &>/dev/null; then
-            sudo apt update && sudo apt install -y python3 python3-pip python3-venv
-        elif command -v dnf &>/dev/null; then
-            sudo dnf install -y python3 python3-pip
-        elif command -v pacman &>/dev/null; then
-            sudo pacman -S --noconfirm python python-pip
-        elif command -v zypper &>/dev/null; then
-            sudo zypper install -y python3 python3-pip
-        else
-            log_error "Gerenciador de pacotes não suportado. Instale Python 3.10+ manualmente."
-            exit 1
-        fi
-    fi
-}
-
-# Verificar pip
-ensure_pip() {
-    if ! $PYTHON_CMD -m pip --version &>/dev/null; then
-        log_warn "pip não encontrado. Instalando..."
-        $PYTHON_CMD -m ensurepip --upgrade
-    fi
-}
-
-# Baixar instalador universal
-download_installer() {
-    INSTALLER_URL="https://raw.githubusercontent.com/enxamepublic/enxamepublic/main/bees/install/universal_installer.py"
-    INSTALLER_PATH="/tmp/enxame_universal_installer.py"
-    
-    log_info "Baixando instalador universal..."
-    if command -v curl &>/dev/null; then
-        curl -fsSL "$INSTALLER_URL" -o "$INSTALLER_PATH"
-    elif command -v wget &>/dev/null; then
-        wget -q "$INSTALLER_URL" -O "$INSTALLER_PATH"
+        echo "linux"
+    elif [[ "$system" == "darwin" ]]; then
+        echo "macos"
     else
-        log_error "curl ou wget necessário para download"
-        exit 1
+        echo "unknown"
     fi
-    log_ok "Instalador baixado em $INSTALLER_PATH"
+}
+
+# Install on Debian/Ubuntu
+install_debian() {
+    step "Instalando ENXAME Bee no Debian/Ubuntu"
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local build_script="$script_dir/build_deb.sh"
+    
+    if [[ ! -f "$build_script" ]]; then
+        error "build_deb.sh nao encontrado em $script_dir"
+        return 1
+    fi
+    
+    log "Construindo pacote .deb..."
+    bash "$build_script"
+    
+    # Find and install
+    local deb_files=("$script_dir/dist/enxame-bee_"*.deb)
+    if [[ ! -f "${deb_files[0]}" ]]; then
+        error "Pacote .deb nao encontrado em dist/"
+        return 1
+    fi
+    
+    local deb=$(ls -t "${deb_files[@]}" | head -1)
+    log "Instalando $deb..."
+    sudo dpkg -i "$deb"
+    sudo apt-get install -f -y  # Fix dependencies if needed
+}
+
+# Install on Arch Linux
+install_arch() {
+    step "Instalando ENXAME Bee no Arch Linux"
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Install dependencies
+    log "Instalando dependencias..."
+    sudo pacman -S --needed --noconfirm \
+        python python-pip python-httpx python-pydantic python-pydantic-settings \
+        python-psutil python-zeroconf python-cryptography python-rich python-pyaml \
+        curl ca-certificates sqlite base-devel git
+    
+    # Build and install with makepkg
+    log "Construindo pacote..."
+    cd "$script_dir"
+    makepkg -si --noconfirm
+}
+
+# Install on Fedora/RHEL
+install_fedora() {
+    step "Instalando ENXAME Bee no Fedora/RHEL"
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Install dependencies
+    log "Instalando dependencias..."
+    sudo dnf install -y \
+        python3 python3-pip python3-httpx python3-pydantic python3-pydantic-settings \
+        python3-psutil python3-zeroconf python3-cryptography python3-rich python3-pyyaml \
+        curl ca-certificates sqlite rpm-build
+    
+    # Use Python installer
+    log "Executando instalador Python..."
+    python3 -m bees.install.install_bee
+}
+
+# Install on macOS
+install_macos() {
+    step "Instalando ENXAME Bee no macOS"
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local build_script="$script_dir/build_macos_pkg.sh"
+    
+    if [[ ! -f "$build_script" ]]; then
+        error "build_macos_pkg.sh nao encontrado"
+        return 1
+    fi
+    
+    log "Construindo pacote .pkg..."
+    bash "$build_script"
+    
+    local pkg_files=("$script_dir/dist/enxame-bee-"*.pkg)
+    if [[ ! -f "${pkg_files[0]}" ]]; then
+        error "Pacote .pkg nao encontrado em dist/"
+        return 1
+    fi
+    
+    local pkg=$(ls -t "${pkg_files[@]}" | head -1)
+    log "Instalando $pkg..."
+    sudo installer -pkg "$pkg" -target /
+}
+
+# Install on generic Linux (Python installer)
+install_generic_linux() {
+    step "Instalando ENXAME Bee (instalador Python)"
+    python3 -m bees.install.install_bee "$@"
 }
 
 # Main
 main() {
-    print_banner
+    echo -e "${BLUE}==================================================${NC}"
+    echo -e "${BLUE}  ENXAME Bee - Universal Installer v1.0.0${NC}"
+    echo -e "${BLUE}==================================================${NC}"
+    echo
     
-    # Parse args
-    ARGS=()
-    for arg in "$@"; do
-        ARGS+=("$arg")
-    done
+    local platform=$(detect_platform)
+    log "Plataforma detectada: $platform"
+    echo
     
-    detect_python
-    ensure_pip
-    download_installer
-    
-    log_info "Executando instalador universal..."
-    log_info "Isso pode levar vários minutos (download de modelos)...\n"
-    
-    $PYTHON_CMD "$INSTALLER_PATH" "${ARGS[@]}"
-    EXIT_CODE=$?
-    
-    if [ $EXIT_CODE -eq 0 ]; then
-        log_ok "\nInstalação concluída com sucesso!"
-    else
-        log_error "\nInstalação falhou (código $EXIT_CODE)"
-        log_info "Verifique o log em: ~/.local/share/enxame/bee/install.log (Linux) ou ~/Library/Application Support/enxame/bee/install.log (macOS)"
-    fi
-    
-    exit $EXIT_CODE
+    case "$platform" in
+        debian)
+            install_debian "$@"
+            ;;
+        arch)
+            install_arch "$@"
+            ;;
+        fedora)
+            install_fedora "$@"
+            ;;
+        macos)
+            install_macos "$@"
+            ;;
+        linux)
+            install_generic_linux "$@"
+            ;;
+        *)
+            error "Plataforma nao suportada: $platform"
+            echo "Plataformas suportadas: debian, ubuntu, arch, manjaro, fedora, rhel, macos"
+            return 1
+            ;;
+    esac
 }
 
+# Pass all arguments to installer
 main "$@"

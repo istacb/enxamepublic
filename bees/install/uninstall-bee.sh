@@ -1,224 +1,175 @@
 #!/bin/bash
-#
-# BEE-0008 — Desinstalador Rápido da Abelha (Linux/macOS)
-#
-# Script wrapper que:
-# 1. Verifica estado atual da instalação
-# 2. Executa desinstalador Python com opções
-# 3. Limpa resíduos do sistema
-#
-# Uso:
-#   ./uninstall-bee.sh [--remove-ollama] [--keep-data]
-#
+# ENXAME Bee - Desinstalador Universal (Shell Wrapper)
 
-set -e
+set -euo pipefail
 
-# Cores para output
-RED='\033[0;31m'
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
+log() { echo -e "${GREEN}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+step() { echo -e "\n${BLUE}=== $1 ===${NC}"; }
 
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-detect_os() {
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        echo "linux"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
+# Detect platform
+detect_platform() {
+    local system=$(uname -s | tr '[:upper:]' '[:lower:]')
+    if [[ "$system" == "linux" ]]; then
+        if [[ -f /etc/os-release ]]; then
+            . /etc/os-release
+            case "$ID" in
+                ubuntu|debian|mint|pop) echo "debian" ;;
+                arch|manjaro) echo "arch" ;;
+                fedora|rhel) echo "fedora" ;;
+                *) echo "linux" ;;
+            esac
+        else
+            echo "linux"
+        fi
+    elif [[ "$system" == "darwin" ]]; then
         echo "macos"
     else
         echo "unknown"
     fi
 }
 
-check_python() {
-    if command -v python3 &> /dev/null; then
-        PYTHON_CMD="python3"
-    elif command -v python &> /dev/null; then
-        PYTHON_CMD="python"
-    else
-        log_error "Python não encontrado"
-        exit 1
-    fi
-}
-
-find_uninstaller() {
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    UNINSTALLER_PATH="$SCRIPT_DIR/uninstall_bee.py"
-    
-    if [[ -f "$UNINSTALLER_PATH" ]]; then
-        echo "$UNINSTALLER_PATH"
-        return 0
-    fi
-    
-    if [[ -f "/workspace/bees/install/uninstall_bee.py" ]]; then
-        echo "/workspace/bees/install/uninstall_bee.py"
-        return 0
-    fi
-    
-    log_error "Desinstalador não encontrado"
-    exit 1
-}
-
-show_status() {
-    echo ""
-    log_info "Verificando estado atual..."
-    
-    BEE_HOME="$HOME/.enxame/bee"
-    
-    if [[ -d "$BEE_HOME" ]]; then
-        log_info "Abelha instalada em: $BEE_HOME"
-        
-        if [[ -f "$BEE_HOME/manifest.json" ]]; then
-            log_info "Manifesto encontrado"
-        fi
-        
-        MODEL_COUNT=$(ls -1 "$BEE_HOME/models" 2>/dev/null | wc -l || echo "0")
-        log_info "Modelos baixados: $MODEL_COUNT"
-    else
-        log_warn "Abelha não encontrada em $BEE_HOME"
-    fi
-    
-    if command -v ollama &> /dev/null; then
-        OLLAMA_VERSION=$(ollama --version 2>&1 || echo "unknown")
-        log_info "Ollama instalado: $OLLAMA_VERSION"
-        
-        MODEL_LIST=$(ollama list 2>/dev/null | tail -n +2 | wc -l || echo "0")
-        log_info "Modelos no Ollama: $MODEL_LIST"
-    else
-        log_info "Ollama não encontrado no PATH"
-    fi
-    
-    echo ""
-}
-
-confirm_removal() {
-    if [[ "$AUTO_CONFIRM" == "true" ]]; then
-        return 0
-    fi
-    
-    echo "════════════════════════════════════════════"
-    echo "⚠️  ATENÇÃO: DESINSTALAÇÃO DA ABELHA"
-    echo "════════════════════════════════════════════"
-    echo ""
-    
-    if [[ "$REMOVE_OLLAMA" == "true" ]]; then
-        echo "Esta operação irá REMOVER:"
-        echo "  ✓ Configurações da Abelha"
-        echo "  ✓ Modelos baixados"
-        echo "  ✓ Manifesto e logs"
-        [[ "$KEEP_DATA" != "true" ]] && echo "  ✓ Documentos indexados"
-        echo "  ✓ Ollama (runtime de IA)"
-    else
-        echo "Esta operação irá REMOVER:"
-        echo "  ✓ Configurações da Abelha"
-        echo "  ✓ Modelos baixados"
-        echo "  ✓ Manifesto e logs"
-        [[ "$KEEP_DATA" != "true" ]] && echo "  ✓ Documentos indexados"
-        echo ""
-        echo "Ollama NÃO será removido (use --remove-ollama)"
-    fi
-    
-    echo ""
-    read -p "Deseja continuar? (y/N): " response
-    
-    if [[ "$response" != "y" && "$response" != "Y" ]]; then
-        log_info "Desinstalação cancelada"
-        exit 0
-    fi
-}
-
 main() {
-    echo "════════════════════════════════════════════"
-    echo "🐝 DESINSTALADOR DA ABELHA"
-    echo "════════════════════════════════════════════"
-    echo ""
+    echo -e "${BLUE}==================================================${NC}"
+    echo -e "${BLUE}  ENXAME Bee - Desinstalador${NC}"
+    echo -e "${BLUE}==================================================${NC}"
+    echo
     
-    OS=$(detect_os)
-    log_info "Sistema operacional: $OS"
+    local platform=$(detect_platform)
+    log "Plataforma: $platform"
     
-    # Parse arguments
-    REMOVE_OLLAMA="false"
-    KEEP_DATA="false"
-    AUTO_CONFIRM="false"
-    DRY_RUN="false"
+    # Parse args
+    local REMOVE_OLLAMA=false
+    local FORCE_REMOVE_OLLAMA=false
+    local KEEP_DATA=false
+    local DRY_RUN=false
+    local YES=false
     
-    for arg in "$@"; do
-        case $arg in
-            --remove-ollama)
-                REMOVE_OLLAMA="true"
-                shift
-                ;;
-            --keep-data)
-                KEEP_DATA="true"
-                shift
-                ;;
-            -y|--yes)
-                AUTO_CONFIRM="true"
-                shift
-                ;;
-            --dry-run)
-                DRY_RUN="true"
-                shift
-                ;;
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --remove-ollama) REMOVE_OLLAMA=true ;;
+            --force-remove-ollama) FORCE_REMOVE_OLLAMA=true ;;
+            --keep-data) KEEP_DATA=true ;;
+            --dry-run) DRY_RUN=true ;;
+            -y|--yes) YES=true ;;
+            *) error "Opcao desconhecida: $1"; exit 1 ;;
         esac
+        shift
     done
     
-    show_status
-    confirm_removal
-    
-    check_python
-    
-    UNINSTALLER=$(find_uninstaller)
-    log_info "Usando desinstalador: $UNINSTALLER"
-    
-    # Build command
-    CMD="$PYTHON_CMD $UNINSTALLER"
-    [[ "$REMOVE_OLLAMA" == "true" ]] && CMD="$CMD --remove-ollama"
-    [[ "$KEEP_DATA" == "true" ]] && CMD="$CMD --keep-data"
-    [[ "$AUTO_CONFIRM" == "true" ]] && CMD="$CMD -y"
-    [[ "$DRY_RUN" == "true" ]] && CMD="$CMD --dry-run"
-    
-    log_info "Executando: $CMD"
-    echo ""
-    
-    eval "$CMD"
-    EXIT_CODE=$?
-    
-    if [[ $EXIT_CODE -eq 0 ]]; then
-        echo ""
-        log_success "Desinstalação concluída!"
-        
-        if [[ "$DRY_RUN" != "true" ]]; then
-            # Limpar shell configs
-            for config in ~/.bashrc ~/.zshrc ~/.profile; do
-                if [[ -f "$config" ]]; then
-                    grep -v "BEE_HOME\|OLLAMA" "$config" > "$config.tmp" && mv "$config.tmp" "$config"
-                fi
-            done 2>/dev/null || true
-            
-            log_info "Shell configs limpos"
+    if [[ "$YES" != true && "$DRY_RUN" != true ]]; then
+        read -p "Isso removera a Abelha completamente. Continuar? [y/N]: " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Cancelado."
+            exit 0
         fi
-    else
-        log_error "Desinstalação falhou com código $EXIT_CODE"
     fi
     
-    return $EXIT_CODE
+    if [[ "$DRY_RUN" == true ]]; then
+        log "MODO DRY-RUN - Nenhuma acao sera executada"
+    fi
+    
+    step "Parando servicos..."
+    if [[ "$DRY_RUN" != true ]]; then
+        case "$platform" in
+            linux)
+                systemctl --user stop enxame-bee 2>/dev/null || true
+                systemctl --user disable enxame-bee 2>/dev/null || true
+                sudo systemctl stop enxame-bee 2>/dev/null || true
+                sudo systemctl disable enxame-bee 2>/dev/null || true
+                ;;
+            macos)
+                launchctl unload ~/Library/LaunchAgents/enxame-bee.plist 2>/dev/null || true
+                sudo launchctl unload /Library/LaunchDaemons/com.enxame.bee.plist 2>/dev/null || true
+                ;;
+        esac
+    fi
+    
+    step "Removendo binarios..."
+    if [[ "$DRY_RUN" != true ]]; then
+        case "$platform" in
+            linux)
+                sudo rm -f /usr/bin/bee /usr/bin/enxame-install-ollama
+                sudo rm -rf /opt/enxame-bee
+                ;;
+            macos)
+                sudo rm -f /usr/local/bin/bee /usr/local/bin/enxame-install-ollama
+                sudo rm -rf /usr/local/lib/enxame-bee
+                ;;
+        esac
+    fi
+    
+    step "Removendo configuracoes..."
+    if [[ "$DRY_RUN" != true ]]; then
+        case "$platform" in
+            linux)
+                sudo rm -rf /etc/enxame-bee
+                sudo rm -f /usr/lib/systemd/system/enxame-bee.service
+                sudo rm -f /usr/lib/sysusers.d/enxame-bee.conf
+                sudo rm -f /usr/lib/tmpfiles.d/enxame-bee.conf
+                ;;
+            macos)
+                sudo rm -rf /usr/local/etc/enxame-bee
+                sudo rm -f /Library/LaunchDaemons/com.enxame.bee.plist
+                ;;
+        esac
+    fi
+    
+    if [[ "$KEEP_DATA" != true ]]; then
+        step "Removendo dados..."
+        if [[ "$DRY_RUN" != true ]]; then
+            rm -rf "$HOME/.enxame/bee"
+            rm -rf "$HOME/.cache/enxame"
+        fi
+    else
+        log "Mantendo dados (--keep-data)"
+    fi
+    
+    step "Limpando shell configs..."
+    if [[ "$DRY_RUN" != true ]]; then
+        for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+            if [[ -f "$f" ]]; then
+                sed -i '/enxame\|bee\|BEE_HOME\|ENXAME/d' "$f"
+            fi
+        done
+    fi
+    
+    if [[ "$REMOVE_OLLAMA" == true || "$FORCE_REMOVE_OLLAMA" == true ]]; then
+        step "Removendo Ollama..."
+        if [[ "$DRY_RUN" != true ]]; then
+            case "$platform" in
+                linux)
+                    sudo systemctl stop ollama 2>/dev/null || true
+                    sudo systemctl disable ollama 2>/dev/null || true
+                    sudo rm -f /usr/local/bin/ollama
+                    sudo rm -f /etc/systemd/system/ollama.service
+                    ;;
+                macos)
+                    launchctl unload -w /Library/LaunchDaemons/com.ollama.ollama.plist 2>/dev/null || true
+                    sudo rm -f /usr/local/bin/ollama
+                    sudo rm -rf /usr/local/share/ollama
+                    ;;
+            esac
+            rm -rf "$HOME/.ollama/models"
+        fi
+    fi
+    
+    log "=================================================="
+    log "Desinstalacao concluida!"
+    log "=================================================="
+    
+    if [[ "$KEEP_DATA" == true ]]; then
+        log "Dados mantidos em: $HOME/.enxame/bee"
+    fi
 }
 
 main "$@"

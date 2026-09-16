@@ -10,27 +10,40 @@ Este é o ponto de entrada principal para executar uma Abelha standalone.
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import base64
 import logging
-import os
 import signal
 import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from core.discovery.mdns_discovery import NodeAnnouncer, NodeListener, DiscoveredNode
 from core.exp.security import EXPSecurity
 
 from .protocol.envelope import BeeEnvelope
 from .protocol.handler import BeeProtocolHandler
-from .protocol.messages import BeeMessageType, BeeState, BeeVisionRequest, BeeVisionResponse
+from .protocol.messages import BeeMessageType, BeeState, BeeVisionRequest, BeeVisionResponse, BeeStateChange, BeePeerLost
 from .librarian import LocalBeeLibrarian
 from .memory import BeeMemory
 from .discovery import BeeDiscoveryService
 from .config import BeeConfig, load_config
+from .capabilities.discovery import discover_capabilities
+from .capabilities.selector import recommend_model
+from .cluster import (
+    ClusterMonitor,
+    ClusterState,
+    ClusterRole,
+    load_cluster_state,
+    save_cluster_state,
+    elect_roles,
+    InternetGate,
+    InternetPurpose,
+    GlobalIndex,
+    build_global_index,
+    start_monitoring,
+    stop_monitoring,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,13 +69,21 @@ class BeeService:
         self._librarian: LocalBeeLibrarian | None = None
         self._memory: BeeMemory | None = None
         self._discovery: BeeDiscoveryService | None = None
-        self._announcer: NodeAnnouncer | None = None
-        self._listener: NodeListener | None = None
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
 
         self._register_protocol_handlers()
+
+        # Capacidades descobertas (BEE-0003)
+        self._capabilities: dict[str, Any] | None = None
+
+        # Cluster (EIP-0009)
+        self.cluster_state: ClusterState | None = None
+        self.cluster_role: ClusterRole | None = None
+        self._cluster_monitor: ClusterMonitor | None = None
+        self._internet_gate: InternetGate | None = None
+        self._global_index: GlobalIndex | None = None
 
     def _register_protocol_handlers(self) -> None:
         """Registra handlers para mensagens do protocolo BEE."""
@@ -78,6 +99,8 @@ class BeeService:
             BeeModelResponse,
             BeeCapabilityQuery,
             BeeCapabilityResponse,
+            BeeStateChange,
+            BeePeerLost,
         )
 
         self._handler.register_handler(BeeMessageType.HELLO, self._handle_hello)
@@ -89,6 +112,8 @@ class BeeService:
         self._handler.register_handler(BeeMessageType.MODEL_REQUEST, self._handle_model_request)
         self._handler.register_handler(BeeMessageType.VISION_REQUEST, self._handle_vision_request)
         self._handler.register_handler(BeeMessageType.CAPABILITY_QUERY, self._handle_capability_query)
+        self._handler.register_handler(BeeMessageType.STATE_CHANGE, self._handle_state_change)
+        self._handler.register_handler(BeeMessageType.PEER_LOST, self._handle_peer_lost)
 
     async def start(self, *, start_http: bool = True, http_app: "web.Application | None" = None) -> None:
         """
@@ -104,12 +129,35 @@ class BeeService:
         # 1. Carregar identidade persistente
         await self._load_identity()
 
-        # 2. Inicializar memória local (SQLite)
+        # 2. Descobrir capacidades (BEE-0003) - hardware, Ollama, capacidades locais
+        logger.info("Descobrindo capacidades do sistema...")
+        self._capabilities = await discover_capabilities(
+            enxame_data_path=str(self.config.data_dir),
+            ollama_base_url=self.config.ollama_base_url,
+        )
+        
+        # Selecionar melhor modelo baseado no hardware (BEE-0003 §9)
+        if self._capabilities and self._capabilities.ollama and self._capabilities.ollama.available:
+            hw = self._capabilities.hardware
+            ollama = self._capabilities.ollama
+            recommended = recommend_model(
+                available_models=ollama.models,
+                ram_gb=hw.ram_total_gb,
+                gpu_vram_gb=hw.gpu_vram_gb,
+                has_gpu=hw.gpu_available,
+            )
+            if recommended:
+                self.config.model = recommended
+                logger.info(f"Modelo recomendado pelo hardware: {recommended}")
+            else:
+                logger.warning("Nenhum modelo adequado encontrado, usando configuração padrão")
+
+        # 3. Inicializar memória local (SQLite)
         self._memory = BeeMemory(self.config.data_dir / "memory.db")
         await self._memory.initialize()
         logger.info("Memória local inicializada")
 
-        # 3. Inicializar Bibliotecário Local (RAG offline)
+        # 4. Inicializar Bibliotecário Local (RAG offline)
         self._librarian = LocalBeeLibrarian(
             data_dir=self.config.data_dir,
             ollama_url=self.config.ollama_base_url,
@@ -119,7 +167,7 @@ class BeeService:
         await self._librarian.initialize()
         logger.info("Bibliotecário local inicializado")
 
-        # 4. Inicializar descoberta de peers (mDNS)
+        # 5. Inicializar descoberta de peers (mDNS) com capacidades descobertas
         self._discovery = BeeDiscoveryService(
             node_id=self.node_id,
             host=self.config.host,
@@ -132,19 +180,14 @@ class BeeService:
         await self._discovery.start()
         logger.info("Descoberta mDNS iniciada")
 
-        # 5. Anunciar presença via mDNS
-        self._announcer = NodeAnnouncer(
-            node_id=self.node_id,
-            role="bee",
-            host_ip=self.config.host_ip,
-            port=self.config.port,
-            capabilities=",".join(self._get_capabilities_list()),
-            models=",".join(self._get_models_list()),
-        )
-        self._announcer.start()
+        # 6. Anunciar presença via mDNS usando BeeDiscoveryService (não NodeAnnouncer)
+        self._discovery.start_announcement()
         logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
 
-        # 6. Servidor HTTP
+        # 7. Inicializar Cluster (EIP-0009) - aguardar descoberta inicial
+        await self._initialize_cluster()
+
+        # 8. Servidor HTTP
         self._own_http_server = False
         if start_http:
             if http_app is not None:
@@ -155,7 +198,7 @@ class BeeService:
                 await self._start_http_server()
                 self._own_http_server = True
 
-        # 7. Iniciar loops de background
+        # 9. Iniciar loops de background
         self._running = True
         self._tasks = [
             asyncio.create_task(self._heartbeat_loop()),
@@ -172,20 +215,38 @@ class BeeService:
         self.state = BeeState.STOPPING
         self._running = False
 
+        # Notificar peers sobre parada
+        if self._handler:
+            state_change = self._handler.create_state_change(
+                new_state=BeeState.STOPPING,
+                reason="shutdown",
+                estimated_return_seconds=None,
+            )
+            # Broadcast para peers ativos
+            if self._discovery:
+                for peer in self._discovery.get_active_peers():
+                    state_change.target_node_id = peer.node_id
+                    await self._send_to_peer(peer, state_change)
+
         # Cancelar tasks de background
         for task in self._tasks:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
 
+        # Parar monitoramento de cluster
+        if self._cluster_monitor:
+            await stop_monitoring(self._cluster_monitor)
+            self._cluster_monitor = None
+
         # Parar servidor HTTP próprio (se iniciamos)
         if self._own_http_server and self._http_runner:
             await self._http_runner.cleanup()
             self._http_runner = None
 
-        # Parar anunciações
-        if self._announcer:
-            self._announcer.stop()
+        # Parar anúncio mDNS
+        if self._discovery:
+            self._discovery.stop_announcement()
 
         # Parar descoberta
         if self._discovery:
@@ -202,26 +263,89 @@ class BeeService:
         self.state = BeeState.STOPPED
         logger.info(f"Abelha {self.node_id} OFFLINE")
 
+    async def _initialize_cluster(self) -> None:
+        """Inicializa cluster: carrega estado, elege papéis se 3+ peers, inicia monitoramento."""
+        # Carregar estado persistido
+        self.cluster_state = load_cluster_state(self.config.data_dir)
+        
+        # Aguardar descoberta inicial de peers (2s)
+        await asyncio.sleep(2)
+        
+        peers = []
+        if self._discovery:
+            peers = self._discovery.get_active_peers()
+        
+        logger.info(f"Peers descobertos para cluster: {len(peers)}")
+        
+        if len(peers) >= 3:
+            # Eleger papéis
+            self.cluster_state = elect_roles(peers, self.cluster_state)
+            self.cluster_role = self.cluster_state.get_role(self.node_id)
+            
+            # Determinar se é Worker Artist
+            if self.cluster_role == ClusterRole.WORKER and self.node_id in self.cluster_state.artist_workers:
+                self.cluster_role = ClusterRole.WORKER_ARTIST
+            
+            logger.info(f"Cluster eleito: Juiz={self.cluster_state.juiz_id}, Bib={self.cluster_state.bibliotecario_id}, Guarda={self.cluster_state.guarda_id}, Workers={len(self.cluster_state.workers)}")
+            logger.info(f"Meu papel: {self.cluster_role.value}")
+            
+            # Salvar estado
+            save_cluster_state(self.config.data_dir, self.cluster_state)
+            
+            # Inicializar InternetGate
+            self._internet_gate = InternetGate(self.cluster_state, self.node_id)
+            
+            # Se sou Bibliotecário, construir índice global
+            if self.cluster_role == ClusterRole.BIBLIOTECARIO:
+                self._global_index = await build_global_index(self, peers)
+                self.cluster_state.global_index = self._global_index.data
+                save_cluster_state(self.config.data_dir, self.cluster_state)
+            
+            # Iniciar monitoramento de failover
+            self._cluster_monitor = await start_monitoring(
+                self, self.cluster_state, save_cluster_state, check_interval=60.0
+            )
+        else:
+            logger.info(f"Menos de 3 peers ({len(peers)}), operando como standalone")
+            self.cluster_role = ClusterRole.WORKER
+            if self.node_id in (self.cluster_state.artist_workers if self.cluster_state else []):
+                self.cluster_role = ClusterRole.WORKER_ARTIST
+
     def _get_capabilities_list(self) -> list[str]:
-        """Retorna lista de capabilities da Abelha."""
-        caps = ["rag", "vector_search", "embeddings", "query", "index", "memory"]
+        """Retorna lista de capabilities da Abelha baseada em descoberta BEE-0003."""
+        if not self._capabilities:
+            # Fallback básico
+            caps = ["rag", "vector_search", "embeddings", "query", "index", "memory"]
+        else:
+            caps = self._capabilities.to_manifesto_dict().get("capabilities", [])
+            # Adicionar capabilities básicas se não estiverem
+            for base in ["rag", "vector_search", "embeddings", "query", "index", "memory"]:
+                if base not in caps:
+                    caps.append(base)
+        
         if self._librarian and self._librarian.has_ocr():
-            caps.append("ocr")
+            if "ocr" not in caps:
+                caps.append("ocr")
         if self._librarian and self._librarian.has_vision():
-            caps.append("vision")
+            if "vision" not in caps:
+                caps.append("vision")
         if self._librarian and self._librarian.has_zim():
-            caps.append("zim")
+            if "zim" not in caps:
+                caps.append("zim")
         if self.config.allow_web:
-            caps.append("web_fallback")
+            if "web_fallback" not in caps:
+                caps.append("web_fallback")
         return caps
 
     def _get_models_list(self) -> list[str]:
-        """Retorna lista de modelos disponíveis."""
+        """Retorna lista de modelos disponíveis baseada em descoberta BEE-0003."""
+        if self._capabilities and self._capabilities.ollama and self._capabilities.ollama.available:
+            return self._capabilities.to_manifesto_dict().get("models", [])
         if self._librarian:
             return self._librarian.get_available_models()
         return []
 
-    def _on_peer_discovered(self, peer: DiscoveredNode) -> None:
+    def _on_peer_discovered(self, peer: "DiscoveredPeer") -> None:
         """Callback quando novo peer é descoberto."""
         logger.info(f"Peer descoberto: {peer.node_id} ({peer.role}) em {peer.host}:{peer.port}")
 
@@ -340,11 +464,45 @@ class BeeService:
 
         # Capabilities endpoint
         async def capabilities(request: Request) -> Response:
+            caps = self._get_capabilities_list()
+            if self.cluster_state:
+                caps.append("cluster")
             return web.json_response({
-                "capabilities": self._get_capabilities_list(),
+                "capabilities": caps,
                 "models": self._get_models_list(),
                 "indexes": ["documents"] if self._librarian else [],
                 "load": self._calculate_load(),
+            })
+
+        # Cluster status endpoint (EIP-0009)
+        async def cluster_status(request: Request) -> Response:
+            if not self.cluster_state:
+                return web.json_response({
+                    "cluster": False,
+                    "message": "Operando como standalone (menos de 3 peers)"
+                })
+            
+            return web.json_response({
+                "cluster": True,
+                "epoch": self.cluster_state.epoch,
+                "my_role": self.cluster_role.value if self.cluster_role else "unknown",
+                "roles": {
+                    "juiz": self.cluster_state.juiz_id,
+                    "bibliotecario": self.cluster_state.bibliotecario_id,
+                    "guarda": self.cluster_state.guarda_id,
+                    "workers": self.cluster_state.workers,
+                    "artist_workers": self.cluster_state.artist_workers,
+                },
+                "secondary_roles": {
+                    k: [r.value for r in v] for k, v in self.cluster_state.secondary_roles.items()
+                },
+                "juiz_failover_active": self.cluster_state.is_juiz_failover_active(),
+                "juiz_failover_elapsed_hours": round(self.cluster_state.get_juiz_failover_elapsed_hours(), 2),
+                "global_index_stats": {
+                    "domains": len(self.cluster_state.global_index),
+                    "entries": sum(len(v) for v in self.cluster_state.global_index.values()),
+                },
+                "internet_access": [p.value for p in self._internet_gate.get_allowed_purposes()] if self._internet_gate else [],
             })
 
         # Peer discovery endpoint
@@ -367,6 +525,7 @@ class BeeService:
         app.router.add_get("/health", health)
         app.router.add_post("/api/v1/query", query)
         app.router.add_get("/api/v1/capabilities", capabilities)
+        app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
         
         logger.info("Rotas da Abelha registradas na aplicação externa")
@@ -589,6 +748,45 @@ class BeeService:
             correlation_id=envelope.correlation_id,
         )
 
+    async def _handle_state_change(self, envelope: BeeEnvelope) -> BeeEnvelope | None:
+        """Handler para STATE_CHANGE - notificação de mudança de estado de peer."""
+        from .protocol.messages import BeeStateChange, BeeState
+        state_change = BeeStateChange.from_dict(envelope.payload)
+        logger.info(f"Peer {state_change.node_id} mudou para estado: {state_change.new_state.value} - {state_change.reason}")
+        
+        # Atualizar peer no discovery
+        if self._discovery and state_change.node_id in self._discovery._peers:
+            peer = self._discovery._peers[state_change.node_id]
+            peer.state = state_change.new_state
+            if state_change.new_state == BeeState.STOPPING:
+                # Peer vai parar, remover após timeout estimado
+                pass
+        
+        # Cluster-specific handling (EIP-0009)
+        if self.cluster_state and state_change.reason in ("juiz_failover", "juiz_restored", "new_election"):
+            if state_change.reason == "juiz_failover":
+                logger.warning(f"Failover de Juiz detectado: {state_change.node_id} assumiu")
+                # Atualizar estado local se necessário
+            elif state_change.reason == "juiz_restored":
+                logger.info(f"Juiz original restaurado: {state_change.node_id}")
+            elif state_change.reason == "new_election":
+                logger.info(f"Nova eleição no cluster detectada")
+                # Forçar re-eleição local na próxima verificação
+                self.cluster_state.epoch = 0  # Marcar para re-eleição
+        
+        return None
+
+    async def _handle_peer_lost(self, envelope: BeeEnvelope) -> BeeEnvelope | None:
+        """Handler para PEER_LOST - notificação de peer perdido."""
+        from .protocol.messages import BeePeerLost
+        peer_lost = BeePeerLost.from_dict(envelope.payload)
+        logger.warning(f"Peer perdido notificado: {peer_lost.node_id} - {peer_lost.reason}")
+        
+        # Remover peer do discovery se estiver lá
+        if self._discovery:
+            self._discovery._remove_peer(peer_lost.node_id)
+        return None
+
     # =========================================================================
     # Loops de Background
     # =========================================================================
@@ -599,9 +797,11 @@ class BeeService:
             try:
                 if self._discovery:
                     peers = self._discovery.get_active_peers()
+                    load = self._calculate_load()
                     for peer in peers:
                         envelope = self._handler.create_heartbeat()
-                        # Enviar via WebSocket ou HTTP
+                        # Atualizar load no heartbeat
+                        envelope.payload["load"] = load
                         await self._send_to_peer(peer, envelope)
             except Exception as e:
                 logger.error(f"Erro no heartbeat loop: {e}")
@@ -622,16 +822,15 @@ class BeeService:
         while self._running:
             try:
                 load = self._calculate_load()
-                # Atualizar anúncio mDNS com nova carga
-                if self._announcer:
-                    # Reanunciar com nova carga
-                    pass
+                # Atualizar anúncio mDNS com nova carga via BeeDiscoveryService
+                if self._discovery:
+                    self._discovery.update_announcement(load, self.state)
             except Exception as e:
                 logger.error(f"Erro no load metrics: {e}")
             await asyncio.sleep(60)
 
-    async def _send_to_peer(self, peer: DiscoveredNode, envelope: BeeEnvelope) -> None:
-        """Envia envelope para peer via HTTP/WebSocket."""
+    async def _send_to_peer(self, peer: "DiscoveredPeer", envelope: BeeEnvelope) -> None:
+        """Envia envelope para peer via HTTP."""
         try:
             import aiohttp
             url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
@@ -650,7 +849,7 @@ class BeeService:
 
     async def process_query(self, query: str) -> dict[str, Any]:
         """
-        Processa query seguindo a política LOCAL -> ENXAME -> WEB.
+        Processa query seguindo a política LOCAL -> ENXAME -> WEB (com cluster).
         
         Returns:
             dict com answer, source, confidence, metadata
@@ -668,10 +867,13 @@ class BeeService:
             if enxame_result["confidence"] >= self.config.confidence_threshold_web:
                 return {"answer": enxame_result["answer"], "source": "enxame", **enxame_result}
 
-        # 3. WEB - Fallback se habilitado
-        if self.config.allow_web and self._librarian:
-            web_result = await self._librarian.search_web(query)
-            return {"answer": web_result.get("answer", ""), "source": "web", **web_result}
+        # 3. WEB - Fallback se habilitado E papel permite (EIP-0009)
+        if self.config.allow_web and self._librarian and self._internet_gate:
+            if self._internet_gate.can_access(InternetPurpose.BIBLIOTECARIO_FALLBACK):
+                web_result = await self._librarian.search_web(query)
+                return {"answer": web_result.get("answer", ""), "source": "web", **web_result}
+            else:
+                logger.debug(f"Node {self.node_id} sem permissão de acesso à internet para fallback")
 
         # Fallback: melhor resultado disponível
         return {
@@ -702,7 +904,7 @@ class BeeService:
         return {"answer": "", "confidence": 0.0, "source_type": "none"}
 
     async def _query_enxame(self, query: str) -> dict[str, Any]:
-        """Consulta peers via protocolo BEE."""
+        """Consulta peers via protocolo BEE usando índice global do Bibliotecário."""
         if not self._discovery:
             return {"answer": "", "confidence": 0.0}
 
@@ -710,35 +912,95 @@ class BeeService:
         if not peers:
             return {"answer": "", "confidence": 0.0}
 
-        # KNOWLEDGE_QUERY para filtrar peers relevantes
+        # 1. Se temos índice global (sou Bibliotecário ou recebi do Bibliotecário), usar para rotear
+        target_peers = []
+        if self._global_index:
+            target_peers = self._global_index.get_peers_for_subject(query, min_confidence=0.5)
+            target_peer_ids = [pk.peer_id for pk in target_peers]
+            # Filtrar peers ativos
+            target_peers = [p for p in peers if p.node_id in target_peer_ids]
+            logger.debug(f"Roteando via índice global: {len(target_peers)} peers alvo para '{query}'")
+        elif self.cluster_state and self.cluster_state.bibliotecario_id:
+            # Consultar Bibliotecário para saber onde buscar
+            bib_peer = next((p for p in peers if p.node_id == self.cluster_state.bibliotecario_id), None)
+            if bib_peer:
+                from .cluster.global_index import query_bibliotecario_where
+                target_ids = await query_bibliotecario_where(bib_peer, query, self._global_index)
+                target_peers = [p for p in peers if p.node_id in target_ids]
+                logger.debug(f"Roteando via Bibliotecário: {len(target_peers)} peers alvo para '{query}'")
+        
+        # Se não temos roteamento, consultar todos
+        if not target_peers:
+            target_peers = peers
+
+        # 2. KNOWLEDGE_QUERY para filtrar peers relevantes
         best_peer = None
         best_confidence = 0.0
 
-        for peer in peers:
+        for peer in target_peers:
             envelope = self._handler.create_knowledge_query(
                 target_node_id=peer.node_id,
                 subject=query,
                 timeout_ms=2000,
             )
             try:
-                # TODO: Enviar e aguardar resposta via WebSocket
-                pass
-            except Exception:
+                response = await self._send_with_response(envelope, peer, timeout_ms=3000)
+                if response and response.msg_type == BeeMessageType.KNOWLEDGE_RESPONSE:
+                    from .protocol.messages import BeeKnowledgeResponse
+                    kq_resp = BeeKnowledgeResponse.from_dict(response.payload)
+                    if kq_resp.has_knowledge and kq_resp.confidence > best_confidence:
+                        best_confidence = kq_resp.confidence
+                        best_peer = peer
+            except Exception as e:
+                logger.debug(f"Erro consultando peer {peer.node_id}: {e}")
                 continue
 
-        # Se encontrou peer relevante, fazer RESEARCH_REQUEST
+        # 3. Se encontrou peer relevante, fazer RESEARCH_REQUEST
         if best_peer:
             envelope = self._handler.create_research_request(
                 target_node_id=best_peer.node_id,
                 query=query,
             )
             try:
-                # TODO: Enviar e aguardar
-                pass
-            except Exception:
-                pass
+                response = await self._send_with_response(envelope, best_peer, timeout_ms=35000)
+                if response and response.msg_type == BeeMessageType.RESEARCH_RESULT:
+                    from .protocol.messages import BeeResearchResult
+                    rr = BeeResearchResult.from_dict(response.payload)
+                    if rr.results:
+                        answer_parts = [r.content for r in rr.results[:3]]
+                        return {
+                            "answer": "\n\n".join(answer_parts),
+                            "confidence": 0.85,
+                            "source": "enxame",
+                            "peer": best_peer.node_id,
+                            "metadata": {
+                                "total_results": rr.total_results,
+                                "processing_time_ms": rr.processing_time_ms,
+                                "model_used": rr.model_used,
+                            },
+                        }
+            except Exception as e:
+                logger.debug(f"Erro em research request para {best_peer.node_id}: {e}")
 
         return {"answer": "", "confidence": best_confidence}
+
+    async def _send_with_response(self, envelope: BeeEnvelope, peer: "DiscoveredPeer", timeout_ms: int = 5000) -> BeeEnvelope | None:
+        """Envia envelope para peer e aguarda resposta via HTTP/WebSocket."""
+        try:
+            import aiohttp
+            url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url, 
+                    json=envelope.to_dict(), 
+                    timeout=aiohttp.ClientTimeout(total=timeout_ms / 1000)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return BeeEnvelope.from_dict(data)
+        except Exception as e:
+            logger.debug(f"Falha ao enviar para {peer.node_id}: {e}")
+        return None
 
 
 async def main() -> int:

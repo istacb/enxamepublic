@@ -1,410 +1,265 @@
 #!/usr/bin/env python3
 """
-BEE-0008 — Desinstalador da Abelha
-
-Remove completamente:
-1. Modelos baixados
-2. Configurações locais
-3. Manifesto e logs
-4. Opcionalmente: Ollama (se instalado pelo script)
-
-Uso:
-    python uninstall_bee.py [--remove-ollama] [--keep-data] [--dry-run]
+ENXAME Bee - Desinstalador Universal
+Remove completamente a Abelha do sistema.
 """
 
 import os
 import sys
 import platform
 import subprocess
-import shutil
-import json
 import argparse
+import shutil
 from pathlib import Path
-from typing import Optional, List
 
-# Configurações
-BEE_HOME = Path.home() / ".enxame" / "bee"
-OLD_BEE_HOME = Path.home() / ".enxame"  # Versão antiga
-MANIFEST_FILE = BEE_HOME / "manifest.json"
-INSTALL_LOG = BEE_HOME / "install.log"
+# Colors
+GREEN = '\033[0;32m'
+RED = '\033[0;31m'
+YELLOW = '\033[1;33m'
+BLUE = '\033[0;34m'
+NC = '\033[0m'
 
+def log(msg): print(f"{GREEN}[INFO]{NC} {msg}")
+def warn(msg): print(f"{YELLOW}[WARN]{NC} {msg}")
+def error(msg): print(f"{RED}[ERROR]{NC} {msg}")
+def step(msg): print(f"\n{BLUE}=== {msg} ===${NC}")
 
-def log(message: str, level: str = "INFO"):
-    """Registra mensagem no log e stdout"""
-    timestamp = subprocess.getoutput("date '+%Y-%m-%d %H:%M:%S'") if platform.system() != "Windows" else ""
-    log_line = f"[{timestamp}] [{level}] {message}" if timestamp else f"[{level}] {message}"
-    print(log_line)
-
-
-def detect_ollama() -> Optional[str]:
-    """Detecta se Ollama está instalado"""
-    ollama_path = shutil.which("ollama")
-    if ollama_path:
-        return ollama_path
+def get_data_dir():
+    """Retorna diretorio de dados da Abelha"""
+    system = platform.system().lower()
+    home = Path.home()
     
-    common_paths = [
-        "/usr/local/bin/ollama",
-        "/usr/bin/ollama",
-        "/opt/ollama/bin/ollama",
-        str(Path.home() / ".ollama" / "bin" / "ollama"),
+    if system == "windows":
+        return Path(os.getenv("LOCALAPPDATA", home / "AppData" / "Local")) / "enxame" / "bee"
+    elif system == "darwin":
+        return home / "Library" / "Application Support" / "enxame" / "bee"
+    else:
+        return home / ".enxame" / "bee"
+
+def stop_bee_service():
+    """Para servicos da Abelha"""
+    system = platform.system().lower()
+    
+    try:
+        if system == "linux":
+            # systemd user service
+            subprocess.run(["systemctl", "--user", "stop", "enxame-bee"], capture_output=True)
+            subprocess.run(["systemctl", "--user", "disable", "enxame-bee"], capture_output=True)
+            # systemd system service
+            subprocess.run(["sudo", "systemctl", "stop", "enxame-bee"], capture_output=True)
+            subprocess.run(["sudo", "systemctl", "disable", "enxame-bee"], capture_output=True)
+        elif system == "darwin":
+            # launchd
+            subprocess.run(["launchctl", "unload", "~/Library/LaunchAgents/enxame-bee.plist"], capture_output=True)
+        elif system == "windows":
+            # Windows service ou task scheduler
+            subprocess.run(["schtasks", "/Delete", "/TN", "ENXAME Bee", "/F"], capture_output=True, shell=True)
+    except Exception as e:
+        warn(f"Erro ao parar servicos: {e}")
+
+def remove_data_dir(keep_data: bool = False):
+    """Remove diretorio de dados"""
+    if keep_data:
+        log("Mantendo dados da Abelha (--keep-data)")
+        return
+    
+    data_dir = get_data_dir()
+    if data_dir.exists():
+        log(f"Removendo diretorio de dados: {data_dir}")
+        try:
+            shutil.rmtree(data_dir)
+            log("Dados removidos")
+        except Exception as e:
+            error(f"Falha ao remover dados: {e}")
+
+def remove_config_files():
+    """Remove arquivos de configuracao"""
+    system = platform.system().lower()
+    
+    configs = []
+    
+    if system == "linux":
+        configs.extend([
+            Path("/etc/enxame-bee"),
+            Path("/usr/lib/systemd/system/enxame-bee.service"),
+            Path("/usr/lib/sysusers.d/enxame-bee.conf"),
+            Path("/usr/lib/tmpfiles.d/enxame-bee.conf"),
+        ])
+    elif system == "darwin":
+        configs.extend([
+            Path("/usr/local/etc/enxame-bee"),
+            Path("/Library/LaunchDaemons/com.enxame.bee.plist"),
+        ])
+    elif system == "windows":
+        configs.extend([
+            Path(os.getenv("PROGRAMDATA", "C:/ProgramData")) / "enxame-bee",
+        ])
+    
+    for config in configs:
+        if config.exists():
+            try:
+                if config.is_dir():
+                    shutil.rmtree(config)
+                else:
+                    config.unlink()
+                log(f"Removido: {config}")
+            except Exception as e:
+                warn(f"Erro ao remover {config}: {e}")
+
+def remove_binaries():
+    """Remove binarios e wrappers"""
+    system = platform.system().lower()
+    
+    bins = []
+    
+    if system == "linux":
+        bins.extend([
+            Path("/usr/bin/bee"),
+            Path("/usr/bin/enxame-install-ollama"),
+            Path("/opt/enxame-bee"),
+        ])
+    elif system == "darwin":
+        bins.extend([
+            Path("/usr/local/bin/bee"),
+            Path("/usr/local/bin/enxame-install-ollama"),
+            Path("/usr/local/lib/enxame-bee"),
+        ])
+    elif system == "windows":
+        bins.extend([
+            Path(os.getenv("PROGRAMFILES", "C:/Program Files")) / "ENXAME Bee",
+            Path(os.getenv("LOCALAPPDATA", "")) / "ENXAME Bee",
+        ])
+    
+    for bin_path in bins:
+        if bin_path.exists():
+            try:
+                if bin_path.is_dir():
+                    shutil.rmtree(bin_path)
+                else:
+                    bin_path.unlink()
+                log(f"Removido: {bin_path}")
+            except Exception as e:
+                warn(f"Erro ao remover {bin_path}: {e}")
+
+def remove_python_packages():
+    """Remove pacotes Python instalados (opcional)"""
+    # Cuidado: nao remover pacotes que outros apps precisam
+    # Apenas avisar
+    warn("Pacotes Python (httpx, pydantic, etc.) NAO foram removidos")
+    warn("Use 'pip uninstall' manualmente se desejar remove-los")
+
+def remove_ollama(force: bool = False):
+    """Remove Ollama (opcional)"""
+    if not force:
+        return
+    
+    log("Removendo Ollama...")
+    system = platform.system().lower()
+    
+    try:
+        if system == "linux":
+            subprocess.run(["sudo", "systemctl", "stop", "ollama"], capture_output=True)
+            subprocess.run(["sudo", "systemctl", "disable", "ollama"], capture_output=True)
+            subprocess.run(["sudo", "rm", "-f", "/usr/local/bin/ollama"], capture_output=True)
+            subprocess.run(["sudo", "rm", "-f", "/etc/systemd/system/ollama.service"], capture_output=True)
+        elif system == "darwin":
+            subprocess.run(["launchctl", "unload", "-w", "/Library/LaunchDaemons/com.ollama.ollama.plist"], capture_output=True)
+            subprocess.run(["sudo", "rm", "-f", "/usr/local/bin/ollama"], capture_output=True)
+            subprocess.run(["sudo", "rm", "-rf", "/usr/local/share/ollama"], capture_output=True)
+        elif system == "windows":
+            subprocess.run(["ollama", "stop"], capture_output=True, shell=True)
+            subprocess.run(["powershell", "-Command", "Uninstall-Package -Name Ollama"], capture_output=True)
+        
+        # Remover modelos
+        ollama_models = Path.home() / ".ollama" / "models"
+        if ollama_models.exists():
+            shutil.rmtree(ollama_models)
+        
+        log("Ollama removido")
+    except Exception as e:
+        error(f"Erro ao remover Ollama: {e}")
+
+def clean_shell_configs():
+    """Remove linhas adicionadas aos .bashrc/.zshrc"""
+    shell_files = [
+        Path.home() / ".bashrc",
+        Path.home() / ".zshrc",
+        Path.home() / ".profile",
     ]
     
-    for path in common_paths:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
+    patterns = ["enxame", "bee", "BEE_HOME", "ENXAME"]
     
-    if platform.system() == "Windows":
-        win_paths = [
-            r"C:\Program Files\Ollama\ollama.exe",
-        ]
-        for path in win_paths:
-            if os.path.isfile(path):
-                return path
-    
-    return None
-
-
-def was_ollama_installed_by_bee() -> bool:
-    """Verifica se Ollama foi instalado pelo instalador da Abelha"""
-    # Marcador criado durante instalação
-    marker_file = BEE_HOME / ".ollama_installed_by_bee"
-    return marker_file.exists()
-
-
-def remove_directory(path: Path, dry_run: bool = False) -> bool:
-    """Remove diretório recursivamente"""
-    if not path.exists():
-        log(f"Diretório não existe: {path}", "INFO")
-        return True
-    
-    if dry_run:
-        log(f"[DRY-RUN] Removeria {path} e todo seu conteúdo", "INFO")
-        return True
-    
-    try:
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
-        
-        log(f"Removido: {path}", "SUCCESS")
-        return True
-        
-    except Exception as e:
-        log(f"Falha ao remover {path}: {e}", "ERROR")
-        return False
-
-
-def stop_ollama_service() -> bool:
-    """Para o serviço Ollama"""
-    log("Parando serviço Ollama...")
-    
-    try:
-        if platform.system() == "Linux":
-            subprocess.run(["systemctl", "stop", "ollama"], timeout=30)
-        elif platform.system() == "Darwin":
-            subprocess.run(["launchctl", "unload", "-w", "/Library/LaunchDaemons/com.ollama.ollama.plist"], timeout=30)
-        # Windows - parar serviço
-        
-        log("Serviço Ollama parado", "SUCCESS")
-        return True
-        
-    except Exception as e:
-        log(f"Erro ao parar serviço: {e}", "WARN")
-        return False
-
-
-def uninstall_ollama(dry_run: bool = False) -> bool:
-    """Desinstala Ollama do sistema"""
-    system = platform.system()
-    log(f"Desinstalando Ollama ({system})...")
-    
-    if dry_run:
-        log(f"[DRY-RUN] Desinstalaria Ollama de {system}", "INFO")
-        return True
-    
-    try:
-        if system == "Linux":
-            # Script de desinstalação oficial
-            cmd = "curl -fsSL https://ollama.com/install.sh | sh -s -- --uninstall"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-            
-            if result.returncode != 0:
-                # Fallback: remoção manual
-                log("Script oficial falhou, tentando remoção manual...", "WARN")
-                
-                paths_to_remove = [
-                    "/usr/local/bin/ollama",
-                    "/usr/bin/ollama",
-                    "/opt/ollama",
-                    "/etc/systemd/system/ollama.service",
-                    str(Path.home() / ".ollama"),
-                ]
-                
-                for path in paths_to_remove:
-                    p = Path(path)
-                    if p.exists():
-                        if p.is_dir():
-                            shutil.rmtree(p)
-                        else:
-                            p.unlink()
-                
-                # Remover usuário ollama se existir
-                subprocess.run(["userdel", "ollama"], capture_output=True)
-                
-            log("Ollama desinstalado do Linux", "SUCCESS")
-            
-        elif system == "Darwin":
-            if shutil.which("brew"):
-                cmd = "brew uninstall ollama"
-                subprocess.run(cmd, shell=True, capture_output=True, timeout=60)
-            
-            # Remover arquivos manuais
-            manual_paths = [
-                "/Library/LaunchDaemons/com.ollama.ollama.plist",
-                "/usr/local/bin/ollama",
-                str(Path.home() / ".ollama"),
-            ]
-            
-            for path in manual_paths:
-                p = Path(path)
-                if p.exists():
-                    if p.is_dir():
-                        shutil.rmtree(p)
-                    else:
-                        p.unlink()
-            
-            log("Ollama desinstalado do macOS", "SUCCESS")
-            
-        elif system == "Windows":
-            log("No Windows, use 'Adicionar ou Remover Programas' para remover Ollama", "INFO")
-            log("Caminho comum: C:\\Program Files\\Ollama", "INFO")
-            return False
-        
-        return True
-        
-    except Exception as e:
-        log(f"Erro na desinstalação: {e}", "ERROR")
-        return False
-
-
-def list_files_to_remove() -> List[Path]:
-    """Lista todos os arquivos que serão removidos"""
-    files = []
-    
-    # Diretório principal da Abelha
-    if BEE_HOME.exists():
-        for item in BEE_HOME.rglob("*"):
-            files.append(item)
-    
-    # Diretório antigo (se existir)
-    if OLD_BEE_HOME.exists() and OLD_BEE_HOME != BEE_HOME.parent:
-        for item in OLD_BEE_HOME.rglob("*"):
-            if item not in files:
-                files.append(item)
-    
-    # Cache específico
-    cache_dirs = [
-        Path.home() / ".cache" / "enxame",
-        Path.home() / ".cache" / "bee",
-    ]
-    
-    for cache_dir in cache_dirs:
-        if cache_dir.exists():
-            for item in cache_dir.rglob("*"):
-                if item not in files:
-                    files.append(item)
-    
-    return files
-
-
-def print_summary(files_removed: int, ollama_removed: bool, data_kept: bool):
-    """Imprime resumo da desinstalação"""
-    print("\n" + "="*60)
-    print("🐝 DESINSTALAÇÃO DA ABELHA")
-    print("="*60)
-    
-    if data_kept:
-        print("\n⚠️  DADOS PRESERVADOS (opção --keep-data)")
-        print("   Para remover tudo, execute sem --keep-data")
-    
-    print(f"\nArquivos/diretórios removidos: {files_removed}")
-    print(f"Ollama removido: {'Sim' if ollama_removed else 'Não'}")
-    
-    if not ollama_removed:
-        print("\nℹ️  Ollama permanece instalado no sistema")
-        print("   Para remover manualmente:")
-        print("   - Linux: curl -fsSL https://ollama.com/install.sh | sh -s -- --uninstall")
-        print("   - macOS: brew uninstall ollama")
-        print("   - Windows: Painel de Controle > Programas")
-    
-    print("\n" + "="*60)
-    print("Desinstalação concluída.")
-    print("="*60)
-
+    for shell_file in shell_files:
+        if shell_file.exists():
+            try:
+                content = shell_file.read_text()
+                lines = content.splitlines()
+                filtered = [l for l in lines if not any(p in l for p in patterns)]
+                if len(filtered) != len(lines):
+                    shell_file.write_text("\n".join(filtered) + "\n")
+                    log(f"Limpado: {shell_file}")
+            except Exception as e:
+                warn(f"Erro ao limpar {shell_file}: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Desinstalador da Abelha")
-    parser.add_argument("--remove-ollama", action="store_true",
-                       help="Também remover Ollama (apenas se instalado pela Abelha)")
-    parser.add_argument("--force-remove-ollama", action="store_true",
-                       help="Forçar remoção do Ollama mesmo se não instalado pela Abelha")
-    parser.add_argument("--keep-data", action="store_true",
-                       help="Manter documentos indexados e dados do Bibliotecário")
-    parser.add_argument("--dry-run", action="store_true",
-                       help="Simular desinstalação sem remover nada")
-    parser.add_argument("-y", "--yes", action="store_true",
-                       help="Confirmar automaticamente (sem prompt)")
-    
+    parser = argparse.ArgumentParser(description="ENXAME Bee - Desinstalador")
+    parser.add_argument("--remove-ollama", action="store_true", help="Tambem remover Ollama")
+    parser.add_argument("--force-remove-ollama", action="store_true", help="Forcar remocao do Ollama mesmo se nao instalado pela Abelha")
+    parser.add_argument("--keep-data", action="store_true", help="Manter documentos e indices")
+    parser.add_argument("--dry-run", action="store_true", help="Simular desinstalacao")
+    parser.add_argument("-y", "--yes", action="store_true", help="Confirmar automaticamente")
     args = parser.parse_args()
     
-    log("="*60)
-    log("INICIANDO DESINSTALAÇÃO DA ABELHA")
-    log("="*60)
+    print(f"{BLUE}==================================================${NC}")
+    print(f"{BLUE}  ENXAME Bee - Desinstalador v1.0.0${NC}")
+    print(f"{BLUE}==================================================${NC}")
     
-    # Verificar o que existe
-    bee_exists = BEE_HOME.exists()
-    old_bee_exists = OLD_BEE_HOME.exists()
-    ollama_exists = detect_ollama() is not None
-    ollama_installed_by_bee = was_ollama_installed_by_bee()
-    
-    print("\nEstado atual:")
-    print(f"  Abelha instalada: {'Sim' if bee_exists or old_bee_exists else 'Não'}")
-    print(f"  Ollama instalado: {'Sim' if ollama_exists else 'Não'}")
-    if ollama_exists and ollama_installed_by_bee:
-        print(f"  Ollama instalado pela Abelha: Sim")
-    
-    if not bee_exists and not old_bee_exists:
-        log("Nenhuma instalação da Abelha encontrada", "WARN")
-        if not args.dry_run:
-            print("\nNada para desinstalar.")
-        return 0
-    
-    # Confirmar
     if not args.yes and not args.dry_run:
-        print("\n⚠️  ATENÇÃO: Esta operação removerá permanentemente:")
-        print("   - Configurações da Abelha")
-        print("   - Modelos baixados")
-        print("   - Manifesto e logs")
-        if not args.keep_data:
-            print("   - Documentos indexados localmente")
-            print("   - Memória e contexto armazenados")
-        
-        if args.remove_ollama or args.force_remove_ollama:
-            print("   - Ollama (runtime de IA)")
-        
-        response = input("\nDeseja continuar? (y/N): ")
-        if response.lower() != 'y':
-            log("Desinstalação cancelada pelo usuário", "INFO")
+        confirm = input("Isso removera a Abelha completamente. Continuar? [y/N]: ")
+        if confirm.lower() != 'y':
+            print("Cancelado.")
             return 0
     
-    files_removed = 0
-    ollama_removed = False
+    if args.dry_run:
+        log("MODO DRY-RUN - Nenhuma acao sera executada")
     
-    # 1. Parar serviços se estiverem rodando
-    log("\nPasso 1: Parando serviços...")
-    # Na prática, pararia a Abelha se estivesse rodando
-    
-    # 2. Remover diretórios da Abelha
-    log("\nPasso 2: Removendo arquivos da Abelha...")
-    
-    dirs_to_remove = []
-    
-    if BEE_HOME.exists():
-        dirs_to_remove.append(BEE_HOME)
-    
-    if old_bee_exists and OLD_BEE_HOME != BEE_HOME.parent:
-        # Evitar duplicação
-        if not str(OLD_BEE_HOME).startswith(str(BEE_HOME)):
-            dirs_to_remove.append(OLD_BEE_HOME)
-    
-    # Caches
-    if not args.keep_data:
-        cache_dirs = [
-            Path.home() / ".cache" / "enxame",
-            Path.home() / ".cache" / "bee",
-        ]
-        for cache_dir in cache_dirs:
-            if cache_dir.exists():
-                dirs_to_remove.append(cache_dir)
-    
-    # Contar arquivos antes de remover
-    total_files = 0
-    for d in dirs_to_remove:
-        if d.exists():
-            try:
-                total_files += sum(1 for _ in d.rglob("*"))
-            except:
-                pass
-    
-    # Remover
-    for dir_path in dirs_to_remove:
-        if args.keep_data and "documents" in str(dir_path) or "index" in str(dir_path):
-            log(f"Pulando (keep-data): {dir_path}", "INFO")
-            continue
-        
-        if remove_directory(dir_path, dry_run=args.dry_run):
-            files_removed += 1
-    
+    step("Parando servicos da Abelha...")
     if not args.dry_run:
-        log(f"{files_removed} diretórios removidos", "SUCCESS")
+        stop_bee_service()
     
-    # 3. Remover Ollama (opcional)
+    step("Removendo binarios...")
+    if not args.dry_run:
+        remove_binaries()
+    
+    step("Removendo configuracoes...")
+    if not args.dry_run:
+        remove_config_files()
+    
+    step("Removendo dados...")
+    if not args.dry_run:
+        remove_data_dir(args.keep_data)
+    
+    step("Limpando configuracoes de shell...")
+    if not args.dry_run:
+        clean_shell_configs()
+    
     if args.remove_ollama or args.force_remove_ollama:
-        log("\nPasso 3: Removendo Ollama...")
-        
-        if not ollama_exists:
-            log("Ollama não está instalado", "INFO")
-        elif args.remove_ollama and not ollama_installed_by_bee and not args.force_remove_ollama:
-            log("Ollama não foi instalado pela Abelha. Use --force-remove-ollama para remover.", "WARN")
-        else:
-            if stop_ollama_service():
-                if uninstall_ollama(dry_run=args.dry_run):
-                    ollama_removed = True
-                    
-                    # Remover marcador
-                    marker_file = BEE_HOME / ".ollama_installed_by_bee"
-                    if not args.dry_run and marker_file.exists():
-                        marker_file.unlink()
+        step("Removendo Ollama...")
+        if not args.dry_run:
+            remove_ollama(force=args.force_remove_ollama)
     
-    # 4. Limpar variáveis de ambiente (apenas aviso)
-    log("\nPasso 4: Limpando configurações residuais...")
-    
+    step("Removendo pacotes Python (opcional)...")
     if not args.dry_run:
-        # Remover de shell configs se necessário
-        shell_configs = [
-            Path.home() / ".bashrc",
-            Path.home() / ".zshrc",
-            Path.home() / ".profile",
-        ]
-        
-        for config_file in shell_configs:
-            if config_file.exists():
-                try:
-                    with open(config_file, 'r') as f:
-                        content = f.read()
-                    
-                    # Remover linhas relacionadas à Abelha
-                    lines = content.split('\n')
-                    new_lines = [l for l in lines if 'BEE_HOME' not in l and 'OLLAMA' not in l or 'export' not in l]
-                    
-                    if len(new_lines) != len(lines):
-                        with open(config_file, 'w') as f:
-                            f.write('\n'.join(new_lines))
-                        log(f"Limpo: {config_file}", "INFO")
-                        
-                except Exception as e:
-                    log(f"Erro ao limpar {config_file}: {e}", "WARN")
+        remove_python_packages()
     
-    # Imprimir resumo
-    print_summary(files_removed, ollama_removed, args.keep_data)
+    log("==================================================")
+    log("Desinstalacao concluida!")
+    log("==================================================")
     
-    log("="*60)
-    log("DESINSTALAÇÃO CONCLUÍDA")
-    log("="*60)
+    if args.keep_data:
+        log(f"Dados mantidos em: {get_data_dir()}")
     
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

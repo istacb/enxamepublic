@@ -21,6 +21,8 @@ from pathlib import Path
 
 from .config import BeeConfig, load_config, generate_identity, load_identity, get_default_data_dir
 from .service import BeeService
+from .capabilities.discovery import discover_capabilities
+from .capabilities.selector import recommend_model, get_model_recommendations_table, calculate_min_requirements
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -105,14 +107,26 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 
 async def _discover_peers(config: BeeConfig) -> list:
-    """Descobre peers via mDNS."""
+    """Descobre peers via mDNS e capacidades completas."""
     from .discovery import BeeDiscoveryService
+    from .capabilities.discovery import discover_capabilities
+
+    # Descobrir capacidades locais primeiro
+    caps = await discover_capabilities(
+        enxame_data_path=str(config.data_dir),
+        ollama_base_url=config.ollama_base_url,
+    )
 
     peers_found = []
 
     def on_found(peer):
         peers_found.append(peer)
-        print(f"  🐝 {peer.node_id} ({peer.role}) - {peer.host}:{peer.port} - caps: {peer.capabilities}")
+        caps_str = ", ".join(peer.capabilities[:5]) + ("..." if len(peer.capabilities) > 5 else "")
+        models_str = ", ".join(peer.models[:3]) + ("..." if len(peer.models) > 3 else "")
+        print(f"  🐝 {peer.node_id} ({peer.role}) - {peer.host}:{peer.port}")
+        print(f"     Caps: {caps_str}")
+        print(f"     Models: {models_str}")
+        print(f"     Load: {peer.load:.2f}, State: {peer.state.value}")
 
     discovery = BeeDiscoveryService(
         node_id=config.node_id,
@@ -127,6 +141,23 @@ async def _discover_peers(config: BeeConfig) -> list:
     print("Descobrindo peers (10s)...")
     await asyncio.sleep(10)
     await discovery.stop()
+
+    # Mostrar capacidades locais descobertas
+    if caps:
+        print(f"\n📊 Capacidades locais descobertas:")
+        hw = caps.hardware
+        print(f"  OS: {hw.os} {hw.os_version} ({hw.architecture})")
+        print(f"  CPU: {hw.cpu_cores}C/{hw.cpu_logical}T @ {hw.cpu_freq_ghz:.1f}GHz")
+        print(f"  RAM: {hw.ram_total_gb:.1f}GB total, {hw.ram_available_gb:.1f}GB livre")
+        print(f"  GPU: {hw.gpu_name or 'Não detectada'} ({hw.gpu_vram_gb:.1f}GB VRAM)")
+        print(f"  Disco: {hw.storage_total_gb:.0f}GB total, {hw.storage_free_gb:.0f}GB livre")
+        
+        if caps.ollama and caps.ollama.available:
+            print(f"  Ollama: {caps.ollama.version} em {caps.ollama.base_url}")
+            print(f"  Modelos: {', '.join([m.name for m in caps.ollama.models[:5]])}")
+            print(f"  Carregados: {', '.join(caps.ollama.loaded_models) or 'Nenhum'}")
+        
+        print(f"  Capacidades: {', '.join(caps.to_manifesto_dict().get('capabilities', []))}")
 
     return peers_found
 
@@ -147,10 +178,11 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 
 async def _show_status(config: BeeConfig) -> dict:
-    """Mostra status da Abelha."""
+    """Mostra status da Abelha com capacidades completas."""
     from .librarian import LocalBeeLibrarian
     from .memory import BeeMemory
     from .discovery import BeeDiscoveryService
+    from .capabilities.discovery import discover_capabilities
 
     memory = BeeMemory(config.data_dir / "memory.db")
     await memory.initialize()
@@ -173,6 +205,12 @@ async def _show_status(config: BeeConfig) -> dict:
     await discovery.start()
     await asyncio.sleep(2)  # Aguardar descoberta
 
+    # Descobrir capacidades completas
+    caps = await discover_capabilities(
+        enxame_data_path=str(config.data_dir),
+        ollama_base_url=config.ollama_base_url,
+    )
+
     mem_stats = memory.get_stats()
     lib_stats = librarian.get_stats()
     disc_stats = discovery.get_stats()
@@ -181,7 +219,7 @@ async def _show_status(config: BeeConfig) -> dict:
     await librarian.close()
     await memory.close()
 
-    return {
+    result = {
         "node_id": config.node_id,
         "data_dir": str(config.data_dir),
         "ollama_url": config.ollama_base_url,
@@ -191,6 +229,22 @@ async def _show_status(config: BeeConfig) -> dict:
         "librarian": lib_stats,
         "discovery": disc_stats,
     }
+
+    # Adicionar capacidades descobertas
+    if caps:
+        result["capabilities"] = caps.to_manifesto_dict()
+        # Adicionar recomendações de modelo
+        if caps.ollama and caps.ollama.available:
+            hw = caps.hardware
+            rec = recommend_model(
+                available_models=caps.ollama.models,
+                ram_gb=hw.ram_total_gb,
+                gpu_vram_gb=hw.gpu_vram_gb,
+                has_gpu=hw.gpu_available,
+            )
+            result["model_recommendation"] = rec
+
+    return result
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -203,6 +257,23 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"🔗 Ollama: {status['ollama_url']}")
     print(f"🤖 Modelo: {status['model']}")
     print(f"🌐 Web fallback: {'Sim' if status['allow_web'] else 'Não'}")
+
+    # Capacidades descobertas (BEE-0003)
+    if "capabilities" in status:
+        caps = status["capabilities"]
+        print(f"\n📊 Capacidades descobertas:")
+        hw = caps.get("hardware", {})
+        print(f"  OS: {hw.get('os', 'N/A')} ({hw.get('architecture', 'N/A')})")
+        print(f"  CPU: {hw.get('cpu_cores', 0)} cores")
+        print(f"  RAM: {hw.get('ram_gb', 0)}GB")
+        print(f"  GPU: {hw.get('gpu', 'Não detectada')}")
+        print(f"  Capabilities: {', '.join(caps.get('capabilities', []))}")
+        print(f"  Modelos: {', '.join(caps.get('models', [])) or 'Nenhum'}")
+        if "ollama_version" in caps:
+            print(f"  Ollama version: {caps['ollama_version']}")
+
+    if "model_recommendation" in status and status["model_recommendation"]:
+        print(f"\n💡 Modelo recomendado: {status['model_recommendation']}")
 
     print(f"\n💾 Memória:")
     for k, v in status['memory'].items():
@@ -260,6 +331,82 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capabilities(args: argparse.Namespace) -> int:
+    """Mostra capacidades do hardware e modelos recomendados."""
+    config = load_config(args)
+    
+    async def _show_caps():
+        from .capabilities.discovery import discover_capabilities
+        from .capabilities.selector import get_model_recommendations_table, calculate_min_requirements
+        
+        caps = await discover_capabilities(
+            enxame_data_path=str(config.data_dir),
+            ollama_base_url=config.ollama_base_url,
+        )
+        
+        if not caps:
+            print("Não foi possível descobrir capacidades.")
+            return 1
+        
+        hw = caps.hardware
+        print(f"\n🖥️  Hardware:")
+        print(f"  OS: {hw.os} {hw.os_version} ({hw.architecture})")
+        print(f"  CPU: {hw.cpu_cores} cores físicos, {hw.cpu_logical} lógicos @ {hw.cpu_freq_ghz:.1f}GHz")
+        print(f"  RAM: {hw.ram_total_gb:.1f}GB total, {hw.ram_available_gb:.1f}GB livre ({100 - hw.ram_percent:.0f}% livre)" if hasattr(hw, 'ram_percent') else f"  RAM: {hw.ram_total_gb:.1f}GB total, {hw.ram_available_gb:.1f}GB livre")
+        print(f"  GPU: {hw.gpu_name or 'Não detectada'}")
+        if hw.gpu_available:
+            print(f"    VRAM: {hw.gpu_vram_gb:.1f}GB")
+        print(f"  Disco: {hw.storage_total_gb:.0f}GB total, {hw.storage_free_gb:.0f}GB livre")
+        
+        if caps.ollama and caps.ollama.available:
+            print(f"\n🦙 Ollama: {caps.ollama.version} em {caps.ollama.base_url}")
+            print(f"  Modelos instalados:")
+            for m in caps.ollama.models:
+                loaded = " ✓" if m.is_loaded else ""
+                emb = " (embedding)" if m.is_embedding else ""
+                print(f"    - {m.name} [{m.parameter_size}{emb}]{loaded}")
+                print(f"      Contexto: {m.context_length} tokens, Quantização: {m.quantization or 'N/A'}")
+                if m.recommended_for:
+                    print(f"      Recomendado para: {', '.join(m.recommended_for)}")
+            if caps.ollama.loaded_models:
+                print(f"  Carregados na VRAM: {', '.join(caps.ollama.loaded_models)}")
+        else:
+            print(f"\n🦙 Ollama: Não disponível")
+        
+        print(f"\n🔧 Capacidades locais:")
+        local = caps.local
+        print(f"  Embeddings: {'Sim' if local.embeddings_available else 'Não'} ({local.embeddings_model or 'N/A'})")
+        print(f"  OCR: {'Sim' if local.ocr_available else 'Não'}")
+        print(f"  RAG: {'Sim' if local.rag_available else 'Não'}")
+        print(f"  ZIM: {'Sim' if local.zim_available else 'Não'} ({local.zim_file_count} arquivos)")
+        print(f"  Web: {'Sim' if local.web_available else 'Não'}")
+        
+        print(f"\n📋 Manifesto para peers:")
+        manifesto = caps.to_manifesto_dict()
+        print(f"  Capabilities: {', '.join(manifesto.get('capabilities', []))}")
+        print(f"  Models: {', '.join(manifesto.get('models', [])) or 'Nenhum'}")
+        
+        # Tabela de recomendações
+        print(f"\n📊 Tabela de referência de modelos por hardware:")
+        table = get_model_recommendations_table()
+        for row in table:
+            print(f"  RAM {row['ram']} / GPU {row['gpu_vram']} → {row['recommended']}")
+        
+        # Requisitos mínimos para modelos instalados
+        if caps.ollama and caps.ollama.available:
+            print(f"\n📐 Requisitos mínimos por modelo:")
+            for m in caps.ollama.models:
+                if not m.is_embedding and m.parameter_size != "unknown":
+                    req = calculate_min_requirements(m.parameter_size)
+                    if req["min_ram_gb"] > 0:
+                        status = "✅" if hw.ram_total_gb >= req["min_ram_gb"] else "⚠️"
+                        print(f"  {status} {m.name} ({m.parameter_size}): RAM mín {req['min_ram_gb']:.1f}GB, RAM rec {req['recommended_ram_gb']:.1f}GB, VRAM mín {req['min_vram_gb']:.1f}GB")
+        
+        return 0
+    
+    return asyncio.run(_show_caps())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="bee",
@@ -310,6 +457,9 @@ def main() -> int:
     config_sub.add_parser("save", help="Salva configuração atual")
     config_sub.add_parser("path", help="Mostra caminho do arquivo de config")
 
+    # capabilities
+    caps_parser = subparsers.add_parser("capabilities", parents=[common], help="Mostra capacidades do hardware e modelos recomendados")
+
     args = parser.parse_args()
 
     # Setup logging
@@ -326,6 +476,7 @@ def main() -> int:
         "status": cmd_status,
         "identity": cmd_identity,
         "config": cmd_config,
+        "capabilities": cmd_capabilities,
     }
 
     cmd_func = commands.get(args.command)

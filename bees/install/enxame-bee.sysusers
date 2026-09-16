@@ -1,0 +1,4 @@
+# ENXAME Bee - System user and group
+# Type Name        ID  GECOS              Home
+u    enxame       -   "ENXAME Bee user"  /var/lib/enxame
+g    enxame       -   -
