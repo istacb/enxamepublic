@@ -176,6 +176,156 @@ def announce_self(node_id: str, role: str, host_ip: str, port: int) -> object | 
         return None
 
 
+def detect_cluster_installation(peers: dict, env_path: Path) -> str | None:
+    """
+    Detecta se há 3+ peers na rede e pergunta ao usuário se quer instalar o enxame.
+    
+    Returns o role escolhido (ou None se não instalar cluster).
+    """
+    peer_count = len(peers)
+    
+    if peer_count < 3:
+        return None  # Poucos peers, não forma cluster
+    
+    print()
+    print("=" * 60)
+    print("🔗 3+ NÓS DO ENXAME DETECTADOS NA REDE")
+    print("=" * 60)
+    print()
+    print(f"Foram descobertos {peer_count} peers na rede local:")
+    for node_id, peer_info in peers.items():
+        print(f"  • {node_id}: role={getattr(peer_info, 'role', 'unknown')}, {getattr(peer_info, 'host', '?')}:{getattr(peer_info, 'port', '?')}")
+    print()
+    print("O Enxame precisa de pelo menos 3 nodes para formar um cluster com:")
+    print("  • Eleição de papéis (Juiz, Bibliotecário, Guarda)")
+    print("  • Índice global compartilhado")
+    print("  • Monitoramento de failover")
+    print("  • Distribuição de workload")
+    print()
+    choice = input("Deseja instalar o Enxame cluster agora? (s/N): ").strip().lower()
+    
+    if choice in ("s", "sim", "y", "yes"):
+        print()
+        print("=== Instalando Enxame Cluster ===")
+        print("Executando eleição de papéis e configurando segurança...")
+        
+        # Run cluster election
+        from bees.cluster.global_index import build_global_index
+        from bees.cluster.state import load_cluster_state, save_cluster_state
+        from bees.cluster.election import elect_roles, ClusterRole
+        from core.exp.security import EXPSecurity
+        
+        # Carregar configuração existente
+        from bees.service import load_config
+        config = load_env_file(env_path) if hasattr(load_env_file, '__module__') else None
+        
+        # Perguntar sobre role deste node
+        print("Seu node assumirá qual papel?")
+        print("  [1] Juiz — orquestração, validação e auditoria")
+        print("  [2] Bibliotecário — busca e gestão de conhecimento")
+        print("  [3] Agente — worker com todas as especialidades")
+        print("  [4] Automático — deixar o Enxame decidir baseado em hardware")
+        print()
+        role_choice = input("Escolha (1-4) [padrão: 4 - Automático]: ").strip() or "4"
+        
+        role_map = {
+            "1": "juiz",
+            "2": "bibliotecario", 
+            "3": "agente",
+            "4": "auto",
+        }
+        node_role = role_map.get(role_choice, "auto")
+        
+        # Definir porta baseado no role
+        role_ports = {"juiz": 7700, "bibliotecario": 7701, "agente": 0, "auto": 0}
+        node_port = role_ports.get(node_role, 0)
+        
+        # Salvar role no .env
+        write_env_value(env_path, "ENXAME_NODE_ROLE", node_role)
+        if node_port:
+            write_env_value(env_path, "ENXAME_NODE_PORT", str(node_port))
+        
+        # Anunciar node
+        from api.install.node_role_setup import local_ip, announce_self
+        import socket
+        host_ip = local_ip()
+        node_id = read_env_value(env_path, "ENXAME_NODE_ID") or f"{node_role}-{socket.gethostname()}"
+        write_env_value(env_path, "ENXAME_NODE_ID", node_id)
+        
+        advertiser = announce_self(node_id, node_role, host_ip, node_port)
+        if advertiser:
+            print(f"Node anunciado como '{node_id}' (função: {node_role}, {host_ip}:{node_port or 'N/A'})")
+            time.sleep(2)
+            try:
+                advertiser.stop()
+            except Exception:
+                pass
+        
+        # Verificar se já tem Ollama e modelo
+        ollama_url = read_env_value(env_path, "OLLAMA_URL") or "http://localhost:11434"
+        
+        # Inicializar cluster
+        print("Inicializando cluster...")
+        current_state = load_cluster_state(Path(env_path).parent / "data" / "enxame" if Path(env_path).parent else Path("data"))
+        
+        # Descobrir peers ativos para eleição
+        from core.discovery.browser import ENXAMEMDNSBrowser
+        browser = ENXAMEMDNSBrowser()
+        try:
+            browser.start()
+            import time
+            time.sleep(3)  # Aguardar descoberta inicial
+            discovered_peers = list(browser.nodes.values())
+            browser.stop()
+        except Exception as e:
+            print(f"Aviso: falha ao descobrir peers: {e}")
+            discovered_peers = list(peers.values())
+        
+        # Eleição de papéis
+        print(f"Executando eleição com {len(discovered_peers)} peers...")
+        cluster_state = elect_roles(discovered_peers, current_state)
+        
+        # Salvar estado do cluster
+        save_cluster_state(Path(env_path).parent / "data" / "enxame" if Path(env_path).parent else Path("data"), cluster_state)
+        
+        # Configurar segurança (shared secret)
+        shared_secret = read_env_value(env_path, "ENXAME_SHARED_SECRET")
+        if not shared_secret:
+            import secrets
+            shared_secret = secrets.token_urlsafe(16)
+            write_env_value(env_path, "ENXAME_SHARED_SECRET", shared_secret)
+            print(f"Shared secret gerado automaticamente")
+        
+        # Configurar internet gate se for bibliotecário
+        from bees.cluster.internet_gate import InternetGate, InternetPurpose
+        from bees.service import BeeService
+        
+        print()
+        print("=" * 60)
+        print("✅ Enxame Cluster Instalado com Sucesso!")
+        print("=" * 60)
+        print()
+        print(f"Roles eleitos:")
+        print(f"  • Juiz: {cluster_state.juiz_id}")
+        print(f"  • Bibliotecário: {cluster_state.bibliotecario_id}")
+        print(f"  • Guarda: {cluster_state.guarda_id}")
+        print(f"  • Workers: {len(cluster_state.workers)} nodes")
+        print()
+        print(f"Seu node: {node_role.upper()} em {host_ip}:{node_port or 'N/A'}")
+        print(f"Cluster state salvo em: {Path(env_path).parent / 'data' / 'enxame' / 'cluster_state.json'}")
+        print()
+        print("Próximos passos:")
+        print("  1. Inicie os outros nodes do Enxame")
+        print("  2. Use o dashboard em http://localhost:8765/")
+        print("  3. Queries serão processadas via política LOCAL -> ENXAME -> WEB")
+        print()
+        
+        return node_role
+    else:
+        print("Instalação do cluster cancelada. Operando em modo standalone.")
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Configuração de função do node ENXAME")
     parser.add_argument("--env-file", required=True, help="Caminho do arquivo .env da instalação")
@@ -203,6 +353,12 @@ def main() -> int:
     print()
     print(f"Procurando outros nodes do Enxame na rede local ({args.scan_seconds}s)...")
     peers = scan_for_peers(args.scan_seconds)
+
+    # --- NOVA LÓGICA: Detectar cluster se 3+ peers encontrados ---
+    detected_role = detect_cluster_installation(peers, env_path)
+    if detected_role:
+        role = detected_role
+    # --------------------------------------------------------
 
     if role == "auto":
         role = resolve_auto_role(peers)
