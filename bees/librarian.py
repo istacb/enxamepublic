@@ -73,17 +73,20 @@ class LocalBeeLibrarian:
         ollama_url: str = "http://localhost:11434",
         model: str = "llama3.2:3b",
         memory: Any = None,  # BeeMemory
+        embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        offline_mode: bool = False,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.ollama_url = ollama_url
         self.model = model
         self.memory = memory
+        self.offline_mode = offline_mode
 
         self._cache: dict[str, SearchResult] = {}
         self._cache_ttl = 3600
 
         # Componentes RAG
-        self.embeddings = EmbeddingService()
+        self.embeddings = EmbeddingService(model_name=embedding_model)
         self.indexer = LocalDocumentIndexer(
             docs_dir=str(self.data_dir / "documents"),
             embeddings=self.embeddings,

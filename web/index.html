@@ -27,17 +27,147 @@
                     <span class="status-indicator"></span>
                     <span class="status-label">Ollama</span>
                 </div>
+                <div class="status-item" id="status-peers">
+                    <span class="status-indicator"></span>
+                    <span class="status-label">Peers: <span id="peer-count">0</span></span>
+                </div>
+                <div class="status-item offline-badge" id="offline-badge" style="display: none;">
+                    <span class="status-indicator offline"></span>
+                    <span class="status-label">OFFLINE</span>
+                </div>
             </div>
         </header>
 
         <main>
-            <div id="history" class="history"></div>
-            
-            <div class="input-area">
-                <textarea id="message-input" placeholder="Digite sua mensagem..." rows="1"></textarea>
-                <button id="send-btn" disabled>Enviar</button>
+            <div class="main-content">
+                <div class="chat-area" id="chat-area">
+                    <div id="history" class="history"></div>
+                    
+                    <div class="input-area">
+                        <div class="input-toolbar">
+                            <button id="upload-btn" class="tool-btn" title="Anexar arquivo">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                            </button>
+                            <button id="settings-btn" class="tool-btn" title="Configurações">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <textarea id="message-input" placeholder="Digite sua mensagem..." rows="1"></textarea>
+                        <button id="send-btn" disabled>Enviar</button>
+                    </div>
+                </div>
+                
+                <aside class="sidebar" id="sidebar">
+                    <div class="sidebar-tabs">
+                        <button class="tab-btn active" data-tab="peers">🐝 Abelhas</button>
+                        <button class="tab-btn" data-tab="settings">⚙️ Config</button>
+                    </div>
+                    <div class="tab-content" id="tab-peers">
+                        <div class="peer-list" id="peer-list">
+                            <div class="empty-state">Nenhuma abelha descoberta</div>
+                        </div>
+                    </div>
+                    <div class="tab-content" id="tab-settings" style="display: none;">
+                        <div class="settings-panel">
+                            <h3>Configurações</h3>
+                            <div class="setting-group">
+                                <label>
+                                    <input type="checkbox" id="setting-offline" />
+                                    <span>Modo Offline (sem internet)</span>
+                                </label>
+                                <p class="setting-desc">Desabilita fallback web e chamadas externas</p>
+                            </div>
+                            <div class="setting-group">
+                                <label>
+                                    <input type="checkbox" id="setting-allow-web" />
+                                    <span>Permitir Fallback Web</span>
+                                </label>
+                                <p class="setting-desc">Buscar na internet quando não encontrar localmente</p>
+                            </div>
+                            <div class="setting-group">
+                                <label>
+                                    <span>Confiança p/ Enxame</span>
+                                    <input type="range" id="setting-conf-enxame" min="0" max="1" step="0.05" value="0.7" />
+                                    <span class="range-value" id="conf-enxame-value">0.70</span>
+                                </label>
+                            </div>
+                            <div class="setting-group">
+                                <label>
+                                    <span>Confiança p/ Web</span>
+                                    <input type="range" id="setting-conf-web" min="0" max="1" step="0.05" value="0.8" />
+                                    <span class="range-value" id="conf-web-value">0.80</span>
+                                </label>
+                            </div>
+                            <div class="setting-group">
+                                <label>
+                                    <span>Modelo Ollama</span>
+                                    <select id="setting-model">
+                                        <option value="llama3.2:1b">llama3.2:1b (rápido)</option>
+                                        <option value="llama3.2:3b" selected>llama3.2:3b (equilibrado)</option>
+                                        <option value="qwen2:7b">qwen2:7b (qualidade)</option>
+                                        <option value="llama3:8b">llama3:8b (premium)</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <button id="save-settings" class="btn-primary">Salvar Configurações</button>
+                        </div>
+                    </div>
+                </aside>
             </div>
         </main>
+
+        <!-- File Upload Modal -->
+        <div class="modal" id="upload-modal" style="display: none;">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <h3>Enviar Arquivo</h3>
+                <div class="drop-zone" id="drop-zone">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <p>Arraste arquivos aqui ou clique para selecionar</p>
+                    <span class="hint">PDF, DOCX, TXT, Imagens (OCR), ZIM</span>
+                    <input type="file" id="file-input" multiple style="display: none;" accept=".pdf,.docx,.txt,.md,.jpg,.jpeg,.png,.zim">
+                </div>
+                <div class="upload-progress" id="upload-progress" style="display: none;">
+                    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+                    <p id="progress-text">Processando...</p>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-secondary" id="cancel-upload">Cancelar</button>
+                    <button class="btn-primary" id="confirm-upload" disabled>Enviar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Export Modal -->
+        <div class="modal" id="export-modal" style="display: none;">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <h3>Exportar Conversa</h3>
+                <label>
+                    <input type="radio" name="export-format" value="markdown" checked />
+                    <span>Markdown (.md)</span>
+                </label>
+                <label>
+                    <input type="radio" name="export-format" value="json" />
+                    <span>JSON (.json)</span>
+                </label>
+                <div class="modal-actions">
+                    <button class="btn-secondary" id="cancel-export">Cancelar</button>
+                    <button class="btn-primary" id="confirm-export">Exportar</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>

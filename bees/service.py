@@ -163,6 +163,8 @@ class BeeService:
             ollama_url=self.config.ollama_base_url,
             model=self.config.model,
             memory=self._memory,
+            embedding_model=self.config.embedding_model,
+            offline_mode=self.config.offline_mode,
         )
         await self._librarian.initialize()
         logger.info("Bibliotecário local inicializado")
@@ -367,9 +369,10 @@ class BeeService:
             logger.info(f"Nova identidade: {self.node_id}")
 
     async def _start_http_server(self) -> None:
-        """Inicia servidor HTTP para API e WebSocket."""
+        """Inicia servidor HTTP para API, WebSocket e UI estática."""
         from aiohttp import web
         from aiohttp.web import Request, Response
+        from pathlib import Path
 
         app = web.Application()
 
@@ -380,6 +383,7 @@ class BeeService:
                 "node_id": self.node_id,
                 "state": self.state.value,
                 "peers": len(self._discovery.get_active_peers()) if self._discovery else 0,
+                "offline_mode": self.config.offline_mode,
             })
 
         # Query endpoint (processa LOCAL -> ENXAME -> WEB)
@@ -418,14 +422,87 @@ class BeeService:
                     "port": p.port,
                     "capabilities": p.capabilities,
                     "models": p.models,
+                    "load": p.load,
+                    "state": p.state.value,
                 }
                 for p in peers
             ]})
 
+        # Status endpoint (para UI)
+        async def status(request: Request) -> Response:
+            peer_count = len(self._discovery.get_active_peers()) if self._discovery else 0
+            ollama_available = False
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    resp = await client.get(f"{self.config.ollama_base_url}/api/tags")
+                    ollama_available = resp.status_code == 200
+            except Exception:
+                pass
+            
+            return web.json_response({
+                "kernel": "online" if self.state == BeeState.RUNNING else self.state.value,
+                "runtime": "online" if self.state == BeeState.RUNNING else self.state.value,
+                "bibliotecario": "online" if self._librarian else "offline",
+                "ollama": "online" if ollama_available else "offline",
+                "peers": peer_count,
+                "offline_mode": self.config.offline_mode,
+            })
+
+        # File ingestion endpoint
+        async def ingest(request: Request) -> Response:
+            try:
+                # Multipart form data
+                reader = await request.multipart()
+                file_field = None
+                async for field in reader:
+                    if field.name == 'file':
+                        file_field = field
+                        break
+                
+                if not file_field:
+                    return web.json_response({"error": "file required"}, status=400)
+                
+                filename = file_field.filename
+                content = await file_field.read()
+                
+                if self._librarian:
+                    # Salvar arquivo temporário e processar
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
+                        tmp.write(content)
+                        tmp_path = tmp.name
+                    
+                    try:
+                        result = await self._librarian.indexer.index_file(tmp_path)
+                        return web.json_response({
+                            "success": True,
+                            "document_id": result.get("document_id"),
+                            "chunks": result.get("chunks", 0),
+                            "filename": filename,
+                        })
+                    finally:
+                        import os
+                        os.unlink(tmp_path)
+                else:
+                    return web.json_response({"error": "Librarian not available"}, status=503)
+                    
+            except Exception as e:
+                logger.error(f"Erro no ingest: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+
         app.router.add_get("/health", health)
+        app.router.add_get("/api/v1/status", status)
         app.router.add_post("/api/v1/query", query)
         app.router.add_get("/api/v1/capabilities", capabilities)
         app.router.add_get("/api/v1/peers", peers)
+        app.router.add_post("/api/v1/ingest", ingest)
+
+        # Servir arquivos estáticos da Web UI
+        web_dir = Path(__file__).resolve().parents[2] / "web"
+        if web_dir.exists():
+            app.router.add_static('/', web_dir, show_index=True)
+            logger.info(f"Servindo Web UI de {web_dir}")
 
         runner = web.AppRunner(app)
         await runner.setup()

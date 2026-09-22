@@ -40,6 +40,7 @@ class BeeConfig:
 
     # Comportamento
     allow_web: bool = False
+    offline_mode: bool = False  # Se True, desabilita todas chamadas externas
     shared_secret: str | None = None
     log_level: str = "INFO"
 
@@ -55,6 +56,12 @@ class BeeConfig:
     max_concurrent_queries: int = 4
     query_timeout_seconds: int = 60
     max_cache_items: int = 1000
+
+    # Embeddings
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # Modelo local leve
+
+    # Cluster
+    cluster: dict = field(default_factory=lambda: {"enabled": False, "auto_elect": True, "min_peers": 3})
 
     def __post_init__(self) -> None:
         """Resolve paths e valida configuração."""
@@ -95,6 +102,7 @@ class BeeConfig:
             "model": self.model,
             "data_dir": str(self.data_dir),
             "allow_web": self.allow_web,
+            "offline_mode": self.offline_mode,
             "shared_secret": self.shared_secret,
             "log_level": self.log_level,
             "confidence_threshold_enxame": self.confidence_threshold_enxame,
@@ -104,6 +112,8 @@ class BeeConfig:
             "max_concurrent_queries": self.max_concurrent_queries,
             "query_timeout_seconds": self.query_timeout_seconds,
             "max_cache_items": self.max_cache_items,
+            "embedding_model": self.embedding_model,
+            "cluster": self.cluster,
         }
 
     def save(self, path: Path | None = None) -> None:
@@ -164,6 +174,7 @@ def load_config(args: Any | None = None) -> BeeConfig:
             config.ollama_base_url = file_config.ollama_base_url
             config.model = file_config.model
             config.allow_web = file_config.allow_web
+            config.offline_mode = file_config.offline_mode
             config.shared_secret = file_config.shared_secret
             config.log_level = file_config.log_level
             config.confidence_threshold_enxame = file_config.confidence_threshold_enxame
@@ -173,6 +184,8 @@ def load_config(args: Any | None = None) -> BeeConfig:
             config.max_concurrent_queries = file_config.max_concurrent_queries
             config.query_timeout_seconds = file_config.query_timeout_seconds
             config.max_cache_items = file_config.max_cache_items
+            config.embedding_model = file_config.embedding_model
+            config.cluster = file_config.cluster
         except Exception as e:
             print(f"Aviso: erro ao carregar config: {e}")
 
@@ -186,12 +199,14 @@ def load_config(args: Any | None = None) -> BeeConfig:
         "BEE_MODEL": ("model", str),
         "BEE_DATA_DIR": ("data_dir", Path),
         "BEE_ALLOW_WEB": ("allow_web", lambda x: x.lower() == "true"),
+        "BEE_OFFLINE_MODE": ("offline_mode", lambda x: x.lower() == "true"),
         "BEE_SHARED_SECRET": ("shared_secret", str),
         "BEE_LOG_LEVEL": ("log_level", str),
         "BEE_CONFIDENCE_ENXAME": ("confidence_threshold_enxame", float),
         "BEE_CONFIDENCE_WEB": ("confidence_threshold_web", float),
         "BEE_HEARTBEAT_INTERVAL": ("heartbeat_interval", float),
         "BEE_HEARTBEAT_TIMEOUT": ("heartbeat_timeout", float),
+        "BEE_EMBEDDING_MODEL": ("embedding_model", str),
     }
 
     for env_var, (attr, converter) in env_mapping.items():
@@ -201,6 +216,15 @@ def load_config(args: Any | None = None) -> BeeConfig:
                 setattr(config, attr, converter(value))
             except Exception as e:
                 print(f"Aviso: erro ao converter {env_var}={value}: {e}")
+
+    # Cluster config from env (JSON)
+    cluster_env = os.getenv("BEE_CLUSTER")
+    if cluster_env:
+        try:
+            import json
+            config.cluster = json.loads(cluster_env)
+        except Exception as e:
+            print(f"Aviso: erro ao converter BEE_CLUSTER: {e}")
 
     # 4. Argumentos de linha de comando
     if args:
@@ -212,8 +236,10 @@ def load_config(args: Any | None = None) -> BeeConfig:
             "ollama_url": ("ollama_base_url", str),
             "model": ("model", str),
             "allow_web": ("allow_web", lambda x: x),
+            "offline_mode": ("offline_mode", lambda x: x),
             "shared_secret": ("shared_secret", str),
             "log_level": ("log_level", str),
+            "embedding_model": ("embedding_model", str),
         }
 
         for arg_name, (attr, converter) in arg_mapping.items():
