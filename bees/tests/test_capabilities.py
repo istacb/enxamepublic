@@ -85,8 +85,12 @@ class TestHardwareDiscovery:
         with patch('capabilities.discovery.platform.system', return_value='Linux'):
             with patch('capabilities.discovery.platform.version', return_value='5.15'):
                 with patch('builtins.open', unittest.mock.mock_open(read_data='VERSION="22.04"\n')):
-                    hw = scan_hardware("/tmp/test_enxame")
-                    assert hw.os == "Linux"
+                    with patch('capabilities.discovery.psutil.cpu_freq', return_value=None):
+                        with patch('capabilities.discovery.psutil.cpu_count', return_value=4):
+                            with patch('capabilities.discovery.psutil.virtual_memory', return_value=type('obj', (object,), {'total': 8*1024**3, 'available': 4*1024**3})):
+                                with patch('capabilities.discovery.psutil.disk_usage', return_value=type('obj', (object,), {'total': 100*1024**3, 'free': 50*1024**3})):
+                                    hw = scan_hardware("/tmp/test_enxame")
+                                    assert hw.os == "Linux"
     
     def test_scan_hardware_os_detection_macos(self):
         """Testar detecção de OS macOS."""

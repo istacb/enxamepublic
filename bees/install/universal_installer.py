@@ -37,6 +37,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+# Telemetry
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+try:
+    from bees.telemetry import (
+        prompt_telemetry_optin,
+        prompt_update_check,
+        run_post_install_checks,
+    )
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+    def prompt_telemetry_optin(data_dir: Path, auto: bool = False) -> bool:
+        return False
+    def prompt_update_check(data_dir: Path, current_version: str, auto: bool = False):
+        return None
+    def run_post_install_checks(data_dir: Path, current_version: str, auto: bool = False):
+        pass
+
 # ============================================================================
 # Configurações do Instalador
 # ============================================================================
@@ -53,6 +71,18 @@ OLLAMA_DOWNLOADS = {
     "linux": "https://ollama.com/install.sh",
 }
 
+# Python embedded downloads (para sistemas sem Python)
+PYTHON_EMBEDDED_DOWNLOADS = {
+    "windows": {
+        "x64": "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip",
+        "arm64": "https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-arm64.zip",
+    },
+    "darwin": {
+        "x64": "https://www.python.org/ftp/python/3.12.7/python-3.12.7-macos11.pkg",
+        "arm64": "https://www.python.org/ftp/python/3.12.7/python-3.12.7-macos11.pkg",
+    },
+}
+
 # Modelos recomendados por categoria de hardware
 MODEL_RECOMMENDATIONS = {
     "tiny": ["qwen2:0.5b", "gemma2:2b", "phi3:mini"],
@@ -61,6 +91,13 @@ MODEL_RECOMMENDATIONS = {
     "large": ["llama3:8b", "qwen2:7b", "gemma2:9b"],
     "xl": ["llama3.1:8b", "qwen2.5:7b", "gemma2:9b"],
 }
+
+# Modelos de visão pequenos (≤2B) para hardware limitado
+VISION_MODELS_SMALL = [
+    "moondream:1.8b",
+    "qwen2-vl:2b",
+    "minicpm-v:2b",
+]
 
 VISION_MODELS = [
     "llava:7b", "bakllava:7b", "moondream:1.8b",
@@ -117,6 +154,187 @@ def log_error(msg: str):
 
 def log_step(step: int, total: int, msg: str):
     print(f"\n{Colors.BOLD}{Colors.CYAN}[{step}/{total}]{Colors.RESET} {Colors.BOLD}{msg}{Colors.RESET}")
+
+
+# ============================================================================
+# Python Detection & Bootstrap
+# ============================================================================
+
+MIN_PYTHON_VERSION = (3, 10)
+
+@dataclass
+class PythonInfo:
+    """Informações sobre Python disponível."""
+    executable: str
+    version: tuple
+    is_embedded: bool
+    embed_dir: Path | None = None
+
+
+def get_python_version(executable: str) -> tuple[int, int] | None:
+    """Obtém versão do Python executável."""
+    try:
+        result = subprocess.run(
+            [executable, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split(".")
+            return (int(parts[0]), int(parts[1]))
+    except Exception:
+        pass
+    return None
+
+
+def find_system_python() -> PythonInfo | None:
+    """Procura Python 3.10+ no sistema."""
+    for cmd in ("python3", "python3.12", "python3.11", "python3.10", "python"):
+        path = shutil.which(cmd)
+        if path:
+            ver = get_python_version(path)
+            if ver and ver >= MIN_PYTHON_VERSION:
+                return PythonInfo(executable=path, version=ver, is_embedded=False)
+    return None
+
+
+def download_python_embedded(info: SystemInfo) -> PythonInfo | None:
+    """Baixa e extrai Python embedded para Windows/macOS."""
+    system = info.os
+    arch = info.arch
+    
+    if system not in PYTHON_EMBEDDED_DOWNLOADS:
+        return None
+    
+    downloads = PYTHON_EMBEDDED_DOWNLOADS[system]
+    if arch not in downloads:
+        log_warn(f"Arquitetura {arch} não suportada para Python embedded em {system}")
+        return None
+    
+    url = downloads[arch]
+    log_info(f"Baixando Python embedded de {url}...")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        
+        if system == "windows":
+            # Windows: zip com python embedded
+            zip_path = tmpdir_path / "python-embed.zip"
+            urllib.request.urlretrieve(url, zip_path)
+            
+            embed_dir = Path(tempfile.gettempdir()) / "enxame-python-embed"
+            if embed_dir.exists():
+                shutil.rmtree(embed_dir)
+            
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(embed_dir)
+            
+            # python.exe está na raiz
+            python_exe = embed_dir / "python.exe"
+            if not python_exe.exists():
+                log_error("python.exe não encontrado no embedded")
+                return None
+            
+            # Criar site-packages vazio para pip funcionar
+            site_packages = embed_dir / "Lib" / "site-packages"
+            site_packages.mkdir(parents=True, exist_ok=True)
+            
+            # Instalar pip
+            get_pip = tmpdir_path / "get-pip.py"
+            urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip)
+            subprocess.run([str(python_exe), str(get_pip)], check=True, capture_output=True)
+            
+            ver = get_python_version(str(python_exe))
+            return PythonInfo(executable=str(python_exe), version=ver or MIN_PYTHON_VERSION, is_embedded=True, embed_dir=embed_dir)
+        
+        elif system == "darwin":
+            # macOS: .pkg installer (requer admin)
+            log_warn("No macOS, instale Python via Homebrew: brew install python@3.12")
+            log_warn("Ou baixe o installer em: https://www.python.org/downloads/macos/")
+            return None
+    
+    return None
+
+
+def install_python_linux(info: SystemInfo) -> PythonInfo | None:
+    """Tenta instalar Python via gerenciador de pacotes no Linux."""
+    distro = info.distro
+    
+    commands = {
+        "ubuntu": ["apt-get", "update", "&&", "apt-get", "install", "-y", "python3.12", "python3.12-venv", "python3.12-dev"],
+        "debian": ["apt-get", "update", "&&", "apt-get", "install", "-y", "python3.12", "python3.12-venv", "python3.12-dev"],
+        "mint": ["apt-get", "update", "&&", "apt-get", "install", "-y", "python3.12", "python3.12-venv", "python3.12-dev"],
+        "pop": ["apt-get", "update", "&&", "apt-get", "install", "-y", "python3.12", "python3.12-venv", "python3.12-dev"],
+        "fedora": ["dnf", "install", "-y", "python3.12", "python3.12-devel"],
+        "rhel": ["dnf", "install", "-y", "python3.12", "python3.12-devel"],
+        "centos": ["dnf", "install", "-y", "python3.12", "python3.12-devel"],
+        "rocky": ["dnf", "install", "-y", "python3.12", "python3.12-devel"],
+        "arch": ["pacman", "-S", "--noconfirm", "python"],
+        "manjaro": ["pacman", "-S", "--noconfirm", "python"],
+        "endeavouros": ["pacman", "-S", "--noconfirm", "python"],
+        "opensuse": ["zypper", "install", "-y", "python312", "python312-devel"],
+        "sles": ["zypper", "install", "-y", "python312", "python312-devel"],
+    }
+    
+    if distro not in commands:
+        log_warn(f"Distro {distro} não reconhecida para instalação automática de Python")
+        return None
+    
+    cmd = commands[distro]
+    log_info(f"Instalando Python via {distro} package manager...")
+    
+    # Usar shell para suportar && no apt
+    shell_cmd = " ".join(cmd) if "&&" in cmd else cmd
+    result = run_command(shell_cmd, shell=True, timeout=300, check=False)
+    
+    if result.returncode != 0:
+        log_error(f"Falha ao instalar Python via gerenciador de pacotes")
+        return None
+    
+    # Verificar instalação
+    for python_cmd in ("python3.12", "python3"):
+        path = shutil.which(python_cmd)
+        if path:
+            ver = get_python_version(path)
+            if ver and ver >= MIN_PYTHON_VERSION:
+                return PythonInfo(executable=path, version=ver, is_embedded=False)
+    
+    return None
+
+
+def ensure_python(info: SystemInfo) -> PythonInfo:
+    """
+    Garante que Python 3.10+ está disponível.
+    Prioridade: sistema -> embedded (Windows) -> package manager (Linux) -> erro.
+    """
+    # 1. Tentar Python do sistema
+    system_python = find_system_python()
+    if system_python:
+        log_success(f"Python {system_python.version[0]}.{system_python.version[1]} encontrado em {system_python.executable}")
+        return system_python
+    
+    log_warn(f"Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}+ não encontrado no sistema")
+    
+    # 2. Tentar embedded (Windows) ou package manager (Linux)
+    if info.os == "windows":
+        embedded = download_python_embedded(info)
+        if embedded:
+            log_success(f"Python embedded instalado em {embedded.embed_dir}")
+            return embedded
+        log_error("Falha ao instalar Python embedded no Windows")
+    
+    elif info.os == "linux":
+        installed = install_python_linux(info)
+        if installed:
+            log_success(f"Python instalado via package manager: {installed.executable}")
+            return installed
+        log_error("Falha ao instalar Python via gerenciador de pacotes")
+    
+    elif info.os == "darwin":
+        log_error("No macOS, instale Python via Homebrew: brew install python@3.12")
+        log_error("Ou baixe em: https://www.python.org/downloads/macos/")
+    
+    raise RuntimeError(f"Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}+ é obrigatório")
 
 
 # ============================================================================
@@ -419,9 +637,9 @@ def install_system_deps(info: SystemInfo) -> bool:
     return True
 
 
-def install_python_deps() -> bool:
+def install_python_deps(python_exe: str) -> bool:
     """Instala dependências Python do projeto."""
-    log_step(4, 6, "Instalando dependências Python...")
+    log_info("Instalando dependências Python...")
     
     # Dependências core
     deps = [
@@ -446,12 +664,12 @@ def install_python_deps() -> bool:
     # Instalar com pip
     for dep in deps:
         try:
-            run_command([sys.executable, "-m", "pip", "install", "--user", dep], 
+            run_command([python_exe, "-m", "pip", "install", "--user", dep], 
                        timeout=120, check=False)
         except Exception:
             log_warn(f"Falha ao instalar {dep}, tentando sem --user...")
             try:
-                run_command([sys.executable, "-m", "pip", "install", dep], timeout=120, check=False)
+                run_command([python_exe, "-m", "pip", "install", dep], timeout=120, check=False)
             except Exception:
                 log_error(f"Falha crítica ao instalar {dep}")
                 return False
@@ -460,9 +678,9 @@ def install_python_deps() -> bool:
     return True
 
 
-def download_model(model_name: str, force: bool = False) -> bool:
+def download_model(model_name: str, python_exe: str, force: bool = False) -> bool:
     """Baixa modelo via Ollama."""
-    log_step(5, 6, f"Baixando modelo {model_name}...")
+    log_info(f"Baixando modelo {model_name}...")
     
     # Verificar se já existe
     if not force:
@@ -482,10 +700,10 @@ def download_model(model_name: str, force: bool = False) -> bool:
         return False
 
 
-def download_vision_model() -> Optional[str]:
-    """Tenta baixar um modelo de visão."""
-    log_info("Tentando baixar modelo de visão...")
-    for model in VISION_MODELS:
+def download_vision_model(python_exe: str) -> Optional[str]:
+    """Tenta baixar um modelo de visão pequeno (≤2B)."""
+    log_info("Tentando baixar modelo de visão (≤2B)...")
+    for model in VISION_MODELS_SMALL:
         log_info(f"Tentando {model}...")
         result = run_command(["ollama", "pull", model], timeout=1800, check=False)
         if result.returncode == 0:
@@ -495,9 +713,9 @@ def download_vision_model() -> Optional[str]:
     return None
 
 
-def test_installation(model_name: str, vision_model: Optional[str]) -> bool:
+def test_installation(model_name: str, vision_model: Optional[str], python_exe: str) -> bool:
     """Testa se a instalação funciona."""
-    log_step(6, 6, "Testando instalação...")
+    log_info("Testando instalação...")
     
     # Testar modelo principal
     log_info(f"Testando modelo principal: {model_name}")
@@ -656,9 +874,16 @@ def configure_bee(info: SystemInfo, model_name: str, vision_model: Optional[str]
 # Criação de Atalhos/Serviços
 # ============================================================================
 
-def create_shortcuts(info: SystemInfo, data_dir: Path, model_name: str) -> bool:
+def create_shortcuts(info: SystemInfo, data_dir: Path, model_name: str, python_exe: str, is_embedded: bool) -> bool:
     """Cria atalhos no menu iniciar / Applications / .desktop."""
     log_info("Criando atalhos...")
+    
+    # Determinar comando python para atalhos
+    if is_embedded and info.os == "windows":
+        # Windows embedded: usar python.exe direto do diretório embedded
+        python_cmd = f'"{python_exe}"'
+    else:
+        python_cmd = "python3" if info.os != "windows" else "python"
     
     try:
         if info.os == "windows":
@@ -670,7 +895,7 @@ def create_shortcuts(info: SystemInfo, data_dir: Path, model_name: str) -> bool:
             # Script de inicialização
             bat_content = f"""@echo off
 title Enxame Abelha
-python -m bees.cli start --data-dir "{data_dir}"
+{python_cmd} -m bees.cli start --data-dir "{data_dir}"
 pause
 """
             (start_menu / "Iniciar Abelha.bat").write_text(bat_content)
@@ -693,7 +918,7 @@ pause
             # Script de inicialização
             sh_content = f"""#!/bin/bash
 cd "{data_dir}"
-python3 -m bees.cli start --data-dir "{data_dir}"
+{python_cmd} -m bees.cli start --data-dir "{data_dir}"
 """
             start_script = apps_dir / "Iniciar Abelha.command"
             start_script.write_text(sh_content)
@@ -711,7 +936,7 @@ Version=1.0
 Type=Application
 Name=Enxame Abelha
 Comment=Inicia a Abelha do Enxame (RAG local + Swarm)
-Exec=python3 -m bees.cli start --data-dir "{data_dir}"
+Exec={python_cmd} -m bees.cli start --data-dir "{data_dir}"
 Icon=preferences-system-network
 Terminal=true
 Categories=Network;Utility;
@@ -729,7 +954,7 @@ After=network.target ollama.service
 
 [Service]
 Type=simple
-ExecStart={sys.executable} -m bees.cli start --data-dir "{data_dir}"
+ExecStart={python_exe} -m bees.cli start --data-dir "{data_dir}"
 Restart=on-failure
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
@@ -751,7 +976,7 @@ WantedBy=default.target
     return True
 
 
-def print_final_instructions(info: SystemInfo, data_dir: Path, model_name: str, vision_model: Optional[str]):
+def print_final_instructions(info: SystemInfo, data_dir: Path, model_name: str, vision_model: Optional[str], python_exe: str):
     """Exibe instruções finais para o usuário."""
     print(f"\n{Colors.BOLD}{Colors.GREEN}{'='*60}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.GREEN}🐝 ABELHA INSTALADA COM SUCESSO!{Colors.RESET}")
@@ -762,12 +987,13 @@ def print_final_instructions(info: SystemInfo, data_dir: Path, model_name: str, 
     print(f"  • Modelo principal:   {model_name}")
     print(f"  • Modelo de visão:    {vision_model or 'Não disponível'}")
     print(f"  • Porta HTTP:         {DEFAULT_PORT}")
+    print(f"  • Python:             {python_exe}")
     
     print(f"\n{Colors.BOLD}Como usar:{Colors.RESET}")
     
     if info.os == "windows":
         print(f"  1. Menu Iniciar → Enxame → 'Iniciar Abelha'")
-        print(f"  2. Ou terminal: python -m bees.cli start")
+        print(f"  2. Ou terminal: {python_exe} -m bees.cli start")
         print(f"  3. Como serviço: net start enxame-bee (após instalar como serviço)")
     elif info.os == "darwin":
         print(f"  1. Finder → Applications → Enxame → 'Iniciar Abelha'")
@@ -793,6 +1019,101 @@ def print_final_instructions(info: SystemInfo, data_dir: Path, model_name: str, 
     
     print(f"\n{Colors.CYAN}Documentação: https://github.com/enxamepublic/enxame{Colors.RESET}")
     print(f"{Colors.GREEN}{'='*60}{Colors.RESET}\n")
+
+
+# ============================================================================
+# Auto-Cluster Opt-in
+# ============================================================================
+
+def discover_local_peers(data_dir: Path, timeout: float = 5.0) -> list[dict]:
+    """Descobre peers locais via mDNS para detectar se há cluster possível."""
+    try:
+        import asyncio
+        from core.discovery.mdns_discovery import NodeAnnouncer
+        from core.discovery.browser import ENXAMEMDNSBrowser, DiscoveredNode
+        
+        discovered = []
+        
+        async def _discover():
+            browser = ENXAMEMDNSBrowser()
+            
+            def on_node(node: DiscoveredNode):
+                discovered.append({
+                    "node_id": node.node_id,
+                    "role": node.role,
+                    "host": node.host,
+                    "port": node.port,
+                    "capabilities": node.capabilities,
+                    "models": node.models,
+                })
+            
+            browser.on_node_found = on_node
+            browser.start()
+            await asyncio.sleep(timeout)
+            browser.stop()
+        
+        asyncio.run(_discover())
+        return discovered
+    except Exception as e:
+        log_warn(f"Erro ao descobrir peers: {e}")
+        return []
+
+
+def prompt_cluster_optin(data_dir: Path) -> bool:
+    """Pergunta ao usuário se deseja formar cluster se detectar 3+ peers."""
+    log_info("Verificando se há outras abelhas na rede para formar cluster...")
+    
+    peers = discover_local_peers(data_dir, timeout=8.0)
+    
+    # Filtrar apenas abelhas (role == "bee")
+    bee_peers = [p for p in peers if p.get("role") == "bee"]
+    
+    if len(bee_peers) >= 2:  # 2 peers + esta = 3+ para cluster
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*60}{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}  🐝 CLUSTER DETECTADO!{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'='*60}{Colors.RESET}")
+        print(f"\nDetectamos {len(bee_peers)} outra(s) abelha(s) na rede local:")
+        for peer in bee_peers:
+            caps = ", ".join(peer.get("capabilities", [])[:3])
+            print(f"  • {peer['node_id'][:8]}... ({peer['host']}:{peer['port']}) - {caps}")
+        
+        print(f"\nCom {len(bee_peers) + 1} abelhas, podemos formar um cluster Enxame")
+        print(f"com roles distribuídas: Juiz, Bibliotecário, Guarda, Workers.")
+        print(f"Isso permite: failover automático, índice global, roteamento inteligente.")
+        
+        if not args.auto:
+            resp = input(f"\n{Colors.BOLD}Deseja ativar modo cluster? [S/n]: {Colors.RESET}").strip().lower()
+            if resp in ("s", "sim", "y", "yes", ""):
+                return True
+        else:
+            # Modo auto: ativar cluster por padrão se detectado
+            return True
+    
+    return False
+
+
+def enable_cluster_mode(data_dir: Path) -> None:
+    """Habilita modo cluster na configuração da Abelha."""
+    config_file = data_dir / "config.json"
+    if config_file.exists():
+        try:
+            import json
+            with open(config_file, "r") as f:
+                config = json.load(f)
+            
+            config["cluster"] = {
+                "enabled": True,
+                "auto_elect": True,
+                "min_peers": 3,
+            }
+            
+            with open(config_file, "w") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            
+            log_success("Modo cluster habilitado na configuração")
+            log_info("Na próxima inicialização, a Abelha tentará formar cluster automaticamente")
+        except Exception as e:
+            log_warn(f"Erro ao habilitar cluster: {e}")
 
 
 # ============================================================================
@@ -832,7 +1153,7 @@ def main():
         log_warn("MODO DRY-RUN - Nenhuma alteração será feita")
     
     # 1. Detectar sistema
-    log_step(1, 6, "Detectando sistema e hardware...")
+    log_step(1, 7, "Detectando sistema e hardware...")
     info = detect_system()
     print_system_info(info)
     
@@ -847,9 +1168,11 @@ def main():
         if not args.auto:
             input("Pressione Enter para continuar mesmo assim...")
     
-    if info.python_version < (3, 10):
-        log_error(f"Python 3.10+ necessário (encontrado {info.python_version[0]}.{info.python_version[1]})")
-        return 1
+    # 2. Garantir Python 3.10+
+    log_step(2, 7, "Verificando Python...")
+    python_info = ensure_python(info)
+    info.python_version = python_info.version
+    python_exe = python_info.executable
     
     # Selecionar modelo
     if args.model:
@@ -873,44 +1196,68 @@ def main():
         log_info("DRY-RUN: Pularia instalação de Ollama, modelos, deps, configuração")
         return 0
     
-    # 2. Instalar Ollama
+    # 3. Instalar Ollama
+    log_step(3, 7, "Instalando Ollama...")
     if not install_ollama(info, force=args.force_ollama):
         return 1
     
-    # 3. Iniciar Ollama
+    # 4. Iniciar Ollama
+    log_step(4, 7, "Iniciando serviço Ollama...")
     if not start_ollama_service(info):
         return 1
     
-    # 4. Dependências do sistema
+    # 5. Dependências do sistema
+    log_step(5, 7, "Instalando dependências do sistema (OCR, etc)...")
     install_system_deps(info)
     
-    # 5. Dependências Python
-    if not install_python_deps():
+    # 6. Dependências Python
+    log_step(6, 7, "Instalando dependências Python...")
+    if not install_python_deps(python_exe):
         return 1
     
-    # 6. Baixar modelo principal
-    if not download_model(model_name, force=args.force_model):
+    # 7. Baixar modelo principal
+    log_step(7, 7, f"Baixando modelo {model_name}...")
+    if not download_model(model_name, python_exe, force=args.force_model):
         return 1
     
-    # 7. Baixar modelo de visão (opcional mas recomendado)
+    # 8. Baixar modelo de visão (opcional mas recomendado)
     vision_model = None
     if not args.no_vision:
-        vision_model = download_vision_model()
+        vision_model = download_vision_model(python_exe)
     
-    # 8. Testar
-    if not test_installation(model_name, vision_model):
+    # 9. Testar
+    log_info("Testando instalação...")
+    if not test_installation(model_name, vision_model, python_exe):
         log_error("Testes falharam")
         return 1
     
-    # 9. Configurar Abelha
+    # 10. Configurar Abelha
+    log_info("Configurando Abelha...")
     data_dir = configure_bee(info, model_name, vision_model)
     
-    # 10. Criar atalhos
+    # 11. Criar atalhos
     if not args.no_shortcuts:
-        create_shortcuts(info, data_dir, model_name)
+        log_info("Criando atalhos...")
+        create_shortcuts(info, data_dir, model_name, python_exe, python_info.is_embedded)
     
     # Sucesso!
-    print_final_instructions(info, data_dir, model_name, vision_model)
+    print_final_instructions(info, data_dir, model_name, vision_model, python_exe)
+    
+    # Auto-cluster opt-in: detectar peers e perguntar se quer formar cluster
+    if not args.auto and not args.no_shortcuts:
+        try:
+            if prompt_cluster_optin(data_dir):
+                enable_cluster_mode(data_dir)
+        except Exception as e:
+            log_warn(f"Não foi possível configurar cluster: {e}")
+    
+    # Telemetry & Update Check (opt-in)
+    if TELEMETRY_AVAILABLE and not args.auto:
+        try:
+            run_post_install_checks(data_dir, INSTALLER_VERSION)
+        except Exception as e:
+            log_warn(f"Telemetria: {e}")
+    
     return 0
 
 

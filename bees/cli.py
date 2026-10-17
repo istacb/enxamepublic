@@ -426,6 +426,8 @@ def main() -> int:
     common.add_argument("--ollama-url", default="http://localhost:11434", help="URL do Ollama")
     common.add_argument("--model", help="Modelo Ollama")
     common.add_argument("--allow-web", action="store_true", help="Permitir fallback web")
+    common.add_argument("--offline-mode", action="store_true", help="Modo offline (sem chamadas externas)")
+    common.add_argument("--embedding-model", help="Modelo de embeddings local")
     common.add_argument("--shared-secret", help="Segredo compartilhado HMAC")
     common.add_argument("--log-level", default="INFO", help="Nível de log")
 

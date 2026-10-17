@@ -419,8 +419,7 @@ class TestPeerDisappearance:
 class TestDiscoveryReuse:
     """Testes demonstrando reutilização do discovery existente."""
 
-    @patch("core.discovery.mdns_discovery.NodeAnnouncer")
-    def test_mdns_announcement_with_bee_role(self, mock_announcer):
+    def test_mdns_announcement_with_bee_role(self):
         """Testa anúncio mDNS com role 'bee'."""
         # Este teste demonstra como o discovery existente pode ser reutilizado
         # O campo 'role' deve ser "bee" para Abelhas

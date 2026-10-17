@@ -10,11 +10,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class EmbeddingService:
-    """Embeddings multilíngues com fallback determinístico."""
+    """Embeddings multilíngues com fallback determinístico.
+    
+    Prioridade: modelo local (sentence-transformers) -> fallback hash.
+    Modelo padrão: all-MiniLM-L6-v2 (384 dim, rápido, bom para PT-BR/EN).
+    """
 
     model_name: str = field(
         default_factory=lambda: os.getenv(
-            'EMBEDDING_MODEL', 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+            'EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2'
         )
     )
     dimension: int = 384

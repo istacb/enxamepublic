@@ -167,6 +167,51 @@ class LocalDocumentIndexer:
         logger.info('Indexador local reconstruído: %s chunks (de %s arquivos)', len(chunks), len(snapshot))
         return chunks
 
+    def index_file(self, file_path: str) -> dict[str, Any]:
+        """
+        Indexa um único arquivo.
+        
+        Args:
+            file_path: Caminho do arquivo a indexar.
+            
+        Returns:
+            Dict com document_id, chunks, filename.
+        """
+        path = Path(file_path)
+        if not path.exists():
+            return {"error": "File not found", "chunks": 0}
+        
+        text, metadata = self._extract_text(path)
+        
+        if not text:
+            return {"error": "No text extracted", "chunks": 0}
+        
+        doc_chunks = self.reader.split_into_chunks(text, metadata)
+        
+        new_chunks = []
+        for chunk in doc_chunks:
+            new_chunks.append(
+                IndexedChunk(
+                    chunk_id=chunk.chunk_id,
+                    text=chunk.text,
+                    source_path=chunk.source_path,
+                    extension=chunk.extension,
+                    metadata=chunk.metadata,
+                )
+            )
+        
+        # Adicionar aos chunks existentes
+        self.chunks.extend(new_chunks)
+        self._snapshot[str(path)] = path.stat().st_mtime
+        
+        logger.info('Arquivo indexado: %s (%s chunks)', path.name, len(new_chunks))
+        
+        return {
+            "document_id": new_chunks[0].chunk_id if new_chunks else None,
+            "chunks": len(new_chunks),
+            "filename": path.name,
+        }
+
     async def auto_reindex_loop(self, on_reindex) -> None:
         interval = int(os.getenv('INDEXER_INTERVAL_SECONDS', '120'))
         while True:
