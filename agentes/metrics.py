@@ -49,3 +49,14 @@ class MetricsCollector:
             'tasks_failed': self._failed,
             'throughput_tps': round((self._completed + self._failed) / elapsed, 3),
         }
+
+    def est_tps(self) -> float:
+        """Throughput estimado (tarefas por segundo)."""
+        elapsed = max(1e-6, time.monotonic() - self._started_at)
+        return round((self._completed + self._failed) / elapsed, 3)
+
+    def recent_fail_rate(self) -> float:
+        total = self._completed + self._failed
+        if total == 0:
+            return 0.0
+        return round(self._failed / total, 3)

@@ -1,6 +1,14 @@
-"""Descoberta automática mDNS/Zeroconf."""
+"""Descoberta de rede Enxame: UDP beacon + mDNS real (zeroconf)."""
+from .beacon import Beacon, PeerInfo, discover_peers, BEACON_PORT
+from .mdns import MdnsDiscovery, MdnsPeer, MDNS_TYPE, MDNS_PORT
 
-from .advertiser import ENXAMEMDNSAdvertiser
-from .browser import DiscoveredNode, ENXAMEMDNSBrowser
-
-__all__ = ['ENXAMEMDNSAdvertiser', 'ENXAMEMDNSBrowser', 'DiscoveredNode']
+__all__ = [
+    'Beacon',
+    'PeerInfo',
+    'discover_peers',
+    'BEACON_PORT',
+    'MdnsDiscovery',
+    'MdnsPeer',
+    'MDNS_TYPE',
+    'MDNS_PORT',
+]

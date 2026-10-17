@@ -5,13 +5,23 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
 import websockets
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    tomllib = None  # type: ignore
 
-from core.cluster import HardwareBenchmark, LocalSearchEngine
+from core.cluster.benchmark import HardwareBenchmark
+from core.cluster.local_search import LocalSearchEngine
+from core.cluster.rag import LocalRagIndex
+from core.discovery.beacon import Beacon
+from core.discovery.mdns import MdnsDiscovery
 from core.exp.envelope import EXPEnvelope, EXPNode
 from core.exp.http import build_auth_headers
 from core.exp.security import EXPSecurity
@@ -25,6 +35,45 @@ from .worker_pool import WorkerPool, WorkItem, now_utc
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DONATION = {
+    'enabled': True,
+    'max_cpu_pct': 70,
+    'min_free_ram_gb': 1.5,
+    'max_concurrent': 1,
+    'run_when': 'idle',
+    'idle_after_s': 120,
+    'pause_on_battery': True,
+    'allowed_models': [],
+    'schedule': '',
+}
+
+
+@dataclass(slots=True)
+class DonationPolicy:
+    enabled: bool = True
+    max_cpu_pct: float = 70.0
+    min_free_ram_gb: float = 1.5
+    max_concurrent: int = 1
+    run_when: str = 'idle'
+    idle_after_s: int = 120
+    pause_on_battery: bool = True
+    allowed_models: list[str] = field(default_factory=list)
+    schedule: str = ''
+
+
+def _load_donation_policy() -> DonationPolicy:
+    path = Path(os.getenv('ENXAME_CONFIG_DIR', str(Path.home() / 'enxame'))) / 'node.toml'
+    data = {}
+    if path.exists() and tomllib is not None:
+        try:
+            with path.open('rb') as f:
+                data = tomllib.load(f).get('donation', {})
+        except Exception:
+            data = {}
+    d = dict(DEFAULT_DONATION)
+    d.update(data)
+    return DonationPolicy(**d)
+
 
 class DynamicAgentService:
     """Agente polimórfico com hot-load de plugins e pool interno de workers."""
@@ -37,15 +86,12 @@ class DynamicAgentService:
         self.juiz_http_url = os.getenv('JUIZ_HTTP_URL', 'http://localhost:7700')
         self.secret = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
-        self.model = os.getenv('AGENT_MODEL', 'gemma2:2b-it-qat')
+        self.model = os.getenv('AGENT_MODEL', None)  # None = seleciona o melhor instalado
         self.heartbeat_interval = float(os.getenv('HEARTBEAT_INTERVAL', '5'))
         self.reconnect_interval = float(os.getenv('RECONNECT_INTERVAL', '2'))
         self.task_timeout = float(os.getenv('TASK_TIMEOUT', '90'))
         self.plugin_refresh_interval = float(os.getenv('PLUGIN_REFRESH_INTERVAL', '2'))
         self.guardian_patrol_interval = float(os.getenv('GUARDIAN_PATROL_INTERVAL', '15'))
-
-        max_workers = int(os.getenv('WORKER_POOL_SIZE', '4'))
-        max_queue = int(os.getenv('WORKER_MAX_QUEUE', '128'))
 
         self.security = EXPSecurity(self.secret)
         self.ollama = OllamaClient(self.ollama_url)
@@ -53,19 +99,53 @@ class DynamicAgentService:
 
         self.plugin_manager = PluginManager()
         self.metrics = MetricsCollector()
-        self.pool = WorkerPool(workers=max_workers, max_queue=max_queue)
+        self.pool = WorkerPool(workers=1, max_queue=4)  # 1 slot por padrão (poltrona de idoso)
 
-        docs_dir = os.getenv('NODE_DOCS_DIR', os.getenv('BIB_DOCS_DIR', '/data/docs'))
-        zim_dir = os.getenv('NODE_ZIM_DIR', os.getenv('BIB_ZIM_DIR', '/data/zim'))
+        docs_dir = os.getenv('NODE_DOCS_DIR', os.getenv('BIB_DOCS_DIR', str(Path.home() / 'enxame' / 'docs')))
+        zim_dir = os.getenv('NODE_ZIM_DIR', os.getenv('BIB_ZIM_DIR', str(Path.home() / 'enxame' / 'zim')))
         self.search_engine = LocalSearchEngine(docs_dir=docs_dir, zim_dir=zim_dir)
+        # RAG local: este nó indexa seus próprios arquivos (não-sistema).
+        self.rag = LocalRagIndex(
+            db_path=str(Path.home() / 'enxame' / f'rag_{self.node_id}.db'),
+            roots=[docs_dir],
+        )
         self.benchmark_profile = HardwareBenchmark().run()
         self.assigned_zim_files: list[str] = []
 
+        # Política de doação (o nó se autoregula; o Juiz não pode sobrescrever).
+        self.donation = _load_donation_policy()
+        self._paused = False
+
         self._task_specialty_override: dict[str, str] = {}
         self._running = False
+        self._cancel_flags: dict[str, bool] = {}
 
-        # Ronda do Guardião: este node não é o Juiz, então os alertas são
-        # reportados via POST assinado em /api/v1/guardian/report.
+        # Beacon de descoberta LAN.
+        http_port = int(os.getenv('ENXAME_HTTP_PORT', '8000'))
+        ws_port = int(os.getenv('ENXAME_WS_PORT', '8000'))
+        self._beacon = Beacon(
+            node_id=self.node_id,
+            ip='0.0.0.0',
+            http_port=http_port,
+            ws_port=ws_port,
+            role=self.cluster_role,
+            score=self.benchmark_profile.overall_score,
+            models=[self.model] if self.model else [],
+            on_peer=self._on_peer,
+        )
+        # mDNS real via zeroconf (opcional; silencioso se não instalado).
+        self._mdns = MdnsDiscovery(
+            node_id=self.node_id,
+            ip='0.0.0.0',
+            port=ws_port,
+            role=self.cluster_role,
+            score=self.benchmark_profile.overall_score,
+            models=[self.model] if self.model else [],
+            on_peer=self._on_peer_mdns,
+        )
+        self._known_peers: dict[str, dict] = {}
+
+        # Ronda do Guardião.
         self.guardian_patrol = GuardianPatrol(
             node_id=self.node_id,
             interval_seconds=self.guardian_patrol_interval,
@@ -86,6 +166,29 @@ class DynamicAgentService:
         self._running = True
         self._guardian_task = asyncio.create_task(self.guardian_patrol.run_forever())
 
+        # Indexa arquivos locais para RAG (não-sistema).
+        try:
+            n = self.rag.index_files()
+            if n:
+                logger.info('RAG local indexou %d arquivo(s)', n)
+        except Exception as exc:  # pragma: no cover
+            logger.warning('Falha ao indexar RAG local: %s', exc)
+
+        # Seleciona o melhor modelo instalado ou baixa o recomendado para o hardware.
+        if not self.model:
+            try:
+                ram_gb = float(self.benchmark_profile.ram_total_gb)
+                # vram não é exposto pelo benchmark simples; assume 0 (CPU).
+                # Se o usuário tiver GPU, pode sobrescrever via AGENT_MODEL ou node.toml.
+                chosen = await self.ollama.ensure_model(ram_gb, 0.0)
+                if chosen:
+                    self.model = chosen
+                    logger.info('Modelo selecionado/baixado: %s', chosen)
+            except Exception as exc:  # pragma: no cover
+                logger.warning('Não foi possível selecionar/baixar modelo: %s', exc)
+
+        self._beacon.start()
+        self._mdns.start()
         while self._running:
             try:
                 async with websockets.connect(self.juiz_url, ping_interval=15, ping_timeout=15) as ws:
@@ -112,6 +215,9 @@ class DynamicAgentService:
         self.guardian_patrol.stop()
         if self._guardian_task is not None:
             self._guardian_task.cancel()
+        self._beacon.stop()
+        self._mdns.stop()
+        self.rag.close()
         await self.pool.stop()
 
     async def _send(self, ws, envelope: EXPEnvelope) -> None:
@@ -119,9 +225,23 @@ class DynamicAgentService:
         await ws.send(envelope.model_dump_json())
 
     async def _send_hello(self, ws) -> None:
+        # Política de doação: o Juiz não pode sobrescrever o gate local.
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=0.1)
+            mem = psutil.virtual_memory()
+            free_ram_gb = mem.available / (1024 ** 3)
+        except Exception:
+            cpu = 0.0
+            free_ram_gb = 999.0
+
+        gate_ok = self._gate_ok(cpu, free_ram_gb)
         payload = {
-            'models': [self.model],
-            'capabilities': ['polymorphic', 'hotload', 'metrics', 'worker_pool', 'local_search', 'zim_local'],
+            'models': [self.model] if self.model else [],
+            'capabilities': [
+                'polymorphic', 'hotload', 'metrics', 'worker_pool', 'local_search',
+                'zim_local', 'rag_local', 'discovery',
+            ],
             'specialties': [m.name for m in self.plugin_manager.list_plugins()],
             'cluster_role': self.cluster_role,
             'benchmark': self.benchmark_profile.as_dict(),
@@ -130,6 +250,24 @@ class DynamicAgentService:
                 'queue_max': self.pool.queue.maxsize,
             },
             'metrics': self.metrics.snapshot(),
+            'load': {
+                'queue_size': self.pool.queue.qsize(),
+                'utilization': self.pool.load_snapshot()['utilization'],
+                'cpu_pct': cpu,
+                'free_ram_gb': round(free_ram_gb, 2),
+                'est_tps': self.metrics.est_tps(),
+                'recent_fail_rate': self.metrics.recent_fail_rate(),
+            },
+            'donation': {
+                'enabled': self.donation.enabled,
+                'max_cpu_pct': self.donation.max_cpu_pct,
+                'min_free_ram_gb': self.donation.min_free_ram_gb,
+                'max_concurrent': self.donation.max_concurrent,
+                'run_when': self.donation.run_when,
+                'pause_on_battery': self.donation.pause_on_battery,
+            },
+            'paused': self._paused,
+            'ready': gate_ok and not self._paused,
         }
         hello = EXPEnvelope(source=self.node, type=EXPMessageType.HELLO, payload=payload)
         await self._send(ws, hello)
@@ -149,12 +287,64 @@ class DynamicAgentService:
         )
         await self._send(ws, vote)
 
+    def _gate_ok(self, cpu_pct: float, free_ram_gb: float) -> bool:
+        """Gate de doação local: o nó se autoregula, o Juiz não pode sobrescrever."""
+        if not self.donation.enabled or self._paused:
+            return False
+        if cpu_pct > self.donation.max_cpu_pct:
+            return False
+        if free_ram_gb < self.donation.min_free_ram_gb:
+            return False
+        if self.donation.pause_on_battery:
+            try:
+                import psutil
+
+                bat = psutil.sensors_battery()
+                if bat is not None and not bat.power_plugged:
+                    return False
+            except Exception:
+                pass
+        return True
+
+    def _on_peer(self, peer) -> None:
+        self._known_peers[peer.node_id] = {
+            'ip': peer.ip,
+            'http_port': peer.http_port,
+            'ws_port': peer.ws_port,
+            'role': peer.role,
+            'score': peer.score,
+            'models': peer.models,
+            'last_seen': peer.last_seen,
+        }
+
+    def _on_peer_mdns(self, peer) -> None:
+        self._known_peers[peer.node_id] = {
+            'ip': peer.ip,
+            'http_port': peer.port,
+            'ws_port': peer.port,
+            'role': peer.role,
+            'score': peer.score,
+            'models': peer.models,
+            'last_seen': peer.last_seen if hasattr(peer, 'last_seen') else 0,
+            'source': 'mdns',
+        }
+
     async def _heartbeat_loop(self, ws) -> None:
         while True:
+            try:
+                import psutil
+                cpu = psutil.cpu_percent(interval=0.1)
+                mem = psutil.virtual_memory()
+                free_ram_gb = mem.available / (1024 ** 3)
+            except Exception:
+                cpu = 0.0
+                free_ram_gb = 999.0
+
+            ready = self._gate_ok(cpu, free_ram_gb)
             hb = EXPEnvelope(
                 source=self.node,
                 type=EXPMessageType.HEARTBEAT,
-                payload=self._status_payload(),
+                payload=self._status_payload(cpu, free_ram_gb, ready),
             )
             await self._send(ws, hb)
             await asyncio.sleep(self.heartbeat_interval)
@@ -192,6 +382,9 @@ class DynamicAgentService:
             return
         if envelope.type == EXPMessageType.QUERY:
             await self._handle_query(ws, envelope)
+            return
+        if envelope.type == EXPMessageType.TASK_CANCEL:
+            await self._handle_task_cancel(envelope)
             return
 
     async def _handle_role_assign(self, ws, envelope: EXPEnvelope) -> None:
@@ -320,7 +513,51 @@ class DynamicAgentService:
         explicit_specialty = str(payload.get('specialty', '')).strip().lower() or None
         context = str(payload.get('context', '')).strip() or None
 
+        # Gate de doação: se não estiver apto, NACK para o Juiz re-filar.
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=0.1)
+            mem = psutil.virtual_memory()
+            free_ram_gb = mem.available / (1024 ** 3)
+        except Exception:
+            # Sem psutil: não bloquear por falta de métrica.
+            cpu = 0.0
+            free_ram_gb = 999.0
+
+        if not self._gate_ok(cpu, free_ram_gb):
+            await self._send(
+                ws,
+                EXPEnvelope(
+                    source=self.node,
+                    target=envelope.source,
+                    correlation_id=envelope.correlation_id or envelope.msg_id,
+                    type=EXPMessageType.TASK_NACK,
+                    payload={
+                        'task_id': task_id,
+                        'reason': 'overloaded',
+                        'load': self.pool.load_snapshot(),
+                    },
+                ),
+            )
+            return
+
+        # Seleciona o melhor modelo instalado neste nó (não depende do Juiz).
+        model = self.model or await self._select_model()
+        if not model:
+            await self._send(
+                ws,
+                EXPEnvelope(
+                    source=self.node,
+                    target=envelope.source,
+                    correlation_id=envelope.correlation_id or envelope.msg_id,
+                    type=EXPMessageType.TASK_NACK,
+                    payload={'task_id': task_id, 'reason': 'model_missing'},
+                ),
+            )
+            return
+
         specialty = explicit_specialty or self._task_specialty_override.get(task_id)
+        self._cancel_flags[task_id] = False
 
         item = WorkItem(
             correlation_id=envelope.correlation_id or envelope.msg_id,
@@ -335,25 +572,33 @@ class DynamicAgentService:
         try:
             fut = await self.pool.submit(item)
         except asyncio.QueueFull:
-            retry_msg = EXPEnvelope(
-                source=self.node,
-                target=envelope.source,
-                correlation_id=item.correlation_id,
-                type=EXPMessageType.TASK_RETRY,
-                payload={
-                    'task_id': task_id,
-                    'reason': 'overloaded',
-                    'load': self.pool.load_snapshot(),
-                },
+            await self._send(
+                ws,
+                EXPEnvelope(
+                    source=self.node,
+                    target=envelope.source,
+                    correlation_id=item.correlation_id,
+                    type=EXPMessageType.TASK_RETRY,
+                    payload={
+                        'task_id': task_id,
+                        'reason': 'overloaded',
+                        'load': self.pool.load_snapshot(),
+                    },
+                ),
             )
-            await self._send(ws, retry_msg)
             return
 
-        asyncio.create_task(self._finalize_task(ws, envelope.source, item, fut))
+        asyncio.create_task(self._finalize_task(ws, envelope.source, item, fut, model))
 
-    async def _finalize_task(self, ws, target: EXPNode, item: WorkItem, fut: asyncio.Future[str]) -> None:
+    async def _handle_task_cancel(self, envelope: EXPEnvelope) -> None:
+        task_id = str(envelope.payload.get('task_id', '')).strip()
+        self._cancel_flags[task_id] = True
+
+    async def _finalize_task(self, ws, target: EXPNode, item: WorkItem, fut: asyncio.Future[str], model: str) -> None:
         try:
             answer = await asyncio.wait_for(fut, timeout=self.task_timeout)
+            if self._cancel_flags.pop(item.task_id, False):
+                return  # cancelado pelo Juiz, não envia resultado
             envelope = EXPEnvelope(
                 source=self.node,
                 target=target,
@@ -389,12 +634,20 @@ class DynamicAgentService:
             await self._send(ws, error_msg)
         finally:
             self._task_specialty_override.pop(item.task_id, None)
+            self._cancel_flags.pop(item.task_id, None)
 
     async def _execute_item(self, item: WorkItem) -> str:
+        # 1) RAG local: responde a partir do próprio conhecimento do nó antes do modelo.
         local_hit = self.search_engine.search(item.subtask, limit=3)
+        if not local_hit.found:
+            local_hit = self.rag.search(item.subtask, limit=3)
         if local_hit.found:
             self.metrics.track_success()
             return '\n'.join(local_hit.snippets)
+
+        # 2) Se cancelado, interrompe imediatamente.
+        if self._cancel_flags.get(item.task_id):
+            raise asyncio.CancelledError()
 
         plugin = self.plugin_manager.get(item.specialty or '') if item.specialty else None
         if plugin is None:
@@ -406,9 +659,13 @@ class DynamicAgentService:
         prompt = plugin.build_prompt(subtask=item.subtask, context=item.context)
         started = time.perf_counter()
         try:
+            # Modelo escolhido por este nó (melhor instalado), não imposto pelo Juiz.
+            model = item.context.get('model') if isinstance(item.context, dict) else None
+            if not model:
+                model = self.model or await self._select_model()
             answer = await self.ollama.generate(
                 OllamaGenerateRequest(
-                    model=self.model,
+                    model=model,
                     prompt=prompt,
                     temperature=0.35,
                     num_ctx=4096,
@@ -420,7 +677,13 @@ class DynamicAgentService:
             latency_ms = (time.perf_counter() - started) * 1000
             self.metrics.track_latency(latency_ms)
 
-    def _status_payload(self) -> dict:
+    async def _select_model(self) -> str | None:
+        try:
+            return await self.ollama.select_best_model()
+        except Exception:
+            return self.model
+
+    def _status_payload(self, cpu_pct: float = 0.0, free_ram_gb: float = 0.0, ready: bool = False) -> dict:
         return {
             'timestamp': datetime.now(UTC).isoformat(),
             'model': self.model,
@@ -432,6 +695,15 @@ class DynamicAgentService:
                 'max_concurrency': self.pool.workers,
                 'queue_max': self.pool.queue.maxsize,
             },
-            'load': self.pool.load_snapshot(),
+            'load': {
+                'queue_size': self.pool.queue.qsize(),
+                'utilization': self.pool.load_snapshot()['utilization'],
+                'cpu_pct': cpu_pct,
+                'free_ram_gb': round(free_ram_gb, 2),
+                'est_tps': self.metrics.est_tps(),
+                'recent_fail_rate': self.metrics.recent_fail_rate(),
+            },
             'metrics': self.metrics.snapshot(),
+            'ready': ready,
+            'paused': self._paused,
         }

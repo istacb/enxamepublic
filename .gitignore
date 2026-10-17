@@ -1,1 +1,5 @@
-Nothing should be ignored based on the provided file changes. The only modified file is a Python source file (`bees/install/install_bee.py`), which should not be added to .gitignore.
+__pycache__/
+*.py[c]
+*.log
+.env
+*.db

@@ -4,7 +4,8 @@ import asyncio
 import json
 import logging
 import os
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -19,6 +20,9 @@ from core.exp.server import EXPServerAdapter
 from core.exp.types import EXPMessageType
 from guardian import GuardianPatrol
 
+from core.discovery.beacon import Beacon, discover_peers
+from core.discovery.mdns import MdnsDiscovery
+from core.ollama.client import OllamaError
 from .service import JuizService
 
 logger = logging.getLogger('juiz.guardian')
@@ -36,6 +40,27 @@ server_adapter = EXPServerAdapter(security=security)
 app = FastAPI(title='ENXAME Juiz', version='1.2.0')
 installed_plugins: list[dict] = []
 
+# Sessões locais do UI (browser não tem o segredo EXP; o servidor assina para ele).
+# ponytail: sessões em memória, ceiling = reiniciar invalida tokens; upgrade = cookie seguro + store durável.
+SESSION_TTL = timedelta(minutes=30)
+sessions: dict[str, datetime] = {}
+
+
+def _new_session() -> str:
+    token = secrets.token_urlsafe(16)
+    sessions[token] = datetime.now(UTC)
+    return token
+
+
+def _require_session(request: Request) -> None:
+    token = request.headers.get('x-session-token') or request.query_params.get('session')
+    if not token or token not in sessions:
+        raise HTTPException(status_code=401, detail='Sessão inválida ou expirada')
+    sessions[token] = datetime.now(UTC)
+    now = datetime.now(UTC)
+    for t in [k for k, v in sessions.items() if now - v > SESSION_TTL]:
+        sessions.pop(t, None)
+
 # Configurar diretório de arquivos estáticos
 static_path = Path(__file__).parent / 'static'
 if static_path.exists():
@@ -52,11 +77,43 @@ _guardian_patrol = GuardianPatrol(
 )
 _guardian_task: asyncio.Task | None = None
 
+# Beacon de descoberta LAN (UDP broadcast). O Juiz anuncia sua presença e
+# escuta agentes no mesmo segmento de rede.
+_beacon = Beacon(
+    node_id=NODE_ID,
+    ip='0.0.0.0',
+    http_port=7700,
+    ws_port=7700,
+    role='juiz',
+    score=0.0,
+    models=[],
+)
+_beacon_task: asyncio.Task | None = None
+
+# mDNS real via zeroconf (opcional; silencioso se não instalado).
+_mdns = MdnsDiscovery(
+    node_id=NODE_ID,
+    ip='0.0.0.0',
+    port=7700,
+    role='juiz',
+    score=0.0,
+    models=[],
+)
+
+
+async def _beacon_loop() -> None:
+    while True:
+        _beacon.announce()
+        await asyncio.sleep(5)
+
 
 @app.on_event('startup')
 async def start_guardian_patrol() -> None:
-    global _guardian_task
+    global _guardian_task, _beacon_task
     _guardian_task = asyncio.create_task(_guardian_patrol.run_forever())
+    _beacon.start()
+    _beacon_task = asyncio.create_task(_beacon_loop())
+    _mdns.start()
 
 
 @app.on_event('shutdown')
@@ -68,6 +125,10 @@ async def stop_guardian_patrol() -> None:
             await _guardian_task
         except asyncio.CancelledError:
             pass
+    if _beacon_task is not None:
+        _beacon_task.cancel()
+    _beacon.stop()
+    _mdns.stop()
 
 
 @app.get('/api/v1/health')
@@ -147,7 +208,57 @@ async def cancel_task(task_id: str, request: Request) -> dict:
         return {'task_id': task_id, 'status': task.status}
     task.status = 'cancelled'
     task.updated_at = datetime.now(UTC)
-    return {'task_id': task_id, 'status': task.status}
+    service.cancel_task(task_id)
+    return {'task_id': task_id, 'status': 'cancelled'}
+
+
+@app.post('/api/node/{node_id}/pause')
+async def pause_node(node_id: str, request: Request) -> dict:
+    _require_session(request)
+    body = await request.json()
+    paused = bool(body.get('paused', True))
+    ok = service.pause_node(node_id, paused)
+    if not ok:
+        raise HTTPException(status_code=404, detail='Nó não encontrado')
+    return {'node_id': node_id, 'paused': paused}
+
+
+@app.get('/api/cluster/discover')
+async def cluster_discover(request: Request) -> dict:
+    _require_session(request)
+    # Descoberta one-shot via beacon UDP.
+    import asyncio
+
+    peers = await asyncio.get_running_loop().run_in_executor(None, discover_peers, 3.0)
+    return {
+        'peers': [
+            {
+                'node_id': p.node_id,
+                'ip': p.ip,
+                'http_port': p.http_port,
+                'ws_port': p.ws_port,
+                'role': p.role,
+                'score': p.score,
+                'models': p.models,
+            }
+            for p in peers
+        ]
+    }
+
+
+@app.get('/api/cluster/models')
+async def cluster_models(request: Request) -> dict:
+    _require_session(request)
+    try:
+        models = await service.ollama.list_models()
+        best = await service.ollama.select_best_model()
+    except OllamaError:
+        models = []
+        best = None
+    return {
+        'models': [{'name': m.name, 'size_mb': round(m.size_mb, 1)} for m in models],
+        'best': best,
+    }
 
 
 @app.get('/api/v1/task/{task_id}/stream')
@@ -242,9 +353,78 @@ async def list_agents(request: Request) -> list[dict]:
                 'cluster_role': conn.cluster_role,
                 'benchmark_score': conn.benchmark_score,
                 'benchmark': conn.benchmark,
+                'paused': conn.paused,
+                'ready': conn.ready,
+                'cpu_pct': conn.cpu_pct,
+                'free_ram_gb': conn.free_ram_gb,
+                'est_tps': conn.est_tps,
             }
         )
     return out
+
+
+@app.post('/api/session')
+async def create_session() -> dict:
+    return {'token': _new_session()}
+
+
+@app.get('/api/status')
+async def ui_status(request: Request) -> dict:
+    _require_session(request)
+    service._prune_stale_agents()
+    nodes = []
+    for conn in service.agents.values():
+        nodes.append(
+            {
+                'node_id': conn.node.node_id,
+                'cluster_role': conn.cluster_role,
+                'active_tasks': conn.active_tasks,
+                'max_concurrency': conn.max_concurrency,
+                'queue_size': conn.queue_size,
+                'utilization': conn.utilization,
+                'cpu_pct': conn.cpu_pct,
+                'free_ram_gb': conn.free_ram_gb,
+                'est_tps': conn.est_tps,
+                'models': conn.models,
+                'fail_count': conn.fail_count,
+                'benchmark_score': conn.benchmark_score,
+                'paused': conn.paused,
+                'ready': conn.ready,
+            }
+        )
+    return {'node': NODE_ID, 'agents': nodes, 'tasks_total': len(service.tasks)}
+
+
+@app.post('/api/chat')
+async def ui_chat(request: Request) -> dict:
+    _require_session(request)
+    body = await request.json()
+    prompt = str(body.get('prompt', '')).strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Campo 'prompt' é obrigatório")
+    task = await service.submit_task(prompt)
+    return {'task_id': task.task_id, 'status': task.status}
+
+
+@app.get('/api/chat/stream/{task_id}')
+async def ui_stream(task_id: str, request: Request) -> StreamingResponse:
+    _require_session(request)
+    task = service.tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail='Tarefa não encontrada')
+
+    async def event_stream():
+        sent = 0
+        while True:
+            while sent < len(task.events):
+                ev = task.events[sent]
+                yield f'data: {json.dumps(ev, ensure_ascii=False)}\n\n'
+                sent += 1
+            if task.status in {'completed', 'failed', 'cancelled'} and sent >= len(task.events):
+                break
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(event_stream(), media_type='text/event-stream')
 
 
 @app.post('/api/v1/plugins')
@@ -296,5 +476,18 @@ async def exp_socket(websocket: WebSocket) -> None:
                 )
             )
             return
+        if envelope.type == EXPMessageType.TASK_NACK:
+            await service.accept_task_nack(envelope)
+            return
+        if envelope.type == EXPMessageType.TASK_CANCEL:
+            await service.accept_task_cancel(envelope)
+            return
 
     await server_adapter.serve_socket(websocket, handler)
+
+
+# UI pixel-art: servida em "/". Rotas /api/ são registradas acima e têm prioridade.
+# ponytail: um único diretório estático, sem build step; ceiling = sem cache-control/versionamento de assets.
+_ui_path = Path(__file__).resolve().parent.parent / 'web'
+if _ui_path.exists():
+    app.mount('/', StaticFiles(directory=str(_ui_path), html=True), name='ui')
