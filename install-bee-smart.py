@@ -94,12 +94,14 @@ PYTHON_REQUIREMENTS = [
 ]
 
 # Modelos recomendados por hardware
-# Tags precisam existir de fato em ollama.com/library. As anteriores eram
-# inválidas: `phi3:2.7b` e `phi3:3.8b` não existem (phi3 tem mini=3.8B,
-# small=7B, medium=14B), então `ollama pull` falhava e o bee ficava sem modelo.
-# Como GPUtil quase nunca está instalado, "cpu_only" era o ramo escolhido para
-# praticamente todo mundo -> todos recebiam uma tag inexistente.
-# Mantido em sincronia com LIGHT_MODELS de core/ollama/client.py.
+# Tags precisam existir em ollama.com/library. `phi3:2.7b` NÃO existe: a
+# família phi3 publica só 3.8b (mini) e 14b (medium); 2.7B é o phi2, cuja tag
+# é `phi:2.7b`. Como GPUtil nunca estava instalado (não estava nas
+# dependências), gpu_available era sempre False e o ramo "cpu_only" era o
+# escolhido para praticamente todo mundo -> quase todo usuário recebia uma tag
+# inexistente e o `ollama pull` falhava, deixando o bee sem modelo.
+# (`phi3:3.8b`, `llama3:8b` e `mistral:7b` são válidas; trocadas mesmo assim
+# para manter coerência com LIGHT_MODELS de core/ollama/client.py.)
 RECOMMENDED_MODELS = {
     "high_gpu": "llama3.1:8b",        # GPU 16GB+ VRAM
     "medium_gpu": "qwen2.5:7b",       # GPU 8GB VRAM
