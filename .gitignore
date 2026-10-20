@@ -3,3 +3,8 @@ __pycache__/
 *.log
 .env
 *.db
+
+# Artefatos gerados pelo instalador (install-bee-smart.py)
+.venv-bee/
+.venv*/
+bee-dashboard.html

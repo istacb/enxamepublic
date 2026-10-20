@@ -267,7 +267,9 @@ class LocalBeeLibrarian:
 
         # 2. MEMÓRIA SEMÂNTICA (via BeeMemory)
         if self.memory:
-            mem_result = await self.memory.search_semantic(query_clean)
+            # BeeMemory.search_semantic é síncrono (sqlite3); await direto causava
+            # TypeError. Executa em thread para não bloquear o event loop.
+            mem_result = await asyncio.to_thread(self.memory.search_semantic, query_clean)
             if mem_result and mem_result.get("confidence", 0) > 0.75:
                 result = SearchResult(
                     answer=mem_result["response"],

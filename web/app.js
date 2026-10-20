@@ -36,8 +36,17 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 async function init() {
-  const { token } = await api('/api/session');
-  sessionToken = token;
+  // /api/session é @app.post no Juiz (juiz/app.py). O default de api() é GET,
+  // então isto devolvia 404, o throw abortava init() antes de registrar os
+  // setInterval/listeners, sessionToken ficava vazio e sendMessage() saía em
+  // `if (!sessionToken) return` — a UI carregava mas NADA funcionava.
+  try {
+    const { token } = await api('/api/session', { method: 'POST' });
+    sessionToken = token;
+  } catch (e) {
+    console.error('Falha ao criar sessão:', e);
+    CLUSTER_LABEL.textContent = 'cluster: sem sessão';
+  }
   loadStatus();
   loadModels();
   setInterval(loadStatus, 2000);

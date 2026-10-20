@@ -10,6 +10,7 @@ Este é o ponto de entrada principal para executar uma Abelha standalone.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import logging
@@ -72,6 +73,13 @@ class BeeService:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+
+        # Servidor HTTP (precisam existir desde o __init__: stop() é chamado
+        # pelo finally de main() mesmo quando start() falha no meio, e antes
+        # eles só eram criados no passo 8 de start() -> AttributeError no
+        # shutdown mascarava o erro real do startup.)
+        self._own_http_server = False
+        self._http_runner: Any = None
 
         self._register_protocol_handlers()
 
@@ -183,7 +191,7 @@ class BeeService:
         logger.info("Descoberta mDNS iniciada")
 
         # 6. Anunciar presença via mDNS usando BeeDiscoveryService (não NodeAnnouncer)
-        self._discovery.start_announcement()
+        await self._discovery.start_announcement()
         logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
 
         # 7. Inicializar Cluster (EIP-0009) - aguardar descoberta inicial
@@ -248,7 +256,7 @@ class BeeService:
 
         # Parar anúncio mDNS
         if self._discovery:
-            self._discovery.stop_announcement()
+            await self._discovery.stop_announcement()
 
         # Parar descoberta
         if self._discovery:
@@ -499,10 +507,16 @@ class BeeService:
         app.router.add_post("/api/v1/ingest", ingest)
 
         # Servir arquivos estáticos da Web UI
-        web_dir = Path(__file__).resolve().parents[2] / "web"
+        # parents[1] = raiz do repositório (este arquivo é <repo>/bees/service.py).
+        # Antes usava parents[2], que apontava para FORA do repositório
+        # (<pai-do-repo>/web), então a pasta nunca existia e a UI nunca era
+        # servida — o browser recebia 404 em "/".
+        web_dir = Path(__file__).resolve().parents[1] / "web"
         if web_dir.exists():
             app.router.add_static('/', web_dir, show_index=True)
             logger.info(f"Servindo Web UI de {web_dir}")
+        else:
+            logger.warning(f"Web UI não encontrada em {web_dir}")
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -901,7 +915,7 @@ class BeeService:
                 load = self._calculate_load()
                 # Atualizar anúncio mDNS com nova carga via BeeDiscoveryService
                 if self._discovery:
-                    self._discovery.update_announcement(load, self.state)
+                    await self._discovery.update_announcement(load, self.state)
             except Exception as e:
                 logger.error(f"Erro no load metrics: {e}")
             await asyncio.sleep(60)
@@ -964,7 +978,11 @@ class BeeService:
         """Consulta fontes locais: memória + RAG."""
         # 1. Memória semântica
         if self._memory:
-            mem_result = await self._memory.search_semantic(query)
+            # BeeMemory é 100% síncrono (sqlite3, criado com check_same_thread=False).
+            # `await self._memory.search_semantic(...)` estourava
+            # "object NoneType can't be used in 'await' expression" e quebrava
+            # todo POST /api/v1/query. Roda em thread para não bloquear o loop.
+            mem_result = await asyncio.to_thread(self._memory.search_semantic, query)
             if mem_result and mem_result.get("confidence", 0) > 0.8:
                 return {"answer": mem_result["response"], "confidence": mem_result["confidence"], "source_type": "memory"}
 
@@ -1102,9 +1120,13 @@ async def main() -> int:
     bee = BeeService(config)
 
     # Setup signal handlers
-    loop = asyncio.get_event_loop()
+    # NOTE: loop.add_signal_handler() não existe no Windows (ProactorEventLoop
+    # levanta NotImplementedError). Sem este guard o bee morria no startup em
+    # Windows, que é uma das plataformas que o instalador declara suportar.
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(bee.stop()))
+        with suppress(NotImplementedError, ValueError, OSError, RuntimeError):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(bee.stop()))
 
     try:
         await bee.start()

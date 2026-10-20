@@ -491,8 +491,24 @@ class AutoDiscoveryService:
         return (cpu + mem) / 2.0
 
     def update_announcement(self, load: float, state: BeeState = BeeState.RUNNING) -> None:
-        """Atualiza anúncio base (delega para BeeDiscoveryService)."""
-        self._bee_discovery.update_announcement(load, state)
+        """Atualiza anúncio base (delega para BeeDiscoveryService).
+
+        ``BeeDiscoveryService.update_announcement`` é uma coroutine (usa
+        AsyncZeroconf). Este wrapper é chamado de contexto síncrono, então a
+        coroutine é agendada no loop corrente — chamá-la sem await geraria
+        apenas "coroutine was never awaited" e nenhum anúncio seria atualizado.
+        """
+        coro = self._bee_discovery.update_announcement(load, state)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            loop.create_task(coro)
+        else:
+            from contextlib import suppress
+            with suppress(Exception):
+                asyncio.run(coro)
         # Atualizar evoluído se rodando
         if self._zeroconf and self._evolved_info:
             import json

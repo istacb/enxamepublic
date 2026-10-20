@@ -16,11 +16,13 @@ import json
 import logging
 import socket
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from zeroconf import IPVersion, ServiceBrowser, ServiceInfo, ServiceStateChange, Zeroconf
+from zeroconf import IPVersion, ServiceInfo, ServiceStateChange
+from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
 from .protocol.messages import BeeManifesto, BeeState
 
@@ -79,19 +81,26 @@ class BeeDiscoveryService:
         self.heartbeat_timeout = heartbeat_timeout
 
         self._peers: dict[str, DiscoveredPeer] = {}
-        self._zeroconf: Zeroconf | None = None
-        self._browser: ServiceBrowser | None = None
+        self._zeroconf: AsyncZeroconf | None = None
+        self._browser: AsyncServiceBrowser | None = None
         self._info: ServiceInfo | None = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
-        """Inicia descoberta mDNS."""
-        self._zeroconf = Zeroconf(ip_version=IPVersion.V4Only)
+        """Inicia descoberta mDNS.
+
+        Usa AsyncZeroconf: a API síncrona (``Zeroconf``/``ServiceBrowser``/
+        ``register_service``) chama ``run_coro_with_timeout`` internamente e,
+        quando invocada a partir de um event loop já em execução, levanta
+        ``zeroconf._exceptions.EventLoopBlocked`` — que matava o bee no passo 6
+        do startup em qualquer sistema operacional.
+        """
+        self._zeroconf = AsyncZeroconf(ip_version=IPVersion.V4Only)
 
         # Iniciar browser para descobrir peers
-        self._browser = ServiceBrowser(
-            self._zeroconf,
+        self._browser = AsyncServiceBrowser(
+            self._zeroconf.zeroconf,
             SERVICE_TYPE,
             handlers=[self._on_service_state_change],
         )
@@ -112,18 +121,18 @@ class BeeDiscoveryService:
                 await task
 
         if self._browser:
-            self._browser.cancel()
+            await self._browser.async_cancel()
             self._browser = None
 
         if self._zeroconf:
-            self._zeroconf.close()
+            await self._zeroconf.async_close()
             self._zeroconf = None
 
         logger.info("Descoberta mDNS parada")
 
     def _on_service_state_change(
         self,
-        zeroconf: Zeroconf,
+        zeroconf: Any,
         service_type: str,
         name: str,
         state_change: ServiceStateChange,
@@ -134,10 +143,25 @@ class BeeDiscoveryService:
             return
 
         if state_change is ServiceStateChange.Added:
-            # Resolver serviço para obter detalhes
-            info = zeroconf.get_service_info(service_type, name)
+            # Resolver serviço para obter detalhes (assíncrono, sem bloquear o loop)
+            asyncio.ensure_future(self._resolve_service(zeroconf, service_type, name))
+
+    async def _resolve_service(
+        self,
+        zeroconf: Any,
+        service_type: str,
+        name: str,
+    ) -> None:
+        """Resolve um serviço descoberto e registra o peer."""
+        try:
+            info = AsyncServiceInfo(service_type, name)
+            # O handler do AsyncServiceBrowser recebe a instância síncrona
+            # `Zeroconf` (não o wrapper AsyncZeroconf), então é passada direto.
+            await info.async_request(zeroconf, timeout=3000)
             if info:
                 self._process_service_info(info)
+        except Exception as e:
+            logger.warning(f"Falha ao resolver serviço mDNS {name}: {e}")
 
     def _process_service_info(self, info: ServiceInfo) -> None:
         """Processa informações de um serviço descoberto."""
@@ -290,12 +314,9 @@ class BeeDiscoveryService:
     # Anúncio via mDNS
     # =========================================================================
 
-    def start_announcement(self) -> None:
-        """Inicia anúncio mDNS desta Abelha."""
-        if not self._zeroconf:
-            return
-
-        self._info = ServiceInfo(
+    def _build_service_info(self, load: float = 0.0, state: BeeState = BeeState.RUNNING) -> ServiceInfo:
+        """Monta o ServiceInfo do anúncio desta Abelha."""
+        return ServiceInfo(
             type_=SERVICE_TYPE,
             name=f"{self.node_id}.{SERVICE_TYPE}",
             addresses=[socket.inet_aton(self._get_local_ip())],
@@ -305,34 +326,40 @@ class BeeDiscoveryService:
                 "role": "bee",
                 "capabilities": json.dumps(self.capabilities),
                 "models": json.dumps(self.models),
-                "load": "0.0",
-                "state": "RUNNING",
+                "load": str(load),
+                "state": state.value,
                 "protocol_version": "1.0",
             },
             server=f"{self.node_id}.local.",
         )
-        self._zeroconf.register_service(self._info)
+
+    async def start_announcement(self) -> None:
+        """Inicia anúncio mDNS desta Abelha."""
+        if not self._zeroconf:
+            return
+
+        self._info = self._build_service_info()
+        await self._zeroconf.async_register_service(self._info)
         logger.info(f"Anúncio mDNS iniciado: {self.node_id}")
 
-    def stop_announcement(self) -> None:
+    async def stop_announcement(self) -> None:
         """Para anúncio mDNS."""
         if self._zeroconf and self._info:
-            self._zeroconf.unregister_service(self._info)
+            with suppress(Exception):
+                await self._zeroconf.async_unregister_service(self._info)
             self._info = None
 
-    def update_announcement(self, load: float, state: BeeState = BeeState.RUNNING) -> None:
+    async def update_announcement(self, load: float, state: BeeState = BeeState.RUNNING) -> None:
         """Atualiza anúncio com nova carga/estado."""
-        if self._zeroconf and self._info:
-            self._info.properties = {
-                "node_id": self.node_id,
-                "role": "bee",
-                "capabilities": json.dumps(self.capabilities),
-                "models": json.dumps(self.models),
-                "load": str(load),
-                "state": state.value,
-                "protocol_version": "1.0",
-            }
-            self._zeroconf.update_service(self._info)
+        if not (self._zeroconf and self._info):
+            return
+
+        # ServiceInfo.properties é somente-leitura (AttributeError se atribuído),
+        # então o registro é reconstruído com as novas propriedades.
+        new_info = self._build_service_info(load, state)
+        with suppress(Exception):
+            await self._zeroconf.async_update_service(new_info)
+        self._info = new_info
 
     def _get_local_ip(self) -> str:
         """Obtém IP local da máquina."""

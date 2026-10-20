@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
 from .state import ClusterRole, ClusterState
 
-
-class ClusterRole(Enum):
-    """Papéis no cluster Enxame."""
-    JUIZ = "juiz"
-    BIBLIOTECARIO = "bibliotecario"
-    GUARDA = "guarda"
-    WORKER = "worker"
-    WORKER_ARTIST = "worker_artist"
+# ClusterRole agora vive em .state (módulo base do pacote) para quebrar o
+# ciclo de importação state <-> election. É re-exportado aqui para manter
+# compatibilidade com `from bees.cluster.election import ClusterRole`.
+__all__ = [
+    "ClusterRole",
+    "ClusterState",
+    "PeerScore",
+    "JUIZ_CAPS",
+    "BIBLIOTECARIO_CAPS",
+    "GUARDA_CAPS",
+    "has_capabilities",
+    "score_peer",
+    "elect_roles",
+    "elect_juiz_failover",
+    "restore_juiz",
+]
 
 
 # Capabilities requeridas para cada papel primário

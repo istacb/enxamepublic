@@ -25,6 +25,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # --- Cores para output ---
@@ -58,7 +59,11 @@ except ImportError:
 
 # --- Configurações Globais ---
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent  # Pasta do enxamepublic
+# Este script fica NA RAIZ do repositório (enxamepublic/install-bee-smart.py),
+# então SCRIPT_DIR já é a raiz. O `.parent` anterior apontava para o diretório
+# PAI do clone, fazendo BEE_SERVICE_PATH/KERNEL_PATH resolverem para caminhos
+# inexistentes (ex.: /home/voce/bees/service.py em vez de /home/voce/enxamepublic/bees/service.py).
+REPO_ROOT = SCRIPT_DIR
 DATA_DIR_DEFAULT = Path.home() / "enxame" / "data"
 LOG_DIR_DEFAULT = Path.home() / "enxame" / "logs"
 CONFIG_DIR_DEFAULT = Path.home() / ".enxame"
@@ -79,15 +84,372 @@ PYTHON_REQUIREMENTS = [
     "rich==13.8.1",
     "zeroconf==0.135.0",
     "psutil>=5.9.0",
+    # O serviço BEE é aiohttp (bees/service.py) e a identidade usa cryptography
+    # (bees/config.py). Nenhum dos dois estava aqui, então mesmo com o
+    # instalador "concluindo com sucesso" o serviço não subia: ModuleNotFoundError.
+    "aiohttp>=3.9.0",
+    "cryptography>=42.0.0",
+    "platformdirs>=4.0.0",
+    "PyYAML>=6.0.0",
 ]
 
 # Modelos recomendados por hardware
+# Tags precisam existir de fato em ollama.com/library. As anteriores eram
+# inválidas: `phi3:2.7b` e `phi3:3.8b` não existem (phi3 tem mini=3.8B,
+# small=7B, medium=14B), então `ollama pull` falhava e o bee ficava sem modelo.
+# Como GPUtil quase nunca está instalado, "cpu_only" era o ramo escolhido para
+# praticamente todo mundo -> todos recebiam uma tag inexistente.
+# Mantido em sincronia com LIGHT_MODELS de core/ollama/client.py.
 RECOMMENDED_MODELS = {
-    "high_gpu": "llama3:8b",       # GPU 16GB+ VRAM
-    "medium_gpu": "phi3:3.8b",     # GPU 8GB VRAM
-    "low_gpu_ram_heavy": "mistral:7b",  # Muita RAM, pouca GPU
-    "cpu_only": "phi3:2.7b",       # Apenas CPU
+    "high_gpu": "llama3.1:8b",        # GPU 16GB+ VRAM
+    "medium_gpu": "qwen2.5:7b",       # GPU 8GB VRAM
+    "low_gpu_ram_heavy": "qwen2.5:3b",  # Muita RAM, pouca GPU
+    "cpu_only": "llama3.2:3b",        # Apenas CPU
 }
+
+
+# Template puro (sem f-string): CSS e JS usam {} à vontade, sem precisar de
+# {{}}. Os pontos dinâmicos são tokens __ASSIM__ substituídos em runtime.
+DASHBOARD_TEMPLATE = """<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BEE - Assistente Inteligente</title>
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --bg-secondary: #111827;
+            --card: #1a2230;
+            --accent: #00d4aa;
+            --accent-dim: #00a080;
+            --text: #e8e8e8;
+            --muted: #6b7a8c;
+            --error: #e74c3c;
+            --success: #27ae60;
+            --warning: #f39c12;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #333;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+
+        .header-content {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .bee-title {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .status-line { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--muted); }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            background: var(--warning);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        main {
+            max-width: 1000px;
+            margin: 0 auto;
+            flex: 1;
+            padding: 1.5rem;
+            width: 100%;
+        }
+
+        .section {
+            background: var(--card);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid #333;
+        }
+
+        .section h2 { margin: 0 0 0.5rem 0; font-size: 1rem; color: var(--accent); }
+
+        .prompt-area {
+            background: var(--bg-secondary);
+            border: 1px solid #333;
+            border-radius: 20px;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .prompt-input {
+            flex: 1;
+            min-width: 200px;
+            background: var(--bg);
+            border: none;
+            padding: 0.5rem 0.75rem;
+            color: var(--text);
+            font-size: 0.9rem;
+            border-radius: 15px;
+            outline: none;
+        }
+
+        .prompt-input:focus { box-shadow: 0 0 0 2px var(--accent); }
+
+        .btn-send {
+            background: var(--accent);
+            border: none;
+            padding: 0 1rem;
+            color: var(--bg);
+            font-weight: bold;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .btn-send:hover { background: var(--accent-dim); }
+        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; background: var(--muted); }
+
+        .responses-area { flex: 1; min-height: 200px; max-height: 50vh; overflow-y: auto; padding: 0.5rem; }
+
+        .response-item {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 0.5rem;
+            margin: 0.25rem 0;
+            border-left: 3px solid var(--accent);
+        }
+
+        .response-item.user { border-left-color: #3498db; }
+        .response-item.err { border-left-color: var(--error); }
+
+        .response-meta {
+            font-size: 0.65rem;
+            color: var(--muted);
+            margin-top: 0.25rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .response-text { font-size: 0.85rem; line-height: 1.4; margin-top: 0.25rem; white-space: pre-wrap; }
+        .response-text code { background: #2d3748; padding: 0 2px; border-radius: 3px; font-size: 0.7rem; }
+
+        .model-info { background: var(--bg-secondary); border-radius: 6px; padding: 0.75rem; text-align: center; }
+        .model-name { color: var(--accent); font-weight: bold; font-size: 1.1rem; }
+
+        .model-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--warning);
+            margin-right: 0.35rem;
+        }
+
+        .kv { font-size: 0.8rem; color: var(--muted); margin: 0.15rem 0; }
+        .kv b { color: var(--text); }
+
+        .peer-item { background: var(--bg-secondary); border-radius: 6px; padding: 0.5rem; font-size: 0.75rem; margin: 0.25rem 0; }
+
+        .hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.5rem; line-height: 1.5; }
+
+        @media (max-width: 480px) {
+            .header-content { flex-direction: column; align-items: flex-start; }
+            .prompt-area { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="bee-title">BEE &mdash; ENXAME</div>
+            <div class="status-line">
+                <span class="status-indicator" id="statusDot" title="status"></span>
+                <span id="statusText">verificando&hellip;</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section class="section" id="modelSection">
+            <h2>Modelo ativo</h2>
+            <div class="model-info">
+                <span class="model-status" id="modelStatus" title="estado do modelo"></span>
+                <span class="model-name" id="modelName">__MODEL_NAME__</span>
+            </div>
+            <p class="kv" id="ollamaLine">Ollama: <b>__OLLAMA_URL__</b></p>
+            <p class="kv" id="beeLine">BEE: <b>__BEE_URL__</b></p>
+        </section>
+
+        <section class="section">
+            <h2>Fazer uma pergunta</h2>
+            <div class="prompt-area">
+                <input type="text" class="prompt-input" id="promptInput"
+                    placeholder="Digite sua pergunta aqui..." maxlength="300">
+                <button class="btn-send" id="sendBtn">Enviar</button>
+            </div>
+            <p class="hint">
+                A resposta vem de <code>POST __BEE_URL__/api/v1/query</code>.
+                Se o BEE estiver offline, nada aqui funciona &mdash; inicie-o com
+                <code>python -m bees.service</code> na raiz do reposit&oacute;rio.
+            </p>
+        </section>
+
+        <section class="section">
+            <h2>Respostas</h2>
+            <div class="responses-area" id="responsesArea">
+                <div class="response-item bee" id="welcomeResponse">
+                    <div class="response-text">Olá! Painel gerado pelo instalador BEE em __GENERATED_AT__.</div>
+                    <div class="response-meta"><span>BEE</span><span>agora</span></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="hardwareSection">
+            <h2>Hardware detectado na instala&ccedil;&atilde;o</h2>
+            <p class="kv">RAM: <b>__RAM_GB__ GB</b></p>
+            <p class="kv">GPU: <b>__GPU_DISPLAY__</b></p>
+            <p class="kv">Modelos Ollama presentes: <b id="modelsList">&mdash;</b></p>
+        </section>
+
+        <section class="section" id="peerSection">
+            <h2>Peers na rede</h2>
+            <div id="peerList"><p class="kv">nenhum peer consultado ainda</p></div>
+        </section>
+    </main>
+
+    <script>
+        var BEE_URL = "__BEE_URL__";
+        var OLLAMA_URL = "__OLLAMA_URL__";
+        var INSTALLED_MODELS = __MODELS_JSON__;
+
+        function el(id) { return document.getElementById(id); }
+
+        function now() {
+            return new Date().toLocaleTimeString();
+        }
+
+        function addItem(text, who, kind) {
+            var item = document.createElement('div');
+            item.className = 'response-item ' + (kind || who);
+            var body = document.createElement('div');
+            body.className = 'response-text';
+            body.textContent = text;
+            var meta = document.createElement('div');
+            meta.className = 'response-meta';
+            meta.innerHTML = '<span>' + who + '</span><span>' + now() + '</span>';
+            item.appendChild(body);
+            item.appendChild(meta);
+            el('responsesArea').prepend(item);
+            return item;
+        }
+
+        async function checkStatus() {
+            var dot = el('statusDot');
+            try {
+                var res = await fetch(BEE_URL + '/health');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                var data = await res.json();
+                dot.style.background = 'var(--success)';
+                el('statusText').textContent = 'BEE online · ' + (data.state || 'ok') +
+                    ' · ' + (data.peers || 0) + ' peer(s)';
+
+                var st = await fetch(BEE_URL + '/api/v1/status');
+                if (st.ok) {
+                    var s = await st.json();
+                    var ollamaUp = s.ollama === 'online';
+                    el('modelStatus').style.background = ollamaUp ? 'var(--success)' : 'var(--error)';
+                    el('modelStatus').title = ollamaUp ? 'Ollama online' : 'Ollama offline';
+                }
+
+                var pr = await fetch(BEE_URL + '/api/v1/peers');
+                if (pr.ok) {
+                    var pd = await pr.json();
+                    var peers = pd.peers || [];
+                    el('peerList').innerHTML = peers.length
+                        ? peers.map(function (p) {
+                            return '<div class="peer-item">' + (p.node_id || '?') + ' &middot; ' +
+                                (p.host || '') + ':' + (p.port || '') + ' &middot; ' + (p.role || '') + '</div>';
+                          }).join('')
+                        : '<p class="kv">nenhum peer descoberto</p>';
+                }
+            } catch (e) {
+                dot.style.background = 'var(--error)';
+                el('statusText').textContent = 'BEE offline (' + e.message + ')';
+                el('modelStatus').style.background = 'var(--error)';
+            }
+        }
+
+        async function sendPrompt() {
+            var input = el('promptInput');
+            var query = input.value.trim();
+            if (!query) return;
+
+            var btn = el('sendBtn');
+            btn.disabled = true;
+            input.value = '';
+            addItem(query, 'Você', 'user');
+            var pending = addItem('processando…', 'BEE', 'bee');
+
+            try {
+                var res = await fetch(BEE_URL + '/api/v1/query', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+                var data = await res.json();
+                if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                pending.remove();
+                var answer = data.answer || '(sem resposta)';
+                if (data.fallback) answer += '  [fallback: nenhuma fonte local relevante]';
+                addItem(answer, 'BEE', 'bee');
+            } catch (e) {
+                pending.remove();
+                addItem('Erro: ' + e.message, 'BEE', 'err');
+            } finally {
+                btn.disabled = false;
+                input.focus();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            el('modelsList').textContent = INSTALLED_MODELS.length ? INSTALLED_MODELS.join(', ') : 'nenhum';
+            el('sendBtn').addEventListener('click', sendPrompt);
+            el('promptInput').addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') sendPrompt();
+            });
+            checkStatus();
+            setInterval(checkStatus, 5000);
+        });
+    </script>
+</body>
+</html>
+"""
+
+
 
 
 def detect_os():
@@ -138,7 +500,7 @@ def print_header():
 
 def print_step(step_num, total, text):
     """Imprime passo atual."""
-    cprint(f"[PASSO {step_num}/{total}] {text", Colors.OKBLUE)
+    cprint(f"[PASSO {step_num}/{total}] {text}", Colors.OKBLUE)
 
 
 def print_success(text):
@@ -208,9 +570,16 @@ def detect_ollama():
                 # Try to get models
                 try:
                     data = json.loads(resp.read().decode())
-                    if "models" in data:
-                        result["models"] = data["models"]
-                except:
+                    # /api/tags devolve OBJETOS ({"name": ..., "size": ...}),
+                    # enquanto o ramo `ollama list` acima appendava STRINGS.
+                    # A mistura quebrava "', '.join(models)" (TypeError) e fazia
+                    # recommend_model() devolver um dict, que ia parar no .env.
+                    result["models"] = [
+                        str(m.get("name", ""))
+                        for m in data.get("models", [])
+                        if isinstance(m, dict) and m.get("name")
+                    ]
+                except Exception:
                     pass
     except Exception:
         pass
@@ -219,7 +588,21 @@ def detect_ollama():
 
 
 def detect_hardware():
-    """Detecta hardware da máquina (GPU, RAM)."""
+    """Detecta hardware da máquina (GPU, RAM) e recomenda um patamar de modelo.
+
+    Correções em relação à versão anterior:
+
+    * Havia um terceiro SyntaxError aqui (o ``try`` interno do fallback de RAM
+      não tinha ``except``/``finally`` correspondente). Ele ficava escondido
+      porque o parser para no primeiro erro — o da f-string da linha 141.
+    * O fallback de RAM era um stub (``pass``): sem psutil a RAM ficava 0 e a
+      recomendação caía sempre no patamar mais fraco. Agora lê de fontes nativas
+      do SO, sem dependência extra.
+    * A GPU era detectada só via ``GPUtil``, que NÃO está em PYTHON_REQUIREMENTS
+      e portanto nunca estava instalado — na prática ``gpu_available`` era sempre
+      False e todo mundo recebia o modelo "cpu_only". Agora usa ``nvidia-smi``
+      (presente junto com o driver NVIDIA) e só então GPUtil/pynvml.
+    """
     hw = {
         "ram_gb": 0,
         "gpu_available": False,
@@ -227,42 +610,112 @@ def detect_hardware():
         "model_recommendation": "cpu_only",
     }
 
-    # RAM via psutil
-    try:
-        import psutil
-        hw["ram_gb"] = round(psutil.virtual_memory().total / (1024 ** 3), 2)
-    except ImportError:
-        try:
-            result = subprocess.run(
-                ["systeminfo"], capture_output=True, text=True, timeout=5
-            )
-            # Windows parsing
-            if "Total Physical Memory" in result.stdout:
-                # Extrair em MB e converter
-                pass
-    except Exception:
-        pass
+    hw["ram_gb"] = _detect_ram_gb()
+    hw["gpu_available"], hw["gpu_vram_gb"] = _detect_gpu()
 
-    # GPU via GPUtil (se disponível)
-    try:
-        import GPUtil
-        gpus = GPUtil.getGPUs()
-        if gpus:
-            hw["gpu_available"] = True
-            hw["gpu_vram_gb"] = gpus[0].memoryTotal // 1024  # VRAM em MB -> GB
-            # Selecionar modelo baseado em VRAM
-            if hw["gpu_vram_gb"] >= 16:
-                hw["model_recommendation"] = "high_gpu"
-            elif hw["gpu_vram_gb"] >= 8:
-                hw["model_recommendation"] = "medium_gpu"
-            else:
-                hw["model_recommendation"] = "low_gpu_ram_heavy"
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    if hw["gpu_available"]:
+        if hw["gpu_vram_gb"] >= 16:
+            hw["model_recommendation"] = "high_gpu"
+        elif hw["gpu_vram_gb"] >= 8:
+            hw["model_recommendation"] = "medium_gpu"
+        else:
+            hw["model_recommendation"] = "low_gpu_ram_heavy"
+    else:
+        hw["model_recommendation"] = "cpu_only"
 
     return hw
+
+
+def _detect_ram_gb():
+    """RAM total em GB, sem depender de psutil estar instalado."""
+    # 1) psutil (multiplataforma, se disponível)
+    try:
+        import psutil
+
+        return round(psutil.virtual_memory().total / (1024 ** 3), 2)
+    except Exception:
+        pass
+
+    os_type = detect_os()
+
+    # 2) Linux: /proc/meminfo (MemTotal em kB)
+    if os_type in ("debian", "arch", "linux_generic"):
+        try:
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        kb = int(line.split()[1])
+                        return round(kb / (1024 ** 2), 2)
+        except Exception:
+            pass
+
+    # 3) macOS: sysctl hw.memsize (bytes)
+    if os_type == "macos":
+        try:
+            out = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5
+            )
+            if out.returncode == 0 and out.stdout.strip().isdigit():
+                return round(int(out.stdout.strip()) / (1024 ** 3), 2)
+        except Exception:
+            pass
+
+    # 4) Windows: CIM via PowerShell (bytes). 'systeminfo' era o caminho antigo,
+    #    mas a saída é localizada e o parse estava incompleto (era um `pass`).
+    if os_type == "windows":
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
+                capture_output=True, text=True, timeout=30,
+            )
+            value = out.stdout.strip()
+            if out.returncode == 0 and value.isdigit():
+                return round(int(value) / (1024 ** 3), 2)
+        except Exception:
+            pass
+
+    return 0
+
+
+def _detect_gpu():
+    """Retorna (gpu_available, vram_gb) para a primeira GPU encontrada."""
+    # 1) nvidia-smi: vem com o driver NVIDIA, sem instalar nada em Python.
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0:
+            first = out.stdout.strip().splitlines()[0].strip() if out.stdout.strip() else ""
+            if first.isdigit():
+                return True, int(first) // 1024  # MiB -> GiB
+    except Exception:
+        pass
+
+    # 2) GPUtil, se por acaso estiver instalado (memoryTotal é em MB)
+    try:
+        import GPUtil
+
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            return True, gpus[0].memoryTotal // 1024
+    except Exception:
+        pass
+
+    # 3) pynvml (VRAM em bytes)
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        pynvml.nvmlShutdown()
+        return True, int(mem.total // (1024 ** 3))
+    except Exception:
+        pass
+
+    return False, 0
 
 
 def check_tesseract():
@@ -339,14 +792,65 @@ def install_python_if_needed():
         return False
 
 
+def start_ollama_daemon():
+    """Inicia o servidor Ollama em background sem bloquear o instalador.
+
+    Antes havia quatro chamadas síncronas de `ollama serve` com
+    `subprocess.run(..., capture_output=True)`. Esse comando NUNCA termina,
+    então o instalador congelava ali para sempre (sem timeout) - o classico
+    "instalacao travada" que parece sucesso parcial e nao entrega nada.
+    """
+    if is_ollama_running():
+        return True
+    try:
+        if os.name == "nt":
+            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(
+                ["ollama", "serve"],
+                creationflags=0x00000008 | 0x00000200,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except FileNotFoundError:
+        print_error("Comando 'ollama' nao encontrado no PATH")
+        return False
+    except Exception as e:
+        print_error(f"Nao foi possivel iniciar o Ollama: {e}")
+        return False
+
+    for _ in range(20):
+        time.sleep(0.5)
+        if is_ollama_running():
+            return True
+    print_warning("Ollama nao respondeu em 10s; verifique manualmente")
+    return False
+
+
+def is_ollama_running(url="http://localhost:11434"):
+    """True se a API HTTP do Ollama responde."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{url}/api/tags", timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def install_ollama_if_needed():
     """Verifica Ollama e instala se necessário. Retorna URL base."""
     cprint("Verificando Ollama...", Colors.OKCYAN)
 
     detection = detect_ollama()
 
-    if detection["installed"] and detection["running"]:
-        print_success(f"Ollama já instalado e rodando com {len(detection['models'])} modelo(s)")
+    if detection["running"]:
+        print_success(f"Ollama já rodando em {detection['url']} com {len(detection['models'])} modelo(s)")
         print(f"   Modelos: {', '.join(detection['models'])}")
         return detection["url"], detection["models"]
 
@@ -354,7 +858,7 @@ def install_ollama_if_needed():
         print_warning("Ollama instalado mas não está rodando")
         start = input("Deseja iniciar o Ollama agora? (s/N): ").strip().lower()
         if start in ("s", "sim", "y", "yes"):
-            subprocess.run(["ollama", "serve"], capture_output=True)
+            start_ollama_daemon()
             # Wait a bit
             import time
             time.sleep(3)
@@ -387,7 +891,7 @@ def install_ollama_if_needed():
                     subprocess.run(
                         ["brew", "install", "ollama"], capture_output=True, timeout=180
                     )
-                    subprocess.run(["ollama", "serve"], capture_output=True)
+                    start_ollama_daemon()
                     import time
                     time.sleep(3)
                     url = "http://localhost:11434"
@@ -399,12 +903,35 @@ def install_ollama_if_needed():
             elif os_type == "debian":
                 cprint("Instalando Ollama via curl...", Colors.OKCYAN)
                 # Add repo and install
-                subprocess.run(
-                    ["curl", "-fsSL", "https://ollama.com/install.sh", "|", "sh"],
-                    capture_output=True,
-                    timeout=120,
-                )
-                subprocess.run(["ollama", "serve"], capture_output=True)
+                # Dois problemas resolvidos aqui:
+                #  a) com lista de argumentos, "|" e "sh" viravam URLs extras do
+                #     curl (não um pipe do shell) e nada era instalado;
+                #  b) mesmo usando shell, `curl ... | sh` devolve o status do
+                #     ÚLTIMO comando (sh), que sai 0 com stdin vazio — então uma
+                #     falha de download/rede passava como sucesso.
+                # Por isso: baixa para um arquivo temporário, verifica, executa.
+                script_fd, script_path = tempfile.mkstemp(suffix=".sh", prefix="ollama-install-")
+                os.close(script_fd)
+                try:
+                    dl = subprocess.run(
+                        ["curl", "-fsSL", "-o", script_path,
+                         "https://ollama.com/install.sh"],
+                        timeout=300,
+                    )
+                    if dl.returncode != 0 or Path(script_path).stat().st_size == 0:
+                        print_error(
+                            "Não foi possível baixar https://ollama.com/install.sh "
+                            f"(curl retornou {dl.returncode}). Verifique sua conexão "
+                            "ou instale o Ollama manualmente."
+                        )
+                        return None, []
+                    proc = subprocess.run(["sh", script_path], timeout=1800)
+                    if proc.returncode != 0:
+                        print_error("O instalador oficial do Ollama falhou (veja a saída acima)")
+                        return None, []
+                finally:
+                    Path(script_path).unlink(missing_ok=True)
+                start_ollama_daemon()
                 import time
                 time.sleep(3)
                 url = "http://localhost:11434"
@@ -414,7 +941,7 @@ def install_ollama_if_needed():
                 subprocess.run(
                     ["pacman", "-Sy", "--noconfirm", "ollama"], capture_output=True, timeout=60
                 )
-                subprocess.run(["ollama", "serve"], capture_output=True)
+                start_ollama_daemon()
                 import time
                 time.sleep(3)
                 url = "http://localhost:11434"
@@ -452,69 +979,99 @@ def recommend_model(hw_detection, existing_models):
         return models["cpu_only"]
 
 
+def venv_python(venv_path):
+    """Caminho do interpretador dentro do venv (Windows e POSIX)."""
+    if os.name == "nt":
+        return venv_path / "Scripts" / "python.exe"
+    return venv_path / "bin" / "python"
+
+
 def install_python_dependencies():
-    """Instala dependências Python necessárias."""
+    """Instala as dependências Python em um venv e RETORNA o python do venv.
+
+    Retorna Path do interpretador do venv em caso de sucesso, ou None em falha.
+
+    A versão anterior tinha quatro defeitos que, somados, produziam exatamente o
+    sintoma "instalou mas nada funciona":
+
+    1. ``pip_cmd = f"{sys.executable} -m pip"`` era uma STRING ÚNICA usada como
+       ``argv[0]`` em ``subprocess.run([pip_cmd, "install", ...])``. O SO tentava
+       executar um programa literalmente chamado "python -m pip" ->
+       FileNotFoundError em 100% dos pacotes.
+    2. ``returncode`` nunca era verificado: cada pacote imprimia "✓ instalado"
+       mesmo quando o pip falhava.
+    3. Em Debian 12+/Ubuntu 24.04+/Arch o pip fora de venv é bloqueado pela
+       PEP 668 ("externally-managed-environment"). Como a criação do venv tinha
+       ``timeout=30`` (curto demais; no Windows passa fácil disso) e a falha era
+       apenas um aviso, o instalador caía no pip do sistema e falhava em tudo —
+       reportando sucesso.
+    4. A lista de pacotes não incluía aiohttp/cryptography, sem os quais
+       ``python -m bees.service`` nem sequer importa.
+    """
     cprint("Instalando dependências Python...", Colors.OKCYAN)
 
-    # Verificar se pip está disponível
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "--version"], capture_output=True, text=True
-        )
-    except Exception:
-        print_error("pip não disponível")
-        return False
+    venv_path = REPO_ROOT / ".venv-bee"
+    py = venv_python(venv_path)
 
-    # Criar venv recomendado
-    venv_path = Path.cwd() / ".venv-bee"
-    if not venv_path.exists():
+    if not py.exists():
         cprint("Criando ambiente virtual...", Colors.OKCYAN)
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, "-m", "venv", str(venv_path)],
-                capture_output=True,
-                timeout=30,
+                capture_output=True, text=True, timeout=600,
             )
-            print_success("Ambiente virtual criado")
+        except subprocess.TimeoutExpired:
+            print_error("Tempo esgotado criando o ambiente virtual")
+            return None
         except Exception as e:
-            cprint(f"Aviso: não foi possível criar venv: {e}", Colors.WARNING)
-            venv_path = None
+            print_error(f"Não foi possível criar o venv: {e}")
+            return None
+
+        if proc.returncode != 0 or not py.exists():
+            print_error("Falha ao criar o ambiente virtual:")
+            print((proc.stderr or proc.stdout or "").strip()[:800])
+            os_type = detect_os()
+            if os_type == "debian":
+                print_error("Provavelmente falta o pacote 'python3-venv': sudo apt install python3-venv")
+            elif os_type == "arch":
+                print_error("Verifique se 'python' e o módulo venv estão instalados")
+            return None
+        print_success(f"Ambiente virtual criado em {venv_path}")
     else:
-        print_success("Ambiente virtual já existe")
+        print_success(f"Ambiente virtual já existe em {venv_path}")
 
-    # Determinar qual pip usar
-    if venv_path:
-        pip_cmd = str(venv_path / "Scripts" / "pip.exe" if os.name == "nt" else venv_path / "bin" / "pip")
-        python_cmd = str(venv_path / "Scripts" / "python.exe" if os.name == "nt" else venv_path / "bin" / "python")
-    else:
-        pip_cmd = f"{sys.executable} -m pip"
-        python_cmd = sys.executable
+    cprint(
+        f"Instalando {len(PYTHON_REQUIREMENTS)} pacotes (pode levar alguns minutos)...",
+        Colors.OKCYAN,
+    )
+    try:
+        proc = subprocess.run(
+            [str(py), "-m", "pip", "install", "--upgrade", "--disable-pip-version-check",
+             *PYTHON_REQUIREMENTS],
+            capture_output=True, text=True, timeout=3600,
+        )
+    except subprocess.TimeoutExpired:
+        print_error("Tempo esgotado instalando dependências")
+        return None
+    except Exception as e:
+        print_error(f"Falha ao executar o pip: {e}")
+        return None
 
-    # Instalar requirements
-    success = True
-    for pkg in PYTHON_REQUIREMENTS:
-        cprint(f"Instalando {pkg}...", Colors.OKCYAN)
-        try:
-            subprocess.run(
-                [pip_cmd, "install", pkg, "--quiet", "--upgrade"],
-                capture_output=True,
-                timeout=120,
-            )
-            print_success(f"{pkg} instalado")
-        except Exception as e:
-            print_warning(f"Falha ao instalar {pkg}: {str(e)[:80]}")
-            success = False
+    if proc.returncode != 0:
+        print_error("O pip falhou. Últimas linhas da saída:")
+        print((proc.stderr or proc.stdout or "").strip()[-2000:])
+        return None
 
-    return success
+    print_success("Dependências instaladas")
+    return py
 
 
-def generate_env_file(hw_detection, ollama_url, recommended_model, existing_models):
+def generate_env_file(hw_detection, ollama_url, recommended_model, existing_models,
+                      role="juiz", node_port=7700, bee_port=8765):
     """Gera arquivo .env automaticamente."""
     cprint("Gerando configuração .env...", Colors.OKCYAN)
 
-    # Determinar role baseado em hardware e modelos
     has_gpu = hw_detection["gpu_available"]
-    role = "auto"  # Deixa o Bee decidir
 
     # Verificar se tem OCR
     has_ocr = check_tesseract()
@@ -533,10 +1090,20 @@ ENXAME_LOG_PATH={Path.home() / "enxame" / "logs"}
 OLLAMA_URL={ollama_url or "http://localhost:11434"}
 # Modelo ativo será o: {recommended_model}
 
-# === Node Role - Auto-detectado ===
-# O Bee decidirá o role baseado em hardware + peers
+# === Node Role ===
+# Consumido por api/install/run_node.py.
+# "juiz" (porta 7700) é o papel que serve a interface web de web/ — é o único
+# que expõe /api/session, /api/status, /api/chat, /api/cluster/*.
+# Antes vinha "auto", que o run_node.py mapeia para o worker "agente": sem porta
+# HTTP, sem interface, aparentemente "nada funciona".
 # Options: juiz, bibliotecario, agente, auto
 ENXAME_NODE_ROLE={role}
+ENXAME_NODE_PORT={node_port}
+ENXAME_NODE_ID=enxame-{role}
+
+# === Bee standalone (aiohttp) ===
+# `python -m bees.service` usa esta porta e expõe /api/v1/query, /health etc.
+ENXAME_BEE_PORT={bee_port}
 
 # === Configurações de Hardware ===
 # Auto-detected by installer
@@ -547,8 +1114,8 @@ ENXAME_RAM_GB={hw_detection['ram_gb']}
 # === Recursos ===
 # O Bee vai usar o que estiver disponível
 ENXAME_ENABLE_LIBRARIAN=true
-ENXAME_ENABLE_CLUSTER=false  # Standalone mode
-ENXAME_ALLOW_WEB=false  # Offline-first
+ENXAME_ENABLE_CLUSTER=false
+ENXAME_ALLOW_WEB=false
 
 # === OCR ===
 # Verificado automaticamente
@@ -559,7 +1126,7 @@ ENXAME_OCR_AVAILABLE={'true' if has_ocr else 'false'}
 # Se já tem modelos definidos, o Bee usará o primeiro disponível
 """
 
-    env_path = Path.cwd() / ".env"
+    env_path = REPO_ROOT / ".env"
     try:
         with open(env_path, "w", encoding="utf-8") as f:
             f.write(env_content)
@@ -570,368 +1137,52 @@ ENXAME_OCR_AVAILABLE={'true' if has_ocr else 'false'}
         return False
 
 
-def generate_html_dashboard(hw_detection, ollama_url, model_name, installed_models):
-    """Gera dashboard HTML interativo."""
-    has_gpu = hw_detection["gpu_available"]
-    gpu_info = f"{hw_detection['gpu_vram_gb']}GB VRAM" if has_gpu else "CPU-only"
+def generate_html_dashboard(hw_detection, ollama_url, model_name, installed_models, bee_port=8765):
+    """Gera dashboard HTML interativo.
 
-    html = f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🐝 BEE - Assistente Inteligente</title>
-    <style>
-        :root {{
-            --bg: #0a0e17;
-            --bg-secondary: #111827;
-            --card: #1a2230;
-            --accent: #00d4aa;
-            --accent-dim: #00a080;
-            --text: #e8e8e8;
-            --muted: #6b7a8c;
-            --error: #e74c3c;
-            --success: #27ae60;
-        }}
+    Notas sobre a reescrita (a versão anterior não produzia arquivo nenhum):
 
-        * {{ box-sizing: border-box; }}
+    * ``open(html, "w")`` abria o CONTEÚDO do HTML como se fosse o NOME do
+      arquivo — OSError e nenhum dashboard gerado. Agora grava em ``report_path``.
+    * O HTML era montado com f-string, então todo ``{``/``}`` de CSS e JS
+      precisava de ``{{``/``}}``. Duas places escaparam: o ``${query}`` do
+      template literal JS virava expressão Python (NameError: 'query') e o
+      atributo ``style`` saía com aspas quebradas, corrompendo o resto do HTML.
+      Agora é template puro + substituição de tokens: nenhum brace precisa
+      escapar e é impossível reintroduzir esse tipo de bug.
+    * O JS consultava ``{ollama_url}/health`` e ``{ollama_url}/api/v1/peers``.
+      Ollama não tem essas rotas (só ``/api/tags``, ``/api/version``), então o
+      status dava sempre "Sem conexão". Agora aponta para o serviço BEE, que é
+      quem de fato expõe ``/health``, ``/api/v1/status`` e ``/api/v1/query``.
+    * ``sendPrompt()`` só fingia responder com um ``setTimeout`` ("BEE:
+      Processando..."). Agora faz POST real em ``/api/v1/query``.
+    """
+    has_gpu = hw_detection.get("gpu_available", False)
+    gpu_display = "{} GB VRAM".format(hw_detection.get("gpu_vram_gb", 0)) if has_gpu else "Não detectada"
+    models_json = json.dumps([str(m) for m in (installed_models or [])])
 
-        body {{
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            margin: 0;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }}
+    replacements = {
+        "__MODEL_NAME__": str(model_name),
+        "__RAM_GB__": str(hw_detection.get("ram_gb", 0)),
+        "__GPU_DISPLAY__": gpu_display,
+        "__OLLAMA_URL__": str(ollama_url or "http://localhost:11434"),
+        "__BEE_URL__": "http://127.0.0.1:{}".format(bee_port),
+        "__MODELS_JSON__": models_json,
+        "__GENERATED_AT__": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
-        header {{
-            background: var(--bg-secondary);
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid #333;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
-        }}
+    html = DASHBOARD_TEMPLATE
+    for token, value in replacements.items():
+        html = html.replace(token, value)
 
-        .header-content {{
-            max-width: 1000px;
-            margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }}
-
-        .bee-title {{
-            font-size: 1.3rem;
-            font-weight: bold;
-            background: linear-gradient(135deg, var(--accent), var(--accent-dim));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }}
-
-        .status-indicator {{
-            width: 10px;
-            height: 10px;
-            background: var(--warning);
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }}
-
-        @keyframes paddle {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
-
-        main {{
-            max-width: 1000px;
-            margin: 0 auto;
-            flex: 1;
-            padding: 1.5rem;
-            width: 100%;
-        }}
-
-        .section {{
-            background: var(--card);
-            border-radius: 8px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            border: 1px solid #333;
-        }}
-
-        .section h2 {{
-            margin: 0 0 0.5rem 0;
-            font-size: 1rem;
-            color: var(--accent);
-        }}
-
-        .prompt-area {{
-            background: var(--bg-secondary);
-            border: 1px solid #333;
-            border-radius: 20px;
-            padding: 0.75rem;
-            margin: 0.5rem 0;
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-        }}
-
-        .prompt-input {{
-            flex: 1;
-            background: var(--bg);
-            border: none;
-            padding: 0.5rem 0.75rem;
-            color: var(--text);
-            font-size: 0.9rem;
-            border-radius: 15px;
-            outline: none;
-        }}
-
-        .prompt-input:focus {{ box-shadow: 0 0 0 2px var(--accent); }}
-
-        .btn-send {{
-            background: var(--accent);
-            border: none;
-            padding: 0 1rem;
-            color: var(--bg);
-            font-weight: bold;
-            border-radius: 15px;
-            cursor: pointer;
-            font-size: 0.85rem;
-        }}
-
-        .btn-send:hover {{ background: var(--accent-dim); }}
-
-        .btn-send:disabled {{ opacity: 0.5; cursor: not-allowed; background: var(--muted); }}
-
-        .responses-area {{
-            flex: 1;
-            min-height: 200px;
-            overflow-y: auto;
-            padding: 0.5rem;
-        }}
-
-        .response-item {{
-            background: var(--bg-secondary);
-            border-radius: 6px;
-            padding: 0.5rem;
-            margin: 0.25rem 0;
-            border-left: 3px solid var(--accent);
-        }}
-
-        .response-item.user {{ border-left-color: #3498db; }}
-
-        .response-item.bee {{ border-left-color: var(--accent); }}
-
-        .response-meta {{
-            font-size: 0.65rem;
-            color: var(--muted);
-            margin-top: 0.25rem;
-            display: flex;
-            justify-content: space-between;
-        }}
-
-        .response-text {{
-            font-size: 0.85rem;
-            line-height: 1.4;
-            margin-top: 0.25rem;
-        }}
-
-        .response-text code {{
-            background: #2d3748;
-            padding: 0 2px 0 2px;
-            border-radius: 3px;
-            font-size: 0.7rem;
-        }}
-
-        .model-info {{
-            background: var(--bg-secondary);
-            border-radius: 6px;
-            padding: 0.75rem;
-            text-align: center;
-        }}
-
-        .model-name {{
-            color: var(--accent);
-            font-weight: bold;
-            font-size: 1.1rem;
-        }}
-
-        .model-status {{
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin: 0 auto 0.25rem auto;
-        }}
-
-        .peer-item {{
-            background: var(--bg-secondary);
-            border-radius: 6px;
-            padding: 0.5rem;
-            text-align: center;
-            font-size: 0.75rem;
-        }}
-
-        .progress-bar {{
-            width: 100%;
-            height: 6px;
-            background: var(--bg);
-            border-radius: 3px;
-            overflow: hidden;
-            margin: 0.25rem 0;
-        }}
-
-        .progress-fill {{
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent), var(--accent-dim));
-            width: 0%;
-            transition: width 0.3s ease;
-        }}
-
-        .progress-text {{
-            text-align: center;
-            font-size: 0.65rem;
-            color: var(--muted);
-        }}
-
-        @media (max-width: 480px) {{
-            .header-content {{ flex-direction: column; gap: 0.5rem; }}
-            .prompt-area {{ flex-direction: column; }}
-        }}
-    </style>
-</head>
-<body>
-    <header>
-        <div class="header-content">
-            <div class="bee-title">🐝 BEE</div>
-            <div class="status-indicator" id="statusDot" title="status"></div>
-        </div>
-    </header>
-
-    <main>
-        <section class="section" id="modelSection">
-            <h2>🧠 Modelo Ativo</h2>
-            <div class="model-info">
-                <span class="model-name" id="modelName">{model_name}</span>
-                <span>Status: <span class="model-status" id="modelStatus" 
-                    style="background: {'#27ae60' if model_name != 'Carregando' else '#f39c12'};'></span></span>
-            </div>
-        </section>
-
-        <section class="section">
-            <h2>💬 Fazer uma pergunta</h2>
-            <div class="prompt-area">
-                <input type="text" class="prompt-input" id="promptInput" 
-                    placeholder="Digite sua pergunta aqui..." maxlength=300 
-                    onkeypress="if(event.key==='Enter') sendPrompt()">
-                <button class="btn-send" id="sendBtn" onclick="sendPrompt()">Enviar</button>
-            </div>
-        </section>
-
-        <section class="section">
-            <h2>💬 Respostas</h2>
-            <div class="responses-area" id="responsesArea">
-                <div class="response-item bee" id="welcomeResponse">
-                    <div class="response-text">
-                        <p>Olá! Eu fui configurado com sucesso e estou pronto para ajudar.</p>
-                        <p><strong>Como posso ajudar hoje?</strong></p>
-                    </div>
-                    <div class="response-meta">
-                        <span>BEE</span>
-                        <span id="welcomeTime">agora</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="section" id="hardwareSection">
-            <h2>💻 Hardware Detectado</h2>
-            <p>RAM: <span id="ramDisplay">{hw_detection['ram_gb']}GB</span></p>
-            <p>GPU: <span id="gpuDisplay">{has_gpu and f'{hw_detection[\"gpu_vram_gb\"]}GB' or 'Não detectada'}</span></p>
-            <p>Modelo recomendado: <span id="modelRecommendation">{recommended_model}</span></p>
-        </section>
-
-        <section class="section" id="indexSection">
-            <h2>📚 Indexação</h2>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <div class="progress-text" id="progressText">0% concluído</div>
-            <p id="indexStatus">Inicializando...</p>
-        </section>
-    </main>
-
-    <script>
-        const BEE_API = "{ollama_url}/api";
-        let queryCount = 0;
-
-        document.addEventListener('DOMContentLoaded', function() {{
-            // Verificar status a cada 3s
-            setInterval(checkStatus, 3000);
-            checkStatus(); // Primeira verificação inmediata
-            
-            // Enviar prompt no Enter
-            document.getElementById('promptInput').addEventListener('keypress', function(e) {{
-                if(e.key === 'Enter') sendPrompt();
-            }});
-
-            // Botão enviar
-            document.getElementById('sendBtn').addEventListener('click', sendPrompt);
-        }});
-
-        async function checkStatus() {{
-            try {{
-                const health = await fetch('{ollama_url}/health');
-                if (health.ok) {{
-                    const data = await health.json();
-                    document.getElementById('modelName').textContent = data.model || 'Desconhecido';
-                    
-                    const statusEl = document.getElementById('modelStatus');
-                    statusEl.style.background = data.running ? '#27ae60' : '#e74c3c';
-                    statusEl.title = data.running ? 'Online' : 'Offline';
-                    
-                    // Mostrar peers se disponível
-                    const peers = await fetch('{ollama_url}/api/v1/peers');
-                    if (peers.ok) {{ // Isso pode variar
-                        // Lógica simplificada
-                    }}
-                }}
-            }} catch(e) {{
-                document.getElementById('modelName').textContent = 'Sem conexão';
-                document.getElementById('modelStatus').style.background = '#e74c3c';
-            }}
-        }}
-
-        function sendPrompt() {{
-            const input = document.getElementById('promptInput');
-            const query = input.value.trim();
-            if(!query) return;
-
-            const item = document.createElement('div');
-            item.className = 'response-item user';
-            item.innerHTML = `<div class="response-text"><p>Você: ${query}</p></div>
-                <div class="response-meta"><span>Você</span><span id="userTime"></span></div>`;
-            document.getElementById('responsesArea').prepend(item);
-            input.value = '';
-
-            // Simular resposta do BEE (em produção seria fetch real)
-            setTimeout(() => {{
-                const beeItem = document.createElement('div');
-                beeItem.className = 'response-item bee';
-                beeItem.innerHTML = `<div class="response-text"><p>BEE: Processando...</p></div>
-                    <div class="response-meta"><span>BEE</span><span>agora</span></div>`;
-                document.getElementById('responsesArea').prepend(beeItem);
-            }}, 500);
-        }}
-    </script>
-</body>
-</html>"""
-
-    report_path = Path.cwd() / "bee-dashboard.html"
+    report_path = REPO_ROOT / "bee-dashboard.html"
     try:
-        with open(html, "w", encoding="utf-8") as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write(html)
-        print_success(f"Dashboard HTML gerado em {report_path}")
+        print_success("Dashboard HTML gerado em {}".format(report_path))
         return True
     except Exception as e:
-        print_error(f"Erro ao gerar dashboard: {e}")
+        print_error("Erro ao gerar dashboard: {}".format(e))
         return False
 
 
@@ -949,7 +1200,7 @@ def uninstall_bee():
     choice = input("\nEscolha (1-3, padrão: 1): ").strip() or "1"
 
     os_type = detect_os()
-    bee_dir = Path.cwd()  # Diretório onde o Bee foi instalado
+    bee_dir = REPO_ROOT  # Diretório onde o Bee foi instalado
     env_path = bee_dir / ".env"
 
     # Remover .env
@@ -1021,119 +1272,223 @@ def uninstall_bee():
                 print_success("Ollama desinstalado (Arch)")
 
     cprint("\n=== Desinstalação Concluída ===", Colors.HEADER)
-    print("Só restaram os arquivos originais do enxamepublic.", Colors.OKCYAN)
+    cprint("Só restaram os arquivos originais do enxamepublic.", Colors.OKCYAN)
+
+
+def pull_model(model_name, existing_models):
+    """Baixa o modelo recomendado se ele ainda não estiver presente.
+
+    O instalador antigo escolhia um modelo e NUNCA o baixava: não havia nenhum
+    `ollama pull` em lugar nenhum. Resultado: bee sem modelo => toda query
+    devolve "não encontrei informação" e o usuário conclui que nada funciona.
+    """
+    if not model_name:
+        return False
+
+    if model_name in (existing_models or []):
+        print_success(f"Modelo '{model_name}' já está presente - pulando download")
+        return True
+
+    cprint(f"Baixando modelo '{model_name}' (pode levar vários minutos)...", Colors.OKCYAN)
+    try:
+        proc = subprocess.run(
+            ["ollama", "pull", model_name],
+            timeout=7200,
+        )
+    except FileNotFoundError:
+        print_error("Comando 'ollama' não encontrado no PATH")
+        return False
+    except subprocess.TimeoutExpired:
+        print_error("Tempo esgotado baixando o modelo")
+        return False
+
+    if proc.returncode != 0:
+        print_error(
+            f"Não foi possível baixar '{model_name}'. "
+            "Verifique se a tag existe em https://ollama.com/library"
+        )
+        return False
+
+    print_success(f"Modelo '{model_name}' baixado")
+    return True
+
+
+def parse_args():
+    """Linha de comando do instalador.
+
+    Antes `argparse` era importado mas nunca usado: nenhum flag existia e
+    `uninstall_bee()` era código morto (nunca chamado), apesar do docstring do
+    módulo anunciar "Possui desinstalador para cada SO".
+    """
+    parser = argparse.ArgumentParser(
+        description="Instalador inteligente do BEE/ENXAME (Windows, macOS, Debian, Arch)",
+    )
+    parser.add_argument(
+        "--uninstall", action="store_true",
+        help="Remove .env, dashboard e venv criados pelo instalador",
+    )
+    parser.add_argument(
+        "--role", default="juiz",
+        choices=["juiz", "bibliotecario", "agente", "auto"],
+        help="Papel deste nó no .env gerado (default: juiz, que serve a interface web em 7700)",
+    )
+    parser.add_argument(
+        "--node-port", type=int, default=None,
+        help="Porta do nó para run_node.py (default: 7700 juiz / 7701 bibliotecario)",
+    )
+    parser.add_argument(
+        "--bee-port", type=int, default=8765,
+        help="Porta do bee standalone (aiohttp) referenciada no dashboard (default: 8765)",
+    )
+    parser.add_argument(
+        "--ollama-url", default=None,
+        help="URL do Ollama (default: http://localhost:11434)",
+    )
+    parser.add_argument(
+        "--skip-model", action="store_true",
+        help="Não baixa modelo nenhum (útil se você já gerencia os modelos)",
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Força um modelo específico em vez do recomendado pelo hardware",
+    )
+    return parser.parse_args()
 
 
 def main():
     """Função principal do instalador."""
+    args = parse_args()
+
+    if args.uninstall:
+        uninstall_bee()
+        return
+
     print_header()
 
+    total_steps = 7
+
     # 1. Verificar Python
-    cprint("=", Colors.HEADER)
     cprint("PASSO 1: Verificação do Python", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
-
-    python_ok = check_python_installed() if 'check_python_installed' in dir() else True
-    # Actually let me just check inline:
-    import subprocess
-    python_ok = True
-    try:
-        result = subprocess.run([sys.executable, "--version"], capture_output=True, text=True)
-        version_str = result.stdout.strip().split()[1]
-        parts = version_str.split(".")
-        version_tuple = (int(parts[0]), int(parts[1]))
-        python_ok = version_tuple >= PYTHON_MIN_VERSION
-    except:
-        python_ok = False
-
-    if not python_ok:
-        print_step(1, 5, "Python não encontrado - instalando")
-        python_ok = check_python()
-        if not python_ok:
+    ok, version = python_version_ok()
+    if ok:
+        print_success(f"Python {version[0]}.{version[1]} encontrado - pulando instalação")
+    else:
+        print_step(1, total_steps, "Python adequado não encontrado - tentando instalar")
+        # check_python() NÃO EXISTIA neste módulo: qualquer máquina com Python
+        # antigo caía em NameError. O nome certo é install_python_if_needed().
+        if not install_python_if_needed():
             print_error("Python é obrigatório para o BEE. Encerrando.")
             sys.exit(1)
-    else:
-        print_success("Python verificado - pulando instalação")
 
     # 2. Verificar Ollama
-    cprint("=", Colors.HEADER)
     cprint("PASSO 2: Verificação do Ollama", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
+    # detect_ollama() devolve UM DICT. O código antigo fazia
+    # `ollama_url, existing_models = detect_ollama()`, que estoura
+    # ValueError ("too many values to unpack") e matava o instalador no passo 2.
+    detection = detect_ollama()
+    if args.ollama_url:
+        detection["url"] = args.ollama_url
+        detection["running"] = is_ollama_running(args.ollama_url)
 
-    ollama_url, existing_models = detect_ollama()
-
-    if ollama_url:
+    # O que importa para o ENXAME é a API HTTP (o bee e o juiz falam HTTP, não o
+    # binário). Exigir `installed` fazia o instalador tentar reinstalar o Ollama
+    # mesmo com o servidor respondendo na porta 11434.
+    if detection["running"]:
+        ollama_url = detection["url"]
+        existing_models = detection["models"]
         print_success(f"Ollama detectado em {ollama_url}")
         if existing_models:
-            print_warning(f"Já {len(existing_models)} modelo(s) existente(s) - pulando download")
-            # Mostrar modelos
+            print_warning(f"{len(existing_models)} modelo(s) já presente(s)")
             for m in existing_models:
                 print(f"    - {m}")
+        else:
+            print_warning("Ollama está rodando, mas nenhum modelo está instalado")
     else:
-        print_step(2, 5, "Ollama não encontrado - instalando")
+        print_step(2, total_steps, "Ollama ausente/parado - instalando ou iniciando")
         ollama_url, existing_models = install_ollama_if_needed()
         if not ollama_url:
-            print_error("Não foi possível instalar/verificar Ollama. Encerrando.")
+            print_error("Não foi possível instalar/verificar o Ollama. Encerrando.")
             sys.exit(1)
 
     # 3. Detectar hardware
-    cprint("=", Colors.HEADER)
     cprint("PASSO 3: Detecção de Hardware", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
-
     hw_detection = detect_hardware()
-    print_success(f"RAM: {hw_detection['ram_gb']}GB")
+    print_success(f"RAM: {hw_detection['ram_gb']} GB")
     if hw_detection["gpu_available"]:
-        print_success(f"GPU detectada: {hw_detection['gpu_vram_gb']}GB VRAM")
+        print_success(f"GPU detectada: {hw_detection['gpu_vram_gb']} GB VRAM")
     else:
-        print("GPU não detectada - usará modelo de CPU")
+        print_warning("GPU não detectada - será usado o patamar de CPU")
 
-    # 4. Recomendar modelo
-    cprint("=", Colors.HEADER)
+    # 4. Recomendar (e baixar) modelo
     cprint("PASSO 4: Seleção de Modelo", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
+    if args.model:
+        recommended_model = args.model
+    else:
+        recommended_model = recommend_model(hw_detection, existing_models)
+    print_success(f"Modelo escolhido: {recommended_model}")
 
-    recommended_model = recommend_model(hw_detection, existing_models)
-    print_success(f"Modelo recomendado: {recommended_model}")
+    if args.skip_model:
+        print_warning("--skip-model informado: nenhum modelo será baixado")
+    else:
+        if pull_model(recommended_model, existing_models):
+            existing_models = list(dict.fromkeys([*(existing_models or []), recommended_model]))
 
     # 5. Instalar dependências Python
-    cprint("=", Colors.HEADER)
     cprint("PASSO 5: Dependências Python", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
-
-    deps_ok = install_python_dependencies()
-    if not deps_ok:
-        print_warning("Algumas dependências falharam, mas o BEE pode ainda funcionar")
+    venv_py = install_python_dependencies()
+    if venv_py is None:
+        print_error(
+            "Não foi possível instalar as dependências. Sem elas o serviço não "
+            "sobe (ModuleNotFoundError) - veja a saída do pip acima."
+        )
+        sys.exit(1)
 
     # 6. Gerar .env e dashboard
-    cprint("=", Colors.HEADER)
     cprint("PASSO 6: Configuração Final", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
-
-    env_ok = generate_env_file(hw_detection, ollama_url, recommended_model, existing_models)
+    node_port = args.node_port or (7701 if args.role == "bibliotecario" else 7700)
+    env_ok = generate_env_file(
+        hw_detection, ollama_url, recommended_model, existing_models,
+        role=args.role, node_port=node_port, bee_port=args.bee_port,
+    )
     if not env_ok:
-        print_error("Falha ao gerar .env - continuando mesmo assim")
+        print_warning("Falha ao gerar o .env - continuando mesmo assim")
 
-    generate_html_dashboard(hw_detection, ollama_url, recommended_model, existing_models)
+    generate_html_dashboard(
+        hw_detection, ollama_url, recommended_model, existing_models,
+        bee_port=args.bee_port,
+    )
 
     # 7. Resumo final
-    cprint("=", Colors.HEADER)
     cprint("PASSO 7: Resumo Final", Colors.OKBLUE)
-    cprint("=", Colors.HEADER)
-
-    print_success("✅ BEE instalado com sucesso!")
+    print_success("BEE instalado com sucesso!")
     print()
     print("Arquivos gerados:")
-    print(f"  .env          - Configuração automática")
-    print(f"  bee-dashboard.html - Dashboard interativo")
+    print(f"  {REPO_ROOT / '.env'}")
+    print(f"  {REPO_ROOT / 'bee-dashboard.html'}")
+    print(f"  {venv_py}")
     print()
-    print("Para começar a usar:")
-    print(f"  1. Certifique-se de que o Ollama está rodando: {ollama_url}")
-    print(f"  2. Execute: python bees/service.py --env-file .env")
-    print(f"  3. Abra o dashboard: open bee-dashboard.html")
+    print("Como iniciar (execute a partir da raiz do repositório):")
+    print(f"  cd {REPO_ROOT}")
     print()
-    print("Query example:")
-    print('  POST http://localhost:8765/api/v1/query')
+    print("  A) Interface web de web/ (recomendado) - porta 7700:")
+    print(f"     {venv_py} api/install/run_node.py --env-file .env")
+    print("     depois abra http://localhost:7700")
+    print()
+    print(f"  B) Bee standalone (aiohttp) - porta {args.bee_port}:")
+    print(f"     {venv_py} -m bees.service --host 0.0.0.0 --port {args.bee_port} \\")
+    print(f"         --ollama-url {ollama_url} --model {recommended_model}")
+    print(f"     depois abra {REPO_ROOT / 'bee-dashboard.html'}")
+    print()
+    print("Importante:")
+    print("  * `python bees/service.py` NÃO funciona: o módulo usa imports relativos")
+    print("    (from .config import ...) e importa `core`, então precisa ser")
+    print("    executado como módulo a partir da raiz: `python -m bees.service`.")
+    print("  * A interface de web/ fala com a API do Juiz (/api/session, /api/chat,")
+    print(f"    /api/cluster/*). O bee standalone expõe outra API (/api/v1/query) e é")
+    print("    o que o bee-dashboard.html gerado aqui consome.")
+    print()
+    print("Exemplo de consulta direta ao bee:")
+    print(f"  POST http://localhost:{args.bee_port}/api/v1/query")
     print('  {"query": "Qual a capital da França?"}')
     print()
 

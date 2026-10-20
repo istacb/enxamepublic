@@ -1,6 +1,7 @@
 """Armazenamento vetorial embedded com LanceDB."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -93,6 +94,33 @@ class LanceDBStore:
         """Verifica se o banco está pronto."""
         self._load()
         return self._db is not None
+
+    async def initialize(self, db_path: str | None = None) -> None:
+        """Inicializa explicitamente o banco.
+
+        ``LocalBeeLibrarian.initialize()`` chamava ``await lancedb.initialize(path)``,
+        mas este método não existia — o bee morria no startup com
+        ``AttributeError: 'LanceDBStore' object has no attribute 'initialize'``.
+
+        O carregamento real é síncrono (``_load``), então roda em thread para
+        não bloquear o event loop.
+        """
+        if db_path is not None:
+            new_path = Path(db_path)
+            if new_path != self.db_path:
+                self.db_path = new_path
+                # força recarregamento no novo caminho
+                self._db = None
+                self._table = None
+                self._ready = False
+
+        await asyncio.to_thread(self._load)
+
+    async def close(self) -> None:
+        """Libera referências ao banco (não há conexão persistente a fechar)."""
+        self._table = None
+        self._db = None
+        self._ready = False
 
     async def index_document(
         self,

@@ -44,6 +44,18 @@ class OllamaClient:
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
 
+    async def close(self) -> None:
+        """Libera recursos do cliente.
+
+        No-op por construção: cada método abre seu próprio
+        ``httpx.AsyncClient`` via ``async with``, então não há conexão
+        persistente para fechar. O método existe porque
+        ``LocalBeeLibrarian.close()`` o chama — sem ele o shutdown do bee
+        estourava ``AttributeError: 'OllamaClient' object has no attribute
+        'close'`` e o processo não encerrava limpo.
+        """
+        return None
+
     # ponytail: nenhuma whitelist. O nó usa o que estiver instalado.
     # Ceiling: não baixa modelos sozinho — apenas recomenda. O auto-download
     # é tratado em ensure_model() com proteção contra re-download desnecessário.
@@ -51,18 +63,30 @@ class OllamaClient:
     async def health(self) -> bool:
         import httpx
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f'{self.base_url}/api/tags')
-            return resp.status_code == 200
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f'{self.base_url}/api/tags')
+                return resp.status_code == 200
+        except httpx.HTTPError:
+            # Ollama desligado/inexistente é estado normal (offline-first),
+            # não exceção: health() deve responder False.
+            return False
 
     async def list_models(self) -> list[OllamaModel]:
         import httpx
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f'{self.base_url}/api/tags')
-            if resp.status_code != 200:
-                return []
-            data: dict[str, Any] = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f'{self.base_url}/api/tags')
+        except httpx.HTTPError as exc:
+            # Sem isto, httpx.ConnectError escapava até /api/cluster/models e o
+            # endpoint devolvia 500 "Internal Server Error" (o handler do Juiz só
+            # captura OllamaError). Com Ollama offline a UI mostrava "—" sem
+            # explicação.
+            raise OllamaError(f'Ollama inacessível em {self.base_url}: {exc}') from exc
+        if resp.status_code != 200:
+            return []
+        data: dict[str, Any] = resp.json()
         models: list[OllamaModel] = []
         for m in data.get('models', []):
             name = str(m.get('name', ''))
@@ -147,18 +171,24 @@ class OllamaClient:
                 'num_ctx': req.num_ctx,
             },
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(f'{self.base_url}/api/generate', json=payload)
-            if resp.status_code != 200:
-                raise OllamaError(f'Falha Ollama: HTTP {resp.status_code} - {resp.text}')
-            data: dict[str, Any] = resp.json()
-            return str(data.get('response', '')).strip()
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(f'{self.base_url}/api/generate', json=payload)
+        except httpx.HTTPError as exc:
+            raise OllamaError(f'Ollama inacessível em {self.base_url}: {exc}') from exc
+        if resp.status_code != 200:
+            raise OllamaError(f'Falha Ollama: HTTP {resp.status_code} - {resp.text}')
+        data: dict[str, Any] = resp.json()
+        return str(data.get('response', '')).strip()
 
     async def pull(self, model: str) -> dict[str, Any]:
         import httpx
 
-        async with httpx.AsyncClient(timeout=None) as client:
-            resp = await client.post(f'{self.base_url}/api/pull', json={'model': model})
-            if resp.status_code != 200:
-                raise OllamaError(f'Falha ao baixar modelo {model}: {resp.text}')
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                resp = await client.post(f'{self.base_url}/api/pull', json={'model': model})
+        except httpx.HTTPError as exc:
+            raise OllamaError(f'Ollama inacessível em {self.base_url}: {exc}') from exc
+        if resp.status_code != 200:
+            raise OllamaError(f'Falha ao baixar modelo {model}: {resp.text}')
             return resp.json()

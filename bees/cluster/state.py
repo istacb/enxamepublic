@@ -6,10 +6,26 @@ import json
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .election import ClusterRole
+
+class ClusterRole(Enum):
+    """Papéis no cluster Enxame.
+
+    Definido aqui (e não em ``election.py``) porque ``state.py`` é o módulo
+    mais básico do pacote: ``election``/``monitor``/``internet_gate`` todos
+    dependem dele. Manter o enum em ``election.py`` criava um ciclo de
+    importação fatal (state -> election -> state) que impedia
+    ``import bees.service`` de funcionar.
+    """
+
+    JUIZ = "juiz"
+    BIBLIOTECARIO = "bibliotecario"
+    GUARDA = "guarda"
+    WORKER = "worker"
+    WORKER_ARTIST = "worker_artist"
 
 
 @dataclass(slots=True)
