@@ -13,10 +13,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import json
 import logging
+import secrets
 import signal
 import sys
+import time
 from contextlib import suppress
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +58,29 @@ logging.basicConfig(
 logger = logging.getLogger("bee")
 
 
+# Tempo de vida do token de sessão do UI (mesma política do juiz/app.py).
+UI_SESSION_TTL = timedelta(minutes=30)
+
+
+@dataclass
+class UiTask:
+    """Tarefa de chat aberta pelo UI web.
+
+    Espelha o contrato que ``web/app.js`` consome: ele abre um EventSource em
+    ``/api/chat/stream/{task_id}`` e espera eventos ``data: {"event": ...}``,
+    tratando ``final`` (usa ``content``) e ``error`` (usa ``message``).
+    """
+
+    task_id: str
+    prompt: str
+    status: str = "pending"  # pending | running | completed | failed | cancelled
+    events: list[dict[str, Any]] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+
+    def emit(self, event: str, **payload: Any) -> None:
+        self.events.append({"event": event, **payload})
+
+
 class BeeService:
     """Serviço principal da Abelha - stand-alone, offline-first."""
 
@@ -81,6 +109,14 @@ class BeeService:
         self._own_http_server = False
         self._http_runner: Any = None
 
+        # Interface web (web/): sessões e tarefas de chat. Um bee standalone
+        # faz tudo que o enxame faz em uma máquina só, então precisa servir o
+        # MESMO contrato de UI que o juiz expõe — senão a interface, que existe
+        # justamente para quem não usa terminal, só funcionava no enxame.
+        self._ui_sessions: dict[str, datetime] = {}
+        self._ui_tasks: dict[str, UiTask] = {}
+        self._ui_paused: set[str] = set()
+
         self._register_protocol_handlers()
 
         # Capacidades descobertas (BEE-0003)
@@ -92,6 +128,10 @@ class BeeService:
         self._cluster_monitor: ClusterMonitor | None = None
         self._internet_gate: InternetGate | None = None
         self._global_index: GlobalIndex | None = None
+        # True quando há <3 peers: a abelha faz tudo sozinha (juiz +
+        # bibliotecária + guarda na mesma máquina). Usado pelo UI para
+        # desenhá-la como rainha em vez de worker.
+        self._standalone = True
 
     def _register_protocol_handlers(self) -> None:
         """Registra handlers para mensagens do protocolo BEE."""
@@ -288,6 +328,7 @@ class BeeService:
         logger.info(f"Peers descobertos para cluster: {len(peers)}")
         
         if len(peers) >= 3:
+            self._standalone = False
             # Eleger papéis
             self.cluster_state = elect_roles(peers, self.cluster_state)
             self.cluster_role = self.cluster_state.get_role(self.node_id)
@@ -317,6 +358,7 @@ class BeeService:
             )
         else:
             logger.info(f"Menos de 3 peers ({len(peers)}), operando como standalone")
+            self._standalone = True
             self.cluster_role = ClusterRole.WORKER
             if self.node_id in (self.cluster_state.artist_workers if self.cluster_state else []):
                 self.cluster_role = ClusterRole.WORKER_ARTIST
@@ -375,6 +417,262 @@ class BeeService:
         else:
             # Identidade já foi gerada no config
             logger.info(f"Nova identidade: {self.node_id}")
+
+    # =========================================================================
+    # Interface web (web/) — mesmo contrato do juiz/app.py
+    # =========================================================================
+
+    def _ui_new_session(self) -> str:
+        """Cria um token de sessão para o browser."""
+        token = secrets.token_urlsafe(16)
+        self._ui_sessions[token] = datetime.now(UTC)
+        return token
+
+    def _ui_prune_sessions(self) -> None:
+        now = datetime.now(UTC)
+        for token in [t for t, ts in self._ui_sessions.items() if now - ts > UI_SESSION_TTL]:
+            self._ui_sessions.pop(token, None)
+
+    def _ui_session_ok(self, request: Any) -> bool:
+        """Valida sessão pelo header x-session-token ou query string ?session=.
+
+        O EventSource do browser não permite enviar headers, então o stream
+        precisa aceitar o token por query string (igual ao juiz).
+        """
+        token = request.headers.get("x-session-token") or request.query.get("session")
+        if not token or token not in self._ui_sessions:
+            return False
+        self._ui_sessions[token] = datetime.now(UTC)
+        self._ui_prune_sessions()
+        return True
+
+    def _ui_node_snapshot(self, node_id: str, role: str, models: list[str]) -> dict[str, Any]:
+        """Métricas de um nó no formato que web/app.js desenha no canvas."""
+        cpu_pct = 0.0
+        free_ram_gb = 0.0
+        try:
+            import psutil
+
+            cpu_pct = psutil.cpu_percent(interval=None)
+            free_ram_gb = round(psutil.virtual_memory().available / (1024 ** 3), 2)
+        except Exception:
+            pass
+
+        active = sum(1 for t in self._ui_tasks.values() if t.status == "running")
+        max_concurrency = max(1, int(getattr(self.config, "max_concurrent_queries", 4) or 4))
+        return {
+            "node_id": node_id,
+            "cluster_role": role,
+            "active_tasks": active if node_id == self.node_id else 0,
+            "max_concurrency": max_concurrency,
+            "queue_size": 0,
+            "utilization": round(min(1.0, active / max_concurrency), 3),
+            "cpu_pct": cpu_pct,
+            "free_ram_gb": free_ram_gb,
+            "est_tps": 0.0,
+            "models": models,
+            "fail_count": 0,
+            "benchmark_score": 0.0,
+            "paused": node_id in self._ui_paused,
+            "ready": self._running,
+        }
+
+    def _ui_cluster_role(self) -> str:
+        """Papel para exibição no UI.
+
+        Standalone (<3 peers): a abelha faz tudo sozinha na mesma máquina —
+        recebe o prompt, consulta o próprio RAG, busca na web se preciso e faz
+        a curadoria. Por isso aparece como 'juiz' (a rainha no canvas), e não
+        como 'worker', que é o que cluster_role guarda internamente nesse caso.
+        Em enxame, usa o papel eleito de fato.
+        """
+        if self._standalone or self.cluster_role is None:
+            return "juiz"
+        value = getattr(self.cluster_role, "value", str(self.cluster_role))
+        # web/app.js compara com 'bibliotecaria' (feminino) para pintar de azul.
+        return "bibliotecaria" if value == "bibliotecario" else value
+
+    def _ui_models(self) -> list[str]:
+        try:
+            return list(self._get_models_list())
+        except Exception:
+            return [self.config.model] if self.config.model else []
+
+    async def _ui_run_task(self, task: UiTask) -> None:
+        """Executa o chat e publica os eventos que o UI espera."""
+        task.status = "running"
+        task.emit("task_received", task_id=task.task_id,
+                  timestamp=datetime.now(UTC).isoformat())
+        try:
+            task.emit("decomposed", subtasks=1, timestamp=datetime.now(UTC).isoformat())
+            result = await self.process_query(task.prompt)
+            source = str(result.get("source", "local"))
+            task.emit("dispatch", subtask=task.prompt[:120], specialty=source,
+                      timestamp=datetime.now(UTC).isoformat())
+            task.emit("judge", candidates=1, specialty=source,
+                      confidence=result.get("confidence", 0.0),
+                      timestamp=datetime.now(UTC).isoformat())
+            answer = result.get("answer") or "(sem resposta)"
+            if result.get("fallback"):
+                answer += "  [fallback: nenhuma fonte local relevante]"
+            task.emit("final", content=answer, source=source,
+                      timestamp=datetime.now(UTC).isoformat())
+            task.status = "completed"
+        except asyncio.CancelledError:
+            task.status = "cancelled"
+            task.emit("error", message="tarefa cancelada")
+            raise
+        except Exception as e:
+            logger.error(f"Erro na tarefa de UI {task.task_id}: {e}")
+            task.status = "failed"
+            task.emit("error", message=str(e))
+
+    def _register_ui_routes(self, app: Any) -> None:
+        """Registra as rotas consumidas por web/app.js.
+
+        Sem isto, o bee montava a pasta web/ em "/" mas não tinha NENHUM dos
+        endpoints que o app.js chama (/api/session, /api/status, /api/chat,
+        /api/chat/stream/{id}, /api/node/{id}/pause, /api/cluster/*): a página
+        carregava e toda chamada dava 404.
+        """
+        from aiohttp import web
+
+        async def ui_session(request: Any) -> Any:
+            return web.json_response({"token": self._ui_new_session()})
+
+        async def ui_status(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            agents = [self._ui_node_snapshot(self.node_id, self._ui_cluster_role(), self._ui_models())]
+            if self._discovery:
+                for peer in self._discovery.get_active_peers():
+                    role = "bibliotecaria" if peer.role == "bibliotecario" else (peer.role or "worker")
+                    agents.append(self._ui_node_snapshot(peer.node_id, role, list(peer.models)))
+            return web.json_response({
+                "node": self.node_id,
+                "agents": agents,
+                "tasks_total": len(self._ui_tasks),
+            })
+
+        async def ui_models(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            try:
+                from core.ollama.client import OllamaClient, OllamaError
+
+                client = OllamaClient(self.config.ollama_base_url)
+                try:
+                    models = await client.list_models()
+                    best = await client.select_best_model()
+                except OllamaError:
+                    models, best = [], None
+                finally:
+                    await client.close()
+            except Exception:
+                models, best = [], None
+            return web.json_response({
+                "models": [{"name": m.name, "size_mb": round(m.size_mb, 1)} for m in models],
+                "best": best,
+            })
+
+        async def ui_discover(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            peers: list[dict[str, Any]] = []
+            if self._discovery:
+                for p in self._discovery.get_active_peers():
+                    peers.append({
+                        "node_id": p.node_id,
+                        "ip": p.host,
+                        "http_port": p.port,
+                        "ws_port": p.port,
+                        "role": p.role,
+                        "score": 0.0,
+                        "models": list(p.models),
+                    })
+            return web.json_response({"peers": peers})
+
+        async def ui_chat(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            prompt = str((body or {}).get("prompt", "")).strip()
+            if not prompt:
+                return web.json_response({"detail": "Campo 'prompt' é obrigatório"}, status=400)
+
+            task_id = f"t-{secrets.token_hex(5)}"
+            task = UiTask(task_id=task_id, prompt=prompt)
+            self._ui_tasks[task_id] = task
+            # Limpeza simples: mantém no máximo as 200 últimas tarefas.
+            if len(self._ui_tasks) > 200:
+                for old in sorted(self._ui_tasks, key=lambda k: self._ui_tasks[k].created_at)[:-200]:
+                    self._ui_tasks.pop(old, None)
+
+            asyncio.create_task(self._ui_run_task(task))
+            return web.json_response({"task_id": task_id, "status": task.status})
+
+        async def ui_stream(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            task_id = request.match_info["task_id"]
+            task = self._ui_tasks.get(task_id)
+            if task is None:
+                return web.json_response({"detail": "Tarefa não encontrada"}, status=404)
+
+            resp = web.StreamResponse(
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+            await resp.prepare(request)
+
+            sent = 0
+            while True:
+                while sent < len(task.events):
+                    payload = json.dumps(task.events[sent], ensure_ascii=False)
+                    await resp.write(f"data: {payload}\n\n".encode("utf-8"))
+                    sent += 1
+                if task.status in {"completed", "failed", "cancelled"} and sent >= len(task.events):
+                    break
+                await asyncio.sleep(0.1)
+            with suppress(Exception):
+                await resp.write_eof()
+            return resp
+
+        async def ui_pause(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            node_id = request.match_info["node_id"]
+            known = {self.node_id}
+            if self._discovery:
+                known |= {p.node_id for p in self._discovery.get_active_peers()}
+            if node_id not in known:
+                return web.json_response({"detail": "Nó não encontrado"}, status=404)
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            paused = bool((body or {}).get("paused", True))
+            if paused:
+                self._ui_paused.add(node_id)
+            else:
+                self._ui_paused.discard(node_id)
+            return web.json_response({"node_id": node_id, "paused": paused})
+
+        app.router.add_post("/api/session", ui_session)
+        app.router.add_get("/api/status", ui_status)
+        app.router.add_get("/api/cluster/models", ui_models)
+        app.router.add_get("/api/cluster/discover", ui_discover)
+        app.router.add_post("/api/chat", ui_chat)
+        app.router.add_get("/api/chat/stream/{task_id}", ui_stream)
+        app.router.add_post("/api/node/{node_id}/pause", ui_pause)
 
     async def _start_http_server(self) -> None:
         """Inicia servidor HTTP para API, WebSocket e UI estática."""
@@ -506,6 +804,11 @@ class BeeService:
         app.router.add_get("/api/v1/peers", peers)
         app.router.add_post("/api/v1/ingest", ingest)
 
+        # Rotas da interface web (web/app.js). Precisam vir ANTES do mount
+        # estático em "/" — no aiohttp as rotas casam na ordem de registro, e
+        # add_static('/') capturaria tudo que não estivesse registrado acima.
+        self._register_ui_routes(app)
+
         # Servir arquivos estáticos da Web UI
         # parents[1] = raiz do repositório (este arquivo é <repo>/bees/service.py).
         # Antes usava parents[2], que apontava para FORA do repositório
@@ -618,7 +921,11 @@ class BeeService:
         app.router.add_get("/api/v1/capabilities", capabilities)
         app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
-        
+
+        # Interface web: mesmo contrato, também quando a Abelha roda embutida
+        # numa aplicação aiohttp externa (integração com o EnxameKernel).
+        self._register_ui_routes(app)
+
         logger.info("Rotas da Abelha registradas na aplicação externa")
 
     def _calculate_load(self) -> float:

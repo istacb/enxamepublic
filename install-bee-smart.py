@@ -454,6 +454,48 @@ DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 
 
 
+# Modo "next > next > finish": quando True, nenhuma pergunta é feita e as
+# respostas padrão são assumidas. O instalador existe justamente para o usuário
+# não se perder, então ele não pode parar no meio esperando digitação.
+AUTO = False
+
+
+def confirm(prompt, default_yes=True):
+    """Pergunta s/n, mas nunca trava em modo --auto."""
+    if AUTO:
+        return default_yes
+    suffix = " (Y/n): " if default_yes else " (s/N): "
+    try:
+        answer = input(prompt + suffix).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default_yes
+    if not answer:
+        return default_yes
+    return answer in ("s", "sim", "y", "yes")
+
+
+def is_root():
+    """True se o processo tem privilégios administrativos."""
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+    return os.geteuid() == 0
+
+
+def sudo_prefix():
+    """Prefixo para comandos de pacote: sudo quando não somos root."""
+    if os.name == "nt" or is_root():
+        return []
+    if shutil.which("sudo"):
+        return ["sudo"]
+    return []
+
+
 def detect_os():
     """Detecta o sistema operacional."""
     system = platform.system().lower()
@@ -727,7 +769,7 @@ def check_tesseract():
             ["tesseract", "--version"], capture_output=True, text=True, timeout=3
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
         return False
 
 
@@ -766,19 +808,27 @@ def install_python_if_needed():
                 return False
 
         elif os_type == "debian":
-            subprocess.run(
-                ["apt-get", "update"], capture_output=True, timeout=60
+            # Sem sudo (quando não se é root) o apt-get falha com
+            # "Permission denied" e o instalador seguia dizendo "instalado".
+            prefix = sudo_prefix()
+            subprocess.run([*prefix, "apt-get", "update"], timeout=300)
+            proc = subprocess.run(
+                [*prefix, "apt-get", "install", "-y", "python3", "python3-venv"],
+                timeout=900,
             )
-            subprocess.run(
-                ["apt-get", "install", "-y", "python3.10"], capture_output=True, timeout=120
-            )
-            print_success("Python 3.10 instalado via apt")
+            if proc.returncode != 0:
+                print_error("apt-get falhou ao instalar python3/python3-venv")
+                return False
+            print_success("Python instalado via apt")
             return True
 
         elif os_type == "arch":
-            subprocess.run(
-                ["pacman", "-Sy", "--noconfirm", "python"], capture_output=True, timeout=60
+            proc = subprocess.run(
+                [*sudo_prefix(), "pacman", "-Sy", "--noconfirm", "python"], timeout=600
             )
+            if proc.returncode != 0:
+                print_error("pacman falhou ao instalar python")
+                return False
             print_success("Python instalado via pacman")
             return True
 
@@ -792,6 +842,26 @@ def install_python_if_needed():
     except Exception as e:
         cprint(f"Erro ao instalar Python: {e}", Colors.FAIL)
         return False
+
+
+def _windows_refresh_ollama_path():
+    """Adiciona o diretório padrão do Ollama ao PATH desta sessão (Windows).
+
+    Após `winget install Ollama.Ollama`, o PATH do processo atual continua sem o
+    executável, então todo `subprocess.run(["ollama", ...])` seguinte falhava com
+    FileNotFoundError mesmo com o Ollama instalado corretamente.
+    """
+    if os.name != "nt":
+        return
+    local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    candidates = [
+        Path(local) / "Programs" / "Ollama",
+        Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Ollama",
+    ]
+    for c in candidates:
+        if (c / "ollama.exe").exists() and str(c) not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = str(c) + os.pathsep + os.environ.get("PATH", "")
+            return
 
 
 def start_ollama_daemon():
@@ -858,8 +928,7 @@ def install_ollama_if_needed():
 
     if detection["installed"] and not detection["running"]:
         print_warning("Ollama instalado mas não está rodando")
-        start = input("Deseja iniciar o Ollama agora? (s/N): ").strip().lower()
-        if start in ("s", "sim", "y", "yes"):
+        if confirm("Deseja iniciar o Ollama agora?", default_yes=True):
             start_ollama_daemon()
             # Wait a bit
             import time
@@ -879,8 +948,29 @@ def install_ollama_if_needed():
 
         try:
             if os_type == "windows":
-                cprint("Para Windows: baixe o instalador em https://ollama.com/download", Colors.WARNING)
-                print("Execute o instalador e volte aqui.")
+                winget = shutil.which("winget")
+                if winget:
+                    cprint("Instalando Ollama via winget...", Colors.OKCYAN)
+                    proc = subprocess.run(
+                        [winget, "install", "--id", "Ollama.Ollama", "-e",
+                         "--accept-source-agreements", "--accept-package-agreements"],
+                        timeout=1800,
+                    )
+                    if proc.returncode != 0:
+                        print_error("winget falhou ao instalar o Ollama")
+                        return None, []
+                    # O instalador do Windows registra o app mas o PATH desta
+                    # sessão não foi atualizado; tenta o caminho padrão.
+                    _windows_refresh_ollama_path()
+                    start_ollama_daemon()
+                    return "http://localhost:11434", []
+
+                cprint(
+                    "winget não encontrado. Baixe o instalador em "
+                    "https://ollama.com/download, execute-o e rode este "
+                    "script novamente.",
+                    Colors.WARNING,
+                )
                 return None, []
 
             elif os_type == "macos":
@@ -890,14 +980,12 @@ def install_ollama_if_needed():
                 )
                 if result.returncode == 0:
                     cprint("Instalando Ollama via Homebrew...", Colors.OKCYAN)
-                    subprocess.run(
-                        ["brew", "install", "ollama"], capture_output=True, timeout=180
-                    )
+                    proc = subprocess.run(["brew", "install", "ollama"], timeout=1800)
+                    if proc.returncode != 0:
+                        print_error("Homebrew falhou ao instalar o Ollama")
+                        return None, []
                     start_ollama_daemon()
-                    import time
-                    time.sleep(3)
-                    url = "http://localhost:11434"
-                    return url, []
+                    return "http://localhost:11434", []
                 else:
                     cprint("Homebrew não encontrado", Colors.WARNING)
                     return None, []
@@ -940,9 +1028,12 @@ def install_ollama_if_needed():
                 return url, []
 
             elif os_type == "arch":
-                subprocess.run(
-                    ["pacman", "-Sy", "--noconfirm", "ollama"], capture_output=True, timeout=60
+                proc = subprocess.run(
+                    [*sudo_prefix(), "pacman", "-Sy", "--noconfirm", "ollama"], timeout=900
                 )
+                if proc.returncode != 0:
+                    print_error("pacman falhou ao instalar o Ollama")
+                    return None, []
                 start_ollama_daemon()
                 import time
                 time.sleep(3)
@@ -1199,7 +1290,13 @@ def uninstall_bee():
     print("  [2] Remover Ollama e todos os modelos")
     print("  [3] Tudo (BEE + Ollama + modelos)")
 
-    choice = input("\nEscolha (1-3, padrão: 1): ").strip() or "1"
+    if AUTO:
+        choice = "1"
+    else:
+        try:
+            choice = input("\nEscolha (1-3, padrão: 1): ").strip() or "1"
+        except (EOFError, KeyboardInterrupt):
+            choice = "1"
 
     os_type = detect_os()
     bee_dir = REPO_ROOT  # Diretório onde o Bee foi instalado
@@ -1225,51 +1322,47 @@ def uninstall_bee():
     # Perguntar sobre Ollama
     if choice in ("2", "3"):
         if os_type == "windows":
-            confirm = input(
-                "\nDeseja desinstalar o Ollama do Windows? (remove o serviço e pasta): "
-            ).strip().lower()
-            if confirm in ("s", "sim", "y", "yes"):
+            if confirm("\nDeseja desinstalar o Ollama do Windows?", default_yes=False):
                 # Parar serviço primeiro
                 subprocess.run(["taskkill", "/F", "/IM", "ollama.exe"], capture_output=True)
-                # Remover pasta
-                ollama_dir = Path("C:/ProgramData/Ollama")
-                if ollama_dir.exists():
-                    shutil.rmtree(ollama_dir)
-                    print_success("Pasta Ollama removida do Windows")
+                # O instalador oficial do Windows coloca o programa em
+                # %LOCALAPPDATA%\Programs\Ollama e os modelos em
+                # %USERPROFILE%\.ollama — não em C:/ProgramData/Ollama, que era
+                # o único caminho removido antes (ou seja, nada era removido).
+                _windows_refresh_ollama_path()
+                subprocess.run(
+                    [shutil.which("ollama") or "ollama", "stop"], capture_output=True
+                )
+                local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+                for target in [
+                    Path(local) / "Programs" / "Ollama",
+                    Path("C:/ProgramData/Ollama"),
+                    Path.home() / ".ollama",
+                ]:
+                    if target.exists():
+                        shutil.rmtree(target, ignore_errors=True)
+                        print_success(f"Removido: {target}")
                 # Remover atalho do menu iniciar
                 print_success("Ollama desinstalado (Windows)")
 
         elif os_type == "macos":
-            confirm = input(
-                "\nDeseja desinstalar o Ollama do macOS? (remove o brew install): "
-            ).strip().lower()
-            if confirm in ("s", "sim", "y", "yes"):
+            if confirm("\nDeseja desinstalar o Ollama do macOS?", default_yes=False):
                 subprocess.run(
                     ["brew", "uninstall", "ollama"], capture_output=True
                 )
                 print_success("Ollama desinstalado (macOS)")
 
         elif os_type == "debian":
-            confirm = input(
-                "\nDeseja desinstalar o Ollama? (sudo apt remove ollama): "
-            ).strip().lower()
-            if confirm in ("s", "sim", "y", "yes"):
-                subprocess.run(
-                    ["sudo", "apt", "remove", "-y", "ollama"], capture_output=True
-                )
-                subprocess.run(
-                    ["sudo", "apt", "autoremove", "-y", "ollama"], capture_output=True
-                )
+            if confirm("\nDeseja desinstalar o Ollama? (apt remove ollama)", default_yes=False):
+                prefix = sudo_prefix()
+                subprocess.run([*prefix, "apt", "remove", "-y", "ollama"])
+                subprocess.run([*prefix, "apt", "autoremove", "-y", "ollama"])
                 print_success("Ollama desinstalado (Debian)")
 
         elif os_type == "arch":
-            confirm = input(
-                "\nDeseja desinstalar o Ollama? (sudo pacman -Rns ollama): "
-            ).strip().lower()
-            if confirm in ("s", "sim", "y", "yes"):
+            if confirm("\nDeseja desinstalar o Ollama? (pacman -Rns ollama)", default_yes=False):
                 subprocess.run(
-                    ["sudo", "pacman", "-Rns", "--noconfirm", "ollama"],
-                    capture_output=True,
+                    [*sudo_prefix(), "pacman", "-Rns", "--noconfirm", "ollama"]
                 )
                 print_success("Ollama desinstalado (Arch)")
 
@@ -1326,6 +1419,10 @@ def parse_args():
         description="Instalador inteligente do BEE/ENXAME (Windows, macOS, Debian, Arch)",
     )
     parser.add_argument(
+        "--auto", action="store_true",
+        help="Modo next>next>finish: não faz nenhuma pergunta e assume os padrões",
+    )
+    parser.add_argument(
         "--uninstall", action="store_true",
         help="Remove .env, dashboard e venv criados pelo instalador",
     )
@@ -1359,7 +1456,11 @@ def parse_args():
 
 def main():
     """Função principal do instalador."""
+    global AUTO
     args = parse_args()
+    AUTO = bool(args.auto)
+    if AUTO:
+        cprint("Modo automático: nenhuma pergunta será feita.", Colors.OKCYAN)
 
     if args.uninstall:
         uninstall_bee()
