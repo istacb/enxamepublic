@@ -56,6 +56,7 @@ from .cluster import (
     load_cluster_state,
     save_cluster_state,
     elect_roles,
+    score_peer,
     InternetGate,
     InternetPurpose,
     GlobalIndex,
@@ -136,6 +137,11 @@ class BeeService:
         # quem recebe o prompt e quem cura a resposta — não aplicava nenhuma.
         self._guardian: Any = None
         self._guardian_patrol: Any = None
+        self._patrol_task: "asyncio.Task | None" = None
+
+        # Formação dinâmica do enxame: peers que aparecem DEPOIS do boot.
+        self._cluster_reelect_task: "asyncio.Task | None" = None
+        self._cluster_reelect_lock = asyncio.Lock()
         self._guardian_alerts: list[dict[str, Any]] = []
         self._guard_stats: dict[str, int] = {
             "prompts_inspecionados": 0,
@@ -305,6 +311,13 @@ class BeeService:
             self._guardian_patrol.stop()
             self._guardian_patrol = None
 
+        # Cancelar reavaliação de enxame pendente
+        if self._cluster_reelect_task is not None:
+            self._cluster_reelect_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._cluster_reelect_task
+            self._cluster_reelect_task = None
+
         # Notificar peers sobre parada
         if self._handler:
             state_change = self._handler.create_state_change(
@@ -353,25 +366,76 @@ class BeeService:
         self.state = BeeState.STOPPED
         logger.info(f"Abelha {self.node_id} OFFLINE")
 
+    def _self_peer(self) -> DiscoveredPeer:
+        """Representa ESTA abelha como um `DiscoveredPeer`.
+
+        A descoberta mDNS lista apenas os OUTROS nodes — o próprio node nunca
+        aparece em `get_active_peers()`. Mas a eleição distribui papéis entre
+        todos os participantes do enxame, inclusive este. Sem uma representação
+        própria, esta abelha ficava de fora da eleição e
+        `cluster_state.get_role(self.node_id)` devolvia None.
+        """
+        return DiscoveredPeer(
+            node_id=self.node_id,
+            role="bee",
+            host=self.config.host_ip,
+            port=self.config.port,
+            capabilities=self._get_capabilities_list(),
+            models=self._get_models_list(),
+        )
+
+    def _min_bees_for_cluster(self) -> int:
+        """Quantas abelhas (contando esta) formam um enxame. Default: 3."""
+        cluster_cfg = getattr(self.config, "cluster", None) or {}
+        try:
+            value = int(cluster_cfg.get("min_peers", 3))
+        except (AttributeError, TypeError, ValueError):
+            value = 3
+        return max(1, value)
+
     async def _initialize_cluster(self) -> None:
-        """Inicializa cluster: carrega estado, elege papéis se 3+ peers, inicia monitoramento."""
+        """Inicializa cluster: carrega estado, elege papéis se 3+ abelhas, inicia monitoramento."""
         # Carregar estado persistido
         self.cluster_state = load_cluster_state(self.config.data_dir)
         
         # Aguardar descoberta inicial de peers (2s)
         await asyncio.sleep(2)
         
-        peers = []
+        peers: list[DiscoveredPeer] = []
         if self._discovery:
             peers = self._discovery.get_active_peers()
-        
-        logger.info(f"Peers descobertos para cluster: {len(peers)}")
-        
-        if len(peers) >= 3:
+
+        # DOIS erros viviam aqui:
+        #
+        # 1) O enxame é formado por esta abelha + as descobertas, mas `peers`
+        #    vem do mDNS e NÃO inclui o próprio node. O teste `len(peers) >= 3`
+        #    exigia portanto 4 MÁQUINAS para formar enxame, enquanto a
+        #    especificação é "3+ abelhas". Com exatamente 3 abelhas cada uma via
+        #    2 peers e todas ficavam standalone — o enxame nunca nascia.
+        #
+        # 2) `elect_roles(peers)` recebia a lista SEM esta abelha. Como a
+        #    eleição sorteia juiz/bibliotecário/guarda entre os elementos da
+        #    lista e joga o resto em workers, esta abelha não recebia papel
+        #    algum: `get_role(self.node_id)` devolvia None e a linha
+        #    `self.cluster_role.value` logo abaixo levantaria AttributeError,
+        #    derrubando o startup. Era um crash latente que só não acontecia
+        #    porque o erro (1) impedia este ramo de executar.
+        enxame = [*peers, self._self_peer()]
+        min_bees = self._min_bees_for_cluster()
+
+        logger.info(
+            f"Abelhas no enxame: {len(enxame)} ({len(peers)} peer(s) + esta) "
+            f"| mínimo para cluster: {min_bees}"
+        )
+
+        if len(enxame) >= min_bees:
             self._standalone = False
-            # Eleger papéis
-            self.cluster_state = elect_roles(peers, self.cluster_state)
-            self.cluster_role = self.cluster_state.get_role(self.node_id)
+            # Eleger papéis entre TODAS as abelhas do enxame, inclusive esta
+            self.cluster_state = elect_roles(enxame, self.cluster_state)
+            # `or ClusterRole.WORKER`: se a eleição não atribuir papel a este
+            # node (ex.: estado persistido inconsistente), assumir worker em vez
+            # de deixar None e estourar AttributeError no .value abaixo.
+            self.cluster_role = self.cluster_state.get_role(self.node_id) or ClusterRole.WORKER
             
             # Determinar se é Worker Artist
             if self.cluster_role == ClusterRole.WORKER and self.node_id in self.cluster_state.artist_workers:
@@ -386,18 +450,29 @@ class BeeService:
             # Inicializar InternetGate
             self._internet_gate = InternetGate(self.cluster_state, self.node_id)
             
-            # Se sou Bibliotecário, construir índice global
+            # Se sou Bibliotecário, construir índice global lendo o índice de
+            # TODAS as abelhas do enxame (build_global_index pula a si mesma
+            # comparando node_id, então passar `enxame` é seguro).
             if self.cluster_role == ClusterRole.BIBLIOTECARIO:
-                self._global_index = await build_global_index(self, peers)
+                self._global_index = await build_global_index(self, enxame)
                 self.cluster_state.global_index = self._global_index.data
                 save_cluster_state(self.config.data_dir, self.cluster_state)
             
             # Iniciar monitoramento de failover
+            # O monitor chama save_state_fn(state) com UM argumento, mas
+            # save_cluster_state(data_dir, state) exige DOIS. Passar a função
+            # crua quebrava o failover na primeira vez que ele era acionado
+            # (TypeError engolido e logado como "Erro no monitoramento").
             self._cluster_monitor = await start_monitoring(
-                self, self.cluster_state, save_cluster_state, check_interval=60.0
+                self,
+                self.cluster_state,
+                lambda state: save_cluster_state(self.config.data_dir, state),
+                check_interval=60.0,
             )
         else:
-            logger.info(f"Menos de 3 peers ({len(peers)}), operando como standalone")
+            logger.info(
+                f"Menos de {min_bees} abelhas ({len(enxame)}), operando como standalone"
+            )
             self._standalone = True
             self.cluster_role = ClusterRole.WORKER
             if self.node_id in (self.cluster_state.artist_workers if self.cluster_state else []):
@@ -440,6 +515,53 @@ class BeeService:
     def _on_peer_discovered(self, peer: DiscoveredPeer) -> None:
         """Callback quando novo peer é descoberto."""
         logger.info(f"Peer descoberto: {peer.node_id} ({peer.role}) em {peer.host}:{peer.port}")
+        self._maybe_form_cluster()
+
+    def _maybe_form_cluster(self) -> None:
+        """Reavalia a formação do enxame quando peers aparecem depois do boot.
+
+        `_initialize_cluster()` roda UMA vez no startup, com uma janela de 2s de
+        descoberta. No caso real — uma abelha ligada aqui, outra acolá, minutos
+        depois — quem subiu sozinha ficava standalone para sempre, mesmo com o
+        enxame completo na rede. Aqui o enxame se forma assim que o número de
+        abelhas atinge o mínimo.
+
+        Callback síncrono (vem do zeroconf), então apenas agenda a tarefa.
+        """
+        if not self._running or self._standalone is False:
+            return  # ainda no boot, ou já faz parte de um enxame
+        if self._cluster_reelect_task is not None:
+            return  # já existe uma reavaliação agendada
+        if not self._discovery:
+            return
+        total = len(self._discovery.get_active_peers()) + 1
+        if total < self._min_bees_for_cluster():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # chamado fora de um loop asyncio: nada a agendar
+        self._cluster_reelect_task = loop.create_task(self._reelect_cluster())
+
+    async def _reelect_cluster(self) -> None:
+        """Reexecuta a eleição com debounce e de forma serializada."""
+        try:
+            # Debounce: o mDNS anuncia vários peers em rajada. Esperar um pouco
+            # evita uma eleição por peer descoberto e guerra de estados.
+            await asyncio.sleep(3.0)
+            async with self._cluster_reelect_lock:
+                if not self._running or not self._standalone:
+                    return
+                logger.info("Peers suficientes descobertos: formando o enxame")
+                await self._initialize_cluster()
+                if not self._standalone:
+                    # A ronda decide no construtor se agrega localmente ou
+                    # reporta ao juiz; ao entrar num enxame é preciso recriá-la.
+                    self._restart_guardian_patrol()
+        except Exception as exc:
+            logger.warning(f"Falha ao formar o enxame dinamicamente: {exc}")
+        finally:
+            self._cluster_reelect_task = None
 
     def _on_peer_lost(self, node_id: str) -> None:
         """Callback quando peer é perdido."""
@@ -517,6 +639,27 @@ class BeeService:
             "ready": self._running,
         }
 
+    def _ui_role_for(self, node_id: str, fallback: str = "") -> str:
+        """Papel de um node para exibição no UI.
+
+        `peer.role` vem do anúncio mDNS e é sempre "bee". Quem sabe o papel de
+        cada abelha é o `cluster_state`, resultado da eleição. Enquanto o UI
+        usava `peer.role`, todas as colegas apareciam como "bee" e o usuário não
+        via o enxame (juiz / bibliotecária / guarda) que acabara de ser eleito —
+        justamente o que a interface existe para mostrar.
+        """
+        role = ""
+        if node_id == self.node_id:
+            role = self._ui_cluster_role()
+        elif self.cluster_state is not None:
+            elected = self.cluster_state.get_role(node_id)
+            if elected is not None:
+                role = getattr(elected, "value", str(elected))
+        if not role:
+            role = fallback or "worker"
+        # web/app.js compara com 'bibliotecaria' (feminino) para pintar de azul.
+        return "bibliotecaria" if role == "bibliotecario" else role
+
     def _ui_cluster_role(self) -> str:
         """Papel para exibição no UI.
 
@@ -567,6 +710,79 @@ class BeeService:
             task.status = "failed"
             task.emit("error", message=str(e))
 
+    def _register_protocol_routes(self, app: Any) -> None:
+        """Registra POST /api/v1/bee/message — o endpoint que RECEBE envelopes.
+
+        Este era o único elo que faltava para o enxame existir de fato:
+
+        * `BeeProtocolHandler.handle_message()` já estava completo (validação,
+          expiração, verificação de assinatura HMAC, atualização de peer e
+          dispatch para o handler do tipo);
+        * `BeeService._register_protocol_handlers()` já registrava 11 handlers
+          (HELLO, HEARTBEAT, KNOWLEDGE_QUERY, RESEARCH_REQUEST, MODEL_REQUEST,
+          VISION_REQUEST, CAPABILITY_QUERY, STATE_CHANGE, PEER_LOST...);
+        * os emissores `_send_to_peer()` e `_send_with_response()` já faziam
+          POST para `/api/v1/bee/message`.
+
+        Mas NENHUM node servia essa rota. Toda mensagem caía no mount estático
+        "/" e voltava **405 Method Not Allowed**. Na prática o protocolo BEE
+        inteiro era código morto: eleição de papéis, descoberta de quem tem o
+        conhecimento offline, delegação de pesquisa e curadoria distribuída
+        nunca chegaram a acontecer.
+
+        Precisa ser registrada ANTES do mount estático em "/" (aiohttp casa as
+        rotas na ordem de registro).
+        """
+        from aiohttp import web
+
+        async def bee_message(request: Any) -> Any:
+            try:
+                data = await request.json()
+            except Exception:
+                return web.json_response({"error": "corpo JSON inválido"}, status=400)
+            if not isinstance(data, dict):
+                return web.json_response({"error": "corpo deve ser um objeto"}, status=400)
+
+            try:
+                envelope = BeeEnvelope.from_dict(data)
+            except Exception as exc:
+                logger.warning(f"Envelope BEE malformado recebido: {exc}")
+                return web.json_response({"error": f"envelope inválido: {exc}"}, status=400)
+
+            # Aceita broadcast (target_node_id None) e o que é para este node.
+            # Rejeitar o endereçado a outro evita processar mensagem que chegou
+            # aqui por engano (ex.: descoberta com porta trocada).
+            if envelope.target_node_id and envelope.target_node_id != self.node_id:
+                logger.debug(
+                    f"Envelope destinado a {envelope.target_node_id} "
+                    f"ignorado por {self.node_id}"
+                )
+                return web.json_response(
+                    {"error": "destino não é este node",
+                     "target_node_id": envelope.target_node_id},
+                    status=404,
+                )
+
+            logger.debug(
+                f"BEE recebido: {envelope.msg_type} de {envelope.source_node_id or '?'} "
+                f"(correlation={envelope.correlation_id})"
+            )
+
+            try:
+                response = await self._handler.handle_message(envelope)
+            except Exception as exc:
+                logger.error(f"Erro ao processar {envelope.msg_type}: {exc}")
+                return web.json_response({"error": str(exc)}, status=500)
+
+            if response is None:
+                # Aceita sem resposta (ex.: HEARTBEAT_ACK, STATE_CHANGE, PEER_LOST)
+                return web.json_response(
+                    {"status": "accepted", "msg_id": envelope.msg_id}, status=202
+                )
+            return web.json_response(response.to_dict())
+
+        app.router.add_post("/api/v1/bee/message", bee_message)
+
     def _register_ui_routes(self, app: Any) -> None:
         """Registra as rotas consumidas por web/app.js.
 
@@ -586,8 +802,11 @@ class BeeService:
             agents = [self._ui_node_snapshot(self.node_id, self._ui_cluster_role(), self._ui_models())]
             if self._discovery:
                 for peer in self._discovery.get_active_peers():
-                    role = "bibliotecaria" if peer.role == "bibliotecario" else (peer.role or "worker")
-                    agents.append(self._ui_node_snapshot(peer.node_id, role, list(peer.models)))
+                    agents.append(self._ui_node_snapshot(
+                        peer.node_id,
+                        self._ui_role_for(peer.node_id, peer.role or ""),
+                        list(peer.models),
+                    ))
             return web.json_response({
                 "node": self.node_id,
                 "agents": agents,
@@ -626,8 +845,8 @@ class BeeService:
                         "ip": p.host,
                         "http_port": p.port,
                         "ws_port": p.port,
-                        "role": p.role,
-                        "score": 0.0,
+                        "role": self._ui_role_for(p.node_id, p.role or ""),
+                        "score": round(score_peer(p), 2),
                         "models": list(p.models),
                     })
             return web.json_response({"peers": peers})
@@ -853,9 +1072,12 @@ class BeeService:
         app.router.add_get("/api/v1/peers", peers)
         app.router.add_post("/api/v1/ingest", ingest)
 
-        # Rotas da interface web (web/app.js). Precisam vir ANTES do mount
-        # estático em "/" — no aiohttp as rotas casam na ordem de registro, e
-        # add_static('/') capturaria tudo que não estivesse registrado acima.
+        # Protocolo BEE entre abelhas + rotas da interface web (web/app.js).
+        # Precisam vir ANTES do mount estático em "/" — no aiohttp as rotas
+        # casam na ordem de registro, e add_static('/') capturaria tudo que não
+        # estivesse registrado acima (era assim que /api/v1/bee/message voltava
+        # 405 em vez de chegar ao handler).
+        self._register_protocol_routes(app)
         self._register_ui_routes(app)
 
         # Servir arquivos estáticos da Web UI
@@ -971,8 +1193,9 @@ class BeeService:
         app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
 
-        # Interface web: mesmo contrato, também quando a Abelha roda embutida
-        # numa aplicação aiohttp externa (integração com o EnxameKernel).
+        # Protocolo BEE e interface web: mesmo contrato, também quando a
+        # Abelha roda embutida numa aplicação aiohttp externa (EnxameKernel).
+        self._register_protocol_routes(app)
         self._register_ui_routes(app)
 
         logger.info("Rotas da Abelha registradas na aplicação externa")
@@ -1094,24 +1317,49 @@ class BeeService:
         from .protocol.messages import BeeResearchRequest, ResearchResultItem
         request = BeeResearchRequest.from_dict(envelope.payload)
 
+        # `LocalLibrarian.search()` devolve {"answer","confidence","source",
+        # "metadata","sources"} — NÃO existe chave "results". O laço antigo
+        # iterava search_result.get("results", []), que era sempre vazio, então
+        # RESEARCH_RESULT voltava com zero itens e o juiz descartava a resposta
+        # mesmo quando a abelha consultada TINHA o conhecimento. Era o último
+        # elo quebrado da delegação no enxame.
         results = []
-        if self._librarian:
+        started = time.perf_counter()
+
+        # GUARDA — quem RECEBE a pergunta delegada também inspeciona.
+        # A especificação pede a rotina de guarda em quem recebe o prompt e em
+        # quem faz a curadoria. No enxame o texto chega aqui pela rede, vindo de
+        # outra abelha; sem inspeção, um prompt malicioso já barrado pelo juiz
+        # entraria pela porta lateral do RESEARCH_REQUEST. Devolver zero itens
+        # faz o juiz cair no fallback normal.
+        bloqueado = self._guard_prompt(request.query) is not None
+        if bloqueado:
+            logger.warning(f"RESEARCH_REQUEST bloqueado pelo guardião em {self.node_id}")
+
+        if self._librarian and not bloqueado:
             search_result = await self._librarian.search(request.query, request.max_results)
-            for item in search_result.get("results", []):
+            answer = str(search_result.get("answer") or "").strip()
+            if answer:
+                metadata = dict(search_result.get("metadata") or {})
+                # Proveniência vai no metadata (não como itens separados): o juiz
+                # concatena o conteúdo dos itens, e repetir o mesmo texto uma vez
+                # por arquivo duplicaria a resposta.
+                metadata["sources"] = list(search_result.get("sources") or [])
+                metadata["answered_by"] = self.node_id
                 results.append(ResearchResultItem(
-                    content=item.get("content", ""),
-                    source=item.get("source"),
-                    confidence=item.get("confidence", 0.0),
-                    page=item.get("page"),
-                    metadata=item.get("metadata", {}),
+                    content=answer,
+                    source=search_result.get("source"),
+                    confidence=float(search_result.get("confidence", 0.0)),
+                    metadata=metadata,
                 ))
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         return self._handler.create_research_result(
             target_node_id=envelope.source_node_id,
             request_id=request.request_id,
             results=results,
             total_results=len(results),
-            processing_time_ms=search_result.get("latency_ms", 0) if "search_result" in locals() else 0,
+            processing_time_ms=elapsed_ms,
             model_used=self.config.model,
             correlation_id=envelope.correlation_id,
         )
@@ -1458,7 +1706,30 @@ class BeeService:
             "Ronda do guardião ativa "
             f"({'standalone: alertas locais' if self._standalone else 'reportando ao juiz'})"
         )
-        return asyncio.create_task(self._guardian_patrol.run_forever())
+        self._patrol_task = asyncio.create_task(self._guardian_patrol.run_forever())
+        return self._patrol_task
+
+    def _restart_guardian_patrol(self) -> None:
+        """Recria a ronda para refletir o modo atual (standalone <-> enxame).
+
+        `GuardianPatrol` decide no construtor se entrega alertas localmente
+        (este node É o juiz) ou se os reporta por POST assinado ao juiz. Quando
+        o enxame se forma depois do boot, essa decisão muda e a ronda precisa
+        ser recriada — senão a abelha continuaria agregando alertas sozinha em
+        vez de enviá-los ao juiz eleito.
+        """
+        if self._guardian_patrol is not None:
+            self._guardian_patrol.stop()
+            self._guardian_patrol = None
+        old_task = self._patrol_task
+        self._patrol_task = None
+        if old_task is not None:
+            old_task.cancel()
+            if old_task in self._tasks:
+                self._tasks.remove(old_task)
+        new_task = self._start_guardian_patrol()
+        if new_task is not None:
+            self._tasks.append(new_task)
 
     def guardian_summary(self) -> dict[str, Any]:
         """Estado de segurança desta abelha (observabilidade)."""

@@ -68,12 +68,25 @@ def has_capabilities(peer: Any, required: frozenset[str]) -> bool:
 def score_peer(peer: Any) -> float:
     """
     Calcula score de adequação de um peer para papéis de liderança.
-    
+
+    IMPORTANTE — este score precisa ser DETERMINÍSTICO: cada abelha roda a
+    eleição sozinha, a partir da sua própria visão da rede, e todas precisam
+    chegar ao MESMO resultado. Se o score depender de algo volátil, cada abelha
+    elege um juiz diferente (split-brain) e o enxame fica com três orquestradores
+    que não se reconhecem — foi exatamente o que aconteceu na prática.
+
+    Por isso `load` e `uptime` FORAM REMOVIDOS daqui:
+      - `load` é a carga que o peer anunciou via mDNS num instante qualquer;
+        duas abelhas leem valores diferentes e pesava 20 pontos.
+      - `uptime_seconds` nem existe em DiscoveredPeer (dava 0 sempre).
+
+    Ficam só atributos estáveis, anunciados pelo próprio dono e iguais para
+    todos os observadores: hardware e capabilities. O desempate é por node_id
+    (ver `_sort_scored`), que também é estável.
+
     Critérios:
-    - Hardware (40%): RAM, CPU, GPU
-    - Capabilities (30%): Quantidade e relevância
-    - Load invertido (20%): Menos carga = melhor
-    - Uptime (10%): Estabilidade
+    - Hardware: RAM, CPU, GPU
+    - Capabilities: quantidade e relevância para os papéis
     """
     score = 0.0
     
@@ -93,15 +106,17 @@ def score_peer(peer: Any) -> float:
     critical_caps = {"llm_inference", "rag", "embeddings", "vector_search", "index", "ocr", "security"}
     score += len(set(caps) & critical_caps) * 10
     
-    # Load invertido (20%) - menos load = melhor
-    load = getattr(peer, "load", 1.0)
-    score += (1.0 - load) * 20
-    
-    # Uptime (10%)
-    uptime = getattr(peer, "uptime_seconds", 0)
-    score += min(uptime / 3600, 24) * 0.5
-    
     return score
+
+
+def _sort_scored(scored: list) -> list:
+    """Ordena (score, peer) por score DESC e node_id ASC como desempate.
+
+    `list.sort` é estável, então empatados ficavam na ordem em que o mDNS
+    descobriu os peers — ordem que difere de abelha para abelha. Desempatar por
+    node_id torna a eleição reprodutível em todos os nodes.
+    """
+    return sorted(scored, key=lambda x: (-x[0], x[1].node_id))
 
 
 def elect_roles(peers: list[Any], current_state: ClusterState | None = None) -> ClusterState:
@@ -123,8 +138,7 @@ def elect_roles(peers: list[Any], current_state: ClusterState | None = None) -> 
         )
     
     # 1. Calcular scores
-    scored = [(score_peer(p), p) for p in peers]
-    scored.sort(key=lambda x: x[0], reverse=True)  # Maior score primeiro
+    scored = _sort_scored([(score_peer(p), p) for p in peers])
     
     # 2. Identificar artists (GPU)
     artist_peers = [p for s, p in scored if getattr(getattr(p, "hardware", None), "gpu_available", False)]
@@ -177,7 +191,8 @@ def elect_roles(peers: list[Any], current_state: ClusterState | None = None) -> 
     
     # 6. Se algum papel não foi preenchido, tentar preencher com melhor disponível
     if juiz is None and scored:
-        juiz = scored[0].peer.node_id
+        # `scored` guarda tuplas (score, peer) — ver _sort_scored.
+        juiz = scored[0][1].node_id
     if bibliotecario is None:
         for s, p in scored:
             if p.node_id != juiz:
@@ -217,8 +232,7 @@ def elect_juiz_failover(peers: list[Any], failed_juiz_id: str, current_state: Cl
         return current_state  # Sem peers para assumir
     
     # Encontrar próximo melhor com capabilities de Juiz
-    scored = [(score_peer(p), p) for p in available]
-    scored.sort(key=lambda x: x[0], reverse=True)
+    scored = _sort_scored([(score_peer(p), p) for p in available])
     
     new_juiz = None
     for s, p in scored:
@@ -227,8 +241,11 @@ def elect_juiz_failover(peers: list[Any], failed_juiz_id: str, current_state: Cl
             break
     
     if new_juiz is None:
-        # Fallback: melhor disponível
-        new_juiz = scored[0].peer.node_id
+        # Fallback: melhor disponível.
+        # `scored` guarda tuplas (score, peer) — `scored[0].peer` levantava
+        # AttributeError justamente no caminho de emergência do failover,
+        # que é quando nenhuma das opções tem as capabilities de juiz.
+        new_juiz = scored[0][1].node_id
     
     # Criar novo estado com failover
     new_state = ClusterState(

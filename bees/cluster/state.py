@@ -42,7 +42,14 @@ class PeerKnowledge:
 class ClusterState:
     """Estado global do cluster Enxame."""
     
-    epoch: int = 0                          # Incrementa a cada eleição
+    # Contador LOCAL de eleições desta abelha — incrementa a cada eleição que
+    # ELA mesma roda. Não é um relógio do cluster: cada node parte do próprio
+    # estado persistido, então os epochs divergem entre as abelhas (num enxame
+    # de 3 já reiniciado várias vezes é normal ver 8/7/7). O que precisa ser
+    # igual em todos os nodes são juiz_id/bibliotecario_id/guarda_id, e isso é
+    # garantido pela eleição determinística (ver election.score_peer).
+    # NÃO use epoch para arbitrar qual estado é mais novo entre nodes.
+    epoch: int = 0
     juiz_id: str | None = None
     bibliotecario_id: str | None = None
     guarda_id: str | None = None

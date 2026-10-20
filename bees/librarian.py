@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -222,18 +223,42 @@ class LocalBeeLibrarian:
                 "topics": [h.source_path for h in hits[:5]],
             }
 
-        # Verificar arquivos locais
+        # Verificar arquivos locais.
+        #
+        # Antes só valia `query_lower in chunk.text`, ou seja, a pergunta
+        # INTEIRA precisava aparecer literalmente no documento. Como esta
+        # checagem é o que o juiz usa para decidir PARA QUEM delegar
+        # (KNOWLEDGE_QUERY), o roteamento ficava mais rígido que a busca real
+        # (_local_file_search casa por tokens): a abelha tinha o conteúdo, mas
+        # respondia "não sei", e o enxame nunca delegava nada.
+        #
+        # Agora usamos o mesmo critério da busca — correspondência por tokens —
+        # e a confiança é proporcional à fração de termos encontrados, para que
+        # o juiz consiga escolher a abelha MAIS relevante entre várias.
+        tokens = [t for t in re.split(r"\W+", query_lower) if len(t) > 2]
         local_hits = []
+        best_ratio = 0.0
         for chunk in self.indexer.chunks:
-            if query_lower in chunk.text.lower():
+            text = chunk.text.lower()
+            if query_lower in text:
+                ratio = 1.0
+            elif tokens:
+                matched = sum(1 for t in tokens if t in text)
+                ratio = matched / len(tokens)
+            else:
+                ratio = 0.0
+            if ratio >= 0.4:
+                best_ratio = max(best_ratio, ratio)
                 local_hits.append(chunk)
             if len(local_hits) >= 3:
                 break
 
         if local_hits:
+            # 0.75 no match exato; proporcional quando é parcial (>=0.4).
+            confidence = 0.75 if best_ratio >= 1.0 else round(0.30 + 0.45 * best_ratio, 3)
             return {
                 "has_knowledge": True,
-                "confidence": 0.6,
+                "confidence": confidence,
                 "document_count": len(local_hits),
                 "topics": [h.source_path for h in local_hits[:5]],
             }
