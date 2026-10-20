@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import secrets
 import signal
 import sys
@@ -25,14 +26,26 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from aiohttp import web
+
+from core.exp.http import build_auth_headers
 from core.exp.security import EXPSecurity
+
+# O guardião é opcional em runtime: se o pacote não for importável a abelha
+# ainda precisa servir consultas, mas registra em WARNING que está sem
+# inspeção de segurança — nunca silenciosamente.
+try:
+    from guardian import Guardian, GuardianPatrol
+except ImportError:  # pragma: no cover - depende do layout de instalação
+    Guardian = None
+    GuardianPatrol = None
 
 from .protocol.envelope import BeeEnvelope
 from .protocol.handler import BeeProtocolHandler
 from .protocol.messages import BeeMessageType, BeeState, BeeVisionRequest, BeeVisionResponse, BeeStateChange, BeePeerLost
 from .librarian import LocalBeeLibrarian
 from .memory import BeeMemory
-from .discovery import BeeDiscoveryService
+from .discovery import BeeDiscoveryService, DiscoveredPeer
 from .config import BeeConfig, load_config
 from .capabilities.discovery import discover_capabilities
 from .capabilities.selector import recommend_model
@@ -116,6 +129,20 @@ class BeeService:
         self._ui_sessions: dict[str, datetime] = {}
         self._ui_tasks: dict[str, UiTask] = {}
         self._ui_paused: set[str] = set()
+
+        # Guarda: a rotina de segurança precisa rodar em QUEM RECEBE O PROMPT e
+        # em QUEM FAZ A CURADORIA. Antes só o juiz inspecionava (juiz/app.py
+        # chama detect_injection) e a abelha — que em modo standalone é justamente
+        # quem recebe o prompt e quem cura a resposta — não aplicava nenhuma.
+        self._guardian: Any = None
+        self._guardian_patrol: Any = None
+        self._guardian_alerts: list[dict[str, Any]] = []
+        self._guard_stats: dict[str, int] = {
+            "prompts_inspecionados": 0,
+            "prompts_bloqueados": 0,
+            "respostas_inspecionadas": 0,
+            "respostas_retidas": 0,
+        }
 
         self._register_protocol_handlers()
 
@@ -248,13 +275,21 @@ class BeeService:
                 await self._start_http_server()
                 self._own_http_server = True
 
-        # 9. Iniciar loops de background
+        # 9. Guarda: inspeção de prompts/respostas + ronda contínua.
+        # Precisa vir ANTES dos loops de background porque a ronda é uma task
+        # como as outras e o stop() cancela tudo que estiver em self._tasks.
+        self._init_guardian()
+
+        # 10. Iniciar loops de background
         self._running = True
         self._tasks = [
             asyncio.create_task(self._heartbeat_loop()),
             asyncio.create_task(self._peer_maintenance_loop()),
             asyncio.create_task(self._load_metrics_loop()),
         ]
+        patrol_task = self._start_guardian_patrol()
+        if patrol_task is not None:
+            self._tasks.append(patrol_task)
 
         self.state = BeeState.RUNNING
         logger.info(f"Abelha {self.node_id} ONLINE - Estado: RUNNING")
@@ -264,6 +299,11 @@ class BeeService:
         logger.info(f"Parando Abelha {self.node_id}...")
         self.state = BeeState.STOPPING
         self._running = False
+
+        # Parar a ronda do guardião (o cancelamento das tasks vem logo abaixo)
+        if self._guardian_patrol:
+            self._guardian_patrol.stop()
+            self._guardian_patrol = None
 
         # Notificar peers sobre parada
         if self._handler:
@@ -397,7 +437,7 @@ class BeeService:
             return self._librarian.get_available_models()
         return []
 
-    def _on_peer_discovered(self, peer: "DiscoveredPeer") -> None:
+    def _on_peer_discovered(self, peer: DiscoveredPeer) -> None:
         """Callback quando novo peer é descoberto."""
         logger.info(f"Peer descoberto: {peer.node_id} ({peer.role}) em {peer.host}:{peer.port}")
 
@@ -666,6 +706,14 @@ class BeeService:
                 self._ui_paused.discard(node_id)
             return web.json_response({"node_id": node_id, "paused": paused})
 
+        async def ui_guardian(request: Any) -> Any:
+            """Estado de segurança desta abelha: guarda ativo, contadores de
+            inspeção e alertas da ronda. Sem isto não há como o usuário
+            constatar que a rotina de guarda está de fato rodando."""
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            return web.json_response(self.guardian_summary())
+
         app.router.add_post("/api/session", ui_session)
         app.router.add_get("/api/status", ui_status)
         app.router.add_get("/api/cluster/models", ui_models)
@@ -673,6 +721,7 @@ class BeeService:
         app.router.add_post("/api/chat", ui_chat)
         app.router.add_get("/api/chat/stream/{task_id}", ui_stream)
         app.router.add_post("/api/node/{node_id}/pause", ui_pause)
+        app.router.add_get("/api/guardian", ui_guardian)
 
     async def _start_http_server(self) -> None:
         """Inicia servidor HTTP para API, WebSocket e UI estática."""
@@ -1227,7 +1276,7 @@ class BeeService:
                 logger.error(f"Erro no load metrics: {e}")
             await asyncio.sleep(60)
 
-    async def _send_to_peer(self, peer: "DiscoveredPeer", envelope: BeeEnvelope) -> None:
+    async def _send_to_peer(self, peer: DiscoveredPeer, envelope: BeeEnvelope) -> None:
         """Envia envelope para peer via HTTP."""
         try:
             import aiohttp
@@ -1245,12 +1294,215 @@ class BeeService:
     # Pipeline de Query: LOCAL -> ENXAME -> WEB
     # =========================================================================
 
+    # ------------------------------------------------------------------
+    # Guarda (rotina de segurança da abelha)
+    # ------------------------------------------------------------------
+    def _init_guardian(self) -> None:
+        """Cria o guardião desta abelha.
+
+        Tolerante a falha: um erro ao criar o guardião não pode impedir o node
+        de subir, mas fica registrado em WARNING.
+        """
+        if Guardian is None:
+            logger.warning(
+                "Pacote 'guardian' não importável: esta abelha está rodando SEM "
+                "inspeção de segurança de prompts/respostas"
+            )
+            return
+        try:
+            self._guardian = Guardian(self.node_id)
+        except Exception as exc:
+            logger.warning(f"Não foi possível iniciar o guardião: {exc}")
+            self._guardian = None
+            return
+
+        # O Guardian cria './quarantine' relativo ao CWD no próprio __init__, o
+        # que sujaria o diretório de onde o usuário executou o comando (no
+        # repositório, apareceria como pasta não rastreada). Aponta para o
+        # data_dir da abelha e remove a pasta stray, se estiver vazia.
+        stray = Path("quarantine")
+        try:
+            quarantine = Path(self.config.data_dir) / "quarantine"
+            quarantine.mkdir(parents=True, exist_ok=True)
+            self._guardian.quarantine_dir = str(quarantine)
+        except Exception as exc:
+            logger.debug(f"Não foi possível mover o quarantine para o data_dir: {exc}")
+        else:
+            try:
+                # rmdir só remove diretório VAZIO: se houver algo dentro (ou se a
+                # pasta já existia com conteúdo do usuário), falha sem efeito.
+                stray.rmdir()
+            except OSError:
+                pass
+
+        logger.info(f"Guardião ativo em {self.node_id}")
+
+    def _guard_prompt(self, prompt: str) -> dict[str, Any] | None:
+        """ENTRADA: inspeciona o prompt antes de processá-lo.
+
+        Retorna um resultado já bloqueado (pronto para o UI) quando o guardião
+        reprova, ou None quando o prompt pode seguir.
+        """
+        if not self._guardian:
+            return None
+
+        self._guard_stats["prompts_inspecionados"] += 1
+        try:
+            verdict = self._guardian.inspect_prompt(prompt)
+        except Exception as exc:
+            # Uma falha na inspeção não pode derrubar a consulta inteira.
+            logger.warning(f"Inspeção de segurança falhou, seguindo sem ela: {exc}")
+            return None
+
+        if verdict.get("safe"):
+            return None
+
+        reasons = [str(r) for r in (verdict.get("reasons") or [])]
+        self._guard_stats["prompts_bloqueados"] += 1
+        logger.warning(
+            f"Guardião bloqueou prompt em {self.node_id} "
+            f"(camada {verdict.get('layer')}): {reasons}"
+        )
+        return {
+            "answer": verdict.get("error_message")
+            or "Requisição bloqueada pela rotina de guarda.",
+            "source": "guardian",
+            "confidence": 0.0,
+            "blocked": True,
+            "guard": {"layer": verdict.get("layer"), "reasons": reasons},
+        }
+
+    def _guard_answer(self, answer: str) -> str:
+        """CURADORIA: inspeciona a resposta antes de entregá-la ao usuário.
+
+        Isso importa sobretudo no RAG: um documento indexado pode carregar
+        instruções injetadas que só se revelam na saída, então inspecionar só a
+        entrada não basta.
+        """
+        if not answer or not self._guardian:
+            return answer
+
+        self._guard_stats["respostas_inspecionadas"] += 1
+        try:
+            verdict = self._guardian.inspect_prompt(answer)
+        except Exception as exc:
+            logger.debug(f"Curadoria de segurança falhou: {exc}")
+            return answer
+
+        if verdict.get("safe"):
+            return answer
+
+        reasons = ", ".join(str(r) for r in (verdict.get("reasons") or []))[:180]
+        self._guard_stats["respostas_retidas"] += 1
+        logger.warning(f"Guardião reteve resposta na curadoria: {reasons}")
+        return (
+            "\u26a0\ufe0f A resposta foi retida pela rotina de guarda: o conteúdo "
+            f"gerado apresenta padrões inseguros ({reasons}). Reformule a pergunta "
+            "ou revise os documentos indexados nesta abelha."
+        )
+
+    def _record_guardian_alert(self, alert: dict[str, Any]) -> None:
+        """Guarda alertas localmente, em anel limitado (não cresce sem fim)."""
+        self._guardian_alerts.append(alert)
+        if len(self._guardian_alerts) > 50:
+            del self._guardian_alerts[: len(self._guardian_alerts) - 50]
+
+    async def _report_guardian_alert_to_juiz(self, alert: dict[str, Any]) -> None:
+        """Em enxame, reporta a ronda ao juiz (POST assinado).
+
+        Mesmo contrato usado por bibliotecario/app.py: o juiz agrega o estado de
+        segurança do cluster em /api/v1/guardian.
+        """
+        juiz_url = os.getenv("JUIZ_HTTP_URL", "http://localhost:7700")
+        body = json.dumps(alert, ensure_ascii=False).encode("utf-8")
+        headers: dict[str, str] = {"content-type": "application/json"}
+        if self._security:
+            try:
+                headers.update(build_auth_headers(self._security, body))
+            except Exception as exc:
+                logger.debug(f"Sem assinatura EXP no alerta do guardião: {exc}")
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"{juiz_url}/api/v1/guardian/report", content=body, headers=headers
+                )
+        except Exception as exc:
+            logger.debug(f"Falha ao reportar alerta do guardião ao juiz: {exc}")
+
+    def _start_guardian_patrol(self) -> "asyncio.Task | None":
+        """Inicia a ronda contínua do guardião nesta abelha.
+
+        Standalone: a abelha é o próprio juiz, então agrega os alertas
+        localmente. Em enxame: agrega localmente E reporta ao juiz.
+        """
+        if GuardianPatrol is None or self._guardian is None:
+            return None
+        try:
+            interval = float(os.getenv("GUARDIAN_PATROL_INTERVAL", "15"))
+        except ValueError:
+            interval = 15.0
+        try:
+            self._guardian_patrol = GuardianPatrol(
+                node_id=self.node_id,
+                interval_seconds=interval,
+                local_callback=self._record_guardian_alert,
+                remote_reporter=None if self._standalone else self._report_guardian_alert_to_juiz,
+            )
+        except Exception as exc:
+            logger.warning(f"Não foi possível criar a ronda do guardião: {exc}")
+            return None
+
+        logger.info(
+            "Ronda do guardião ativa "
+            f"({'standalone: alertas locais' if self._standalone else 'reportando ao juiz'})"
+        )
+        return asyncio.create_task(self._guardian_patrol.run_forever())
+
+    def guardian_summary(self) -> dict[str, Any]:
+        """Estado de segurança desta abelha (observabilidade)."""
+        return {
+            "node_id": self.node_id,
+            "ativo": self._guardian is not None,
+            "ronda": self._guardian_patrol is not None,
+            "standalone": self._standalone,
+            "contadores": dict(self._guard_stats),
+            "alertas": list(self._guardian_alerts),
+        }
+
     async def process_query(self, query: str) -> dict[str, Any]:
         """
-        Processa query seguindo a política LOCAL -> ENXAME -> WEB (com cluster).
-        
+        Processa query seguindo a política LOCAL -> ENXAME -> WEB (com cluster),
+        com a rotina de guarda nas duas pontas: inspeção do prompt na ENTRADA e
+        curadoria da resposta na SAÍDA.
+
         Returns:
             dict com answer, source, confidence, metadata
+        """
+        # GUARDA — entrada: quem recebe o prompt inspeciona antes de processar.
+        blocked = self._guard_prompt(query)
+        if blocked is not None:
+            return blocked
+
+        result = await self._process_query_policy(query)
+
+        # GUARDA — curadoria: a resposta também é inspecionada antes de sair.
+        if not result.get("blocked"):
+            answer = result.get("answer")
+            if isinstance(answer, str) and answer:
+                curated = self._guard_answer(answer)
+                if curated != answer:
+                    result["answer"] = curated
+                    result["source"] = "guardian"
+                    result["curated"] = True
+        return result
+
+    async def _process_query_policy(self, query: str) -> dict[str, Any]:
+        """Política LOCAL -> ENXAME -> WEB.
+
+        Chamado por process_query, que acrescenta a inspeção de guarda na
+        entrada e na saída.
         """
         logger.info(f"Processando query: {query[:100]}...")
 
@@ -1315,10 +1567,17 @@ class BeeService:
             return {"answer": "", "confidence": 0.0}
 
         # 1. Se temos índice global (sou Bibliotecário ou recebi do Bibliotecário), usar para rotear
-        target_peers = []
+        # `target_peers` é SEMPRE list[DiscoveredPeer]. O índice global devolve
+        # PeerKnowledge (que tem `peer_id`, não `node_id`), então ele serve só
+        # para obter os ids, que são mapeados de volta para os peers ativos.
+        # Reutilizar a mesma variável para os dois tipos fazia o mypy inferir
+        # PeerKnowledge e reportar "has no attribute node_id" em todo o laço
+        # abaixo — em runtime estava correto, mas o tipo mentia e escondia
+        # erros reais de atributo nessa função.
+        target_peers: list[DiscoveredPeer] = []
         if self._global_index:
-            target_peers = self._global_index.get_peers_for_subject(query, min_confidence=0.5)
-            target_peer_ids = [pk.peer_id for pk in target_peers]
+            known = self._global_index.get_peers_for_subject(query, min_confidence=0.5)
+            target_peer_ids = [pk.peer_id for pk in known]
             # Filtrar peers ativos
             target_peers = [p for p in peers if p.node_id in target_peer_ids]
             logger.debug(f"Roteando via índice global: {len(target_peers)} peers alvo para '{query}'")
@@ -1386,7 +1645,7 @@ class BeeService:
 
         return {"answer": "", "confidence": best_confidence}
 
-    async def _send_with_response(self, envelope: BeeEnvelope, peer: "DiscoveredPeer", timeout_ms: int = 5000) -> BeeEnvelope | None:
+    async def _send_with_response(self, envelope: BeeEnvelope, peer: DiscoveredPeer, timeout_ms: int = 5000) -> BeeEnvelope | None:
         """Envia envelope para peer e aguarda resposta via HTTP/WebSocket."""
         try:
             import aiohttp

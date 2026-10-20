@@ -53,20 +53,40 @@ zim = ["zimply>=0.1.0"]
 [project.scripts]
 bee = "bees.cli:main"
 
+# Este pyproject.toml fica DENTRO de bees/, então a raiz de busca tem que ser o
+# diretório pai. Com where = ["."] o setuptools procurava pacotes "bees*" dentro
+# de bees/ e não encontrava NENHUM: `pip install -e bees` terminava com sucesso
+# mas `import bees` dava ModuleNotFoundError, quebrando também o entrypoint
+# `bee = "bees.cli:main"` (bee start / bee query / bee status).
+# Verificado: find_packages(where=".") -> []   |   find_packages(where="..")
+# -> ['bees', 'bees.capabilities', 'bees.cluster', 'bees.protocol']
 [tool.setuptools.packages.find]
-where = ["."]
+where = [".."]
 include = ["bees*"]
+exclude = ["bees.tests*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["bees/tests"]
+# rootdir é bees/ (onde este pyproject.toml está), então o caminho é relativo a
+# ele. "bees/tests" apontava para bees/bees/tests (inexistente) e, sem testpaths
+# válido, um `pytest` simples varria a árvore inteira.
+# install/ entra de propósito: os testes dos instaladores existiam mas NUNCA
+# eram executados (a CI rodava só `pytest tests/`), e foi assim que três deles
+# apodreceram até falhar sem que ninguém notasse.
+testpaths = ["tests", "install"]
 python_files = "test_*.py"
 python_functions = "test_*"
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# select/ignore estavam no nível [tool.ruff], forma que o ruff marcou como
+# deprecated (o aviso aparecia em toda execução da CI) e que será removida.
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "T20"]
+# S101 não faz parte do select acima (regras "S" não estão habilitadas), mas é
+# mantido aqui por documentar a intenção de permitir assert em testes.
 ignore = ["S101", "T201"]
 
 [tool.mypy]

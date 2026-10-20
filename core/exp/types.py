@@ -1,4 +1,4 @@
-from enum import StrEnum
+from ._compat import StrEnum  # enum.StrEnum só existe no Python >= 3.11
 
 
 class EXPMessageType(StrEnum):

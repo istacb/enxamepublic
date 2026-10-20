@@ -53,12 +53,20 @@ bee config show                          # Show config
 
 ### Test
 ```bash
-# Bees module tests (configured in bees/pyproject.toml)
+# Full suite from the repo root (70 tests: bees/tests + bees/install)
+python -m pytest bees/
+
+# Bee core only (55 tests)
 python -m pytest bees/tests/
 
-# EIP conformance validation
-python -m juiz.validate --all
+# Installer/uninstaller tests only (15 tests)
+python -m pytest bees/install/
 ```
+
+> ⚠️ There is **no** `juiz.validate` module in this repository, so
+> `python -m juiz.validate --all` (previously documented here as "EIP
+> conformance validation") fails with `No module named juiz.validate`.
+> No EIP conformance validator exists yet.
 
 ### Lint / Typecheck (bees module)
 ```bash

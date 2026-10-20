@@ -110,20 +110,41 @@ Eficiência é requisito não negociável:
 
 ### Instalação Rápida
 
-Use os instaladores oficiais por plataforma (Next > Next > Finish), que já
-cuidam de dependências, backup/migração de instalações antigas e do start
-do serviço — veja `api/install/README.md` para o passo a passo completo:
+Use o instalador inteligente (Next > Next > Finish), que cuida de Python,
+Ollama, modelo, `.env` e do start do serviço. Ele é cross-platform — Windows,
+macOS, Debian e Arch — e é o mesmo nos três sistemas:
 
 ```bash
 # Clonar repositório (público, sem necessidade de login)
 git clone https://github.com/istacb/enxamepublic.git
 cd enxamepublic
 
-# Ubuntu/Debian ou macOS (como root/sudo)
-sudo bash api/install/install-ubuntu.sh   # ou install-macos.sh
+# Interativo (pergunta só o necessário)
+python3 install-bee-smart.py
 
-# Windows: execute api\install\install-windows.bat como Administrador
+# Ou 100% automático, sem nenhuma pergunta:
+python3 install-bee-smart.py --auto
 ```
+
+No Windows use `py install-bee-smart.py` se `python3` não estiver no PATH.
+
+Opções úteis: `--role juiz|bibliotecario|agente|auto`, `--node-port`,
+`--bee-port`, `--model`, `--skip-model`, `--uninstall`.
+
+Para instalar a infraestrutura de sistema (diretórios em `/var/lib/enxame`,
+`/etc/enxame/.env`, serviço) existe um segundo conjunto de scripts, exclusivo
+de Linux e executado como root:
+
+```bash
+sudo ./api/install/install     # cria dirs + .env
+sudo ./api/install/update      # dependências (também roda em macOS/Windows)
+./api/install/migrate          # migrações de dados/estrutura
+```
+
+> ⚠️ Os nomes `install-ubuntu.sh`, `install-macos.sh` e `install-windows.bat`
+> apareciam nesta documentação mas **nunca existiram no repositório**. Os
+> caminhos acima são os arquivos reais.
+> Veja `api/install/README.md` para o passo a passo completo.
 
 Para iniciar manualmente um node sem os instaladores (ex.: ambiente de
 desenvolvimento), use o runner unificado, que lê a função do node
@@ -233,16 +254,25 @@ O módulo `guardian/` é responsável por:
 ## 🧪 Testes
 
 ```bash
-# Rodar suite completa de testes
-python -m pytest test/
+# Suíte completa a partir da raiz do repositório (70 testes)
+python -m pytest bees/
 
-# Testes específicos por módulo
-python -m pytest test/kernel/
-python -m pytest test/runtime/
+# Só o núcleo da abelha (55 testes)
+python -m pytest bees/tests/
 
-# Validação de conformidade EIP
-python -m juiz.validate --all
+# Só os instaladores/desinstaladores (15 testes)
+python -m pytest bees/install/
+
+# De dentro de bees/ o pytest já sabe o que rodar (testpaths no pyproject.toml)
+cd bees && python -m pytest
 ```
+
+> ⚠️ Correções nesta seção: `python -m pytest test/` não executa nada
+> (`test/` só contém fixtures, em `test/test_files/`), e `test/kernel/` e
+> `test/runtime/` não existem. `python -m juiz.validate --all` também não
+> existe — não há validador de conformidade EIP no repositório; a menção a
+> "conformidade EIP" em `enxame_evolved/sprint.py` é apenas texto descritivo
+> do planejador de sprints.
 
 ---
 

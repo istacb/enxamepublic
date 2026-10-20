@@ -1059,8 +1059,15 @@ def discover_local_peers(data_dir: Path, timeout: float = 5.0) -> list[dict]:
         return []
 
 
-def prompt_cluster_optin(data_dir: Path) -> bool:
-    """Pergunta ao usuário se deseja formar cluster se detectar 3+ peers."""
+def prompt_cluster_optin(data_dir: Path, auto: bool = False) -> bool:
+    """Pergunta ao usuário se deseja formar cluster se detectar 3+ peers.
+
+    `auto` segue o mesmo padrão das funções de telemetria: em modo automático
+    nenhuma pergunta é feita. Antes o corpo lia `args.auto`, mas `args` só
+    existe dentro de main() -> NameError em toda chamada. Como o call site está
+    envolto em try/except que só loga um aviso, o opt-in de cluster nunca
+    funcionou e o usuário nunca foi perguntado.
+    """
     log_info("Verificando se há outras abelhas na rede para formar cluster...")
     
     peers = discover_local_peers(data_dir, timeout=8.0)
@@ -1081,7 +1088,7 @@ def prompt_cluster_optin(data_dir: Path) -> bool:
         print(f"com roles distribuídas: Juiz, Bibliotecário, Guarda, Workers.")
         print(f"Isso permite: failover automático, índice global, roteamento inteligente.")
         
-        if not args.auto:
+        if not auto:
             resp = input(f"\n{Colors.BOLD}Deseja ativar modo cluster? [S/n]: {Colors.RESET}").strip().lower()
             if resp in ("s", "sim", "y", "yes", ""):
                 return True
@@ -1246,7 +1253,7 @@ def main():
     # Auto-cluster opt-in: detectar peers e perguntar se quer formar cluster
     if not args.auto and not args.no_shortcuts:
         try:
-            if prompt_cluster_optin(data_dir):
+            if prompt_cluster_optin(data_dir, auto=args.auto):
                 enable_cluster_mode(data_dir)
         except Exception as e:
             log_warn(f"Não foi possível configurar cluster: {e}")

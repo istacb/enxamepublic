@@ -10,9 +10,20 @@ O Enxame possui um sistema de instalação multi-plataforma totalmente automatiz
 
 | Sistema | Arquivo | Requisitos |
 |---------|---------|------------|
-| **Ubuntu/Debian** | `install-ubuntu.sh` | root/sudo |
-| **Windows** | `install-windows.bat` | Administrador |
-| **macOS** | `install-macos.sh` | root/sudo |
+| **Windows, macOS, Debian, Arch** | `install-bee-smart.py` (na raiz do repositório) | Python 3; admin/root para instalar Ollama |
+| **Ubuntu/Debian (infra de sistema)** | `install` | root/sudo |
+| **Atualização (todos os SO)** | `update` | root/sudo (exceto Windows) |
+| **Migração de dados** | `migrate` | — |
+| **Desinstalação (infra de sistema)** | `uninstall` | root/sudo |
+
+> ⚠️ **Correção importante:** esta documentação citava `install-ubuntu.sh`,
+> `install-macos.sh` e `install-windows.bat`. **Esses três arquivos nunca
+> existiram no repositório** — quem seguisse o passo a passo não conseguiria
+> instalar nada. Os nomes reais estão na tabela acima (note que os scripts
+> daqui não têm extensão: são `install`, `update`, `migrate`, `uninstall`).
+>
+> Para o usuário final, o caminho recomendado é o instalador inteligente da
+> raiz: `python3 install-bee-smart.py` (ou `--auto` para não responder nada).
 
 ---
 
@@ -25,12 +36,13 @@ de um checkout completo do repositório (o script fica em `api/install/` e
 sobe até a raiz para copiar tudo). Baixe o repositório inteiro primeiro:
 
 ```bash
-# Baixe o repositório completo (público, sem necessidade de login)
-git clone https://github.com/istacb/enxamepublic.git
-cd enxamepublic
+# Recomendado: instalador inteligente (perguntas mínimas, --auto = nenhuma)
+python3 install-bee-smart.py --auto
 
-# Execute como root
-sudo bash api/install/install-ubuntu.sh
+# Ou apenas a infra de sistema (dirs, /etc/enxame/.env), como root:
+sudo ./api/install/install
+sudo ./api/install/update
+./api/install/migrate
 ```
 
 **O que acontece:**
@@ -58,8 +70,14 @@ sudo bash api/install/install-ubuntu.sh
 # botão "Code > Download ZIP" em github.com/istacb/enxamepublic, e extraia
 # — ou, se tiver Git for Windows: git clone https://github.com/istacb/enxamepublic.git
 
-# Dentro da pasta extraída/clonada, vá até api\install\
-# e clique direito em install-windows.bat > Executar como Administrador
+# Dentro da pasta extraída/clonada, abra o Prompt de Comando como
+# Administrador e execute o instalador inteligente da raiz:
+py install-bee-smart.py --auto
+
+# Não existe install-windows.bat; a instalação de sistema multi-plataforma
+# (incluindo Windows) é feita por api\install\update, que roda em bash
+# (Git Bash/MSYS):
+bash api/install/update
 ```
 
 **O que acontece:**
@@ -87,8 +105,11 @@ sudo bash api/install/install-ubuntu.sh
 git clone https://github.com/istacb/enxamepublic.git
 cd enxamepublic
 
-# Execute como root
-sudo bash api/install/install-macos.sh
+# Recomendado: instalador inteligente
+python3 install-bee-smart.py --auto
+
+# Infra de sistema (macOS usa ~/Library, sem root):
+bash api/install/update
 ```
 
 **O que acontece:**
@@ -278,7 +299,7 @@ sudo journalctl -u enxame -n 50
 
 # Reinstale
 sudo ./api/install/uninstall
-sudo ./api/install/install-ubuntu.sh
+python3 install-bee-smart.py --auto   # ou: sudo ./api/install/install
 ```
 
 ### Instalação falha no Windows
@@ -295,8 +316,7 @@ python -m kernel.start
 tail -f ~/Library/Logs/Enxame/enxame.log
 
 # Reinstale
-sudo ./api/install/uninstall
-sudo ./api/install/install-macos.sh
+python3 install-bee-smart.py --auto   # ou: bash api/install/update
 ```
 
 ### OpenWebUI não foi removido completamente
