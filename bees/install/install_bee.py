@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-BEE-0008 — Instalador da Abelha v1.0.0
+Instalador da Abelha v1.0.0 — funções auxiliares
+
+(Este cabeçalho citava "BEE-0008", especificação que nunca existiu: os
+specs do produto são BEE-0001/0002/0003, em `bees/spec/`.)
 
 Instalação automática de:
 1. Ollama (se não existir)

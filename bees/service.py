@@ -1312,7 +1312,7 @@ class BeeService:
 
     async def _handle_hello(self, envelope: BeeEnvelope) -> BeeEnvelope:
         """Handler para HELLO - handshake inicial."""
-        from .protocol.messages import BeeHello, BeeHelloAck, BeeIdentity, BeeManifesto
+        from .protocol.messages import BeeHello, BeeManifesto
         import secrets
 
         hello = BeeHello.from_dict(envelope.payload)
@@ -1331,13 +1331,10 @@ class BeeService:
             version="1.0.0",
         )
 
-        hello_ack = BeeHelloAck(
-            identity=BeeIdentity(node_id=self.node_id, protocol_version="1.0"),
-            manifesto=manifesto,
-            nonce=nonce,
-            echo_nonce=hello.nonce,
-        )
-
+        # Observação: aqui se construía um BeeHelloAck local que era descartado —
+        # o retorno sempre veio de create_hello_ack(). Objeto morto em todo
+        # handshake, removido (junto com BeeHelloAck/BeeIdentity do import acima,
+        # que só existiam para alimentá-lo).
         return self._handler.create_hello_ack(
             target_node_id=envelope.source_node_id,
             manifesto=manifesto,
