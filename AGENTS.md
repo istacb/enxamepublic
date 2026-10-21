@@ -25,21 +25,44 @@ python3 api/install/run_node.py --env-file /path/to/.env
 ```
 Role/port from `.env` (`ENXAME_NODE_ROLE`, `ENXAME_NODE_PORT`). Roles: `juiz` (port 7700), `bibliotecario` (7701), `agente`.
 
-### Install / Update / Migrate / Uninstall
+### Install — ONE command (the supported path)
+```bash
+python3 install-bee-smart.py --auto     # Windows: py install-bee-smart.py --auto
+python3 install-bee-smart.py --dry-run  # Detect + show the plan, change nothing
+```
+
+Single implementation: `bees/install/bee_installer.py`. It checks Python,
+installs Ollama if missing, recommends and pulls a model for the hardware,
+creates `.venv-bee`, writes `<data-dir>/config.json` and `identity.json`, asks
+about joining a swarm when it finds other bees on the network, and prints the
+two commands that start the bee.
+
+Flags: `--data-dir`, `--node-id`, `--bee-port`, `--cluster` / `--no-cluster`,
+`--install-service`, `--no-shortcuts`, `--model`, `--skip-model`, `--ollama-url`,
+`--uninstall`, `--legacy-env`.
+
+### Run the bee
+```bash
+cd <repo-root>
+.venv-bee/bin/python -m bees.service --host 0.0.0.0 --port 8765 --data-dir <data-dir>
+# then open http://localhost:8765/
+```
+`python bees/service.py` does not work — relative imports plus `core` require
+running it as a module from the repo root. The bee serves `web/` at `/` and the
+same UI API the swarm uses (`/api/session`, `/api/chat`, `/api/status`,
+`/api/cluster/discover`, `/api/guardian`).
+
+### Legacy stack (`api/install/`, port 7700)
 ```bash
 ./api/install/install      # Install infra + deps
 ./api/install/update       # Update preserving data
 ./api/install/migrate      # Migrate from OpenWebUI
 ./api/install/uninstall    # Full removal
 ```
-
-### Universal Installer (Cross-Platform)
-```bash
-python3 bees/install/universal_installer.py --auto          # Fully automatic
-python3 bees/install/universal_installer.py --model llama3.2:3b  # Specific model
-python3 bees/install/universal_installer.py --no-vision     # Skip vision model
-python3 bees/install/universal_installer.py --dry-run       # Simulate only
-```
+Separate FastAPI processes (`juiz/app.py`, `bibliotecario/app.py`,
+`agentes/service.py`) started by `api/install/run_node.py`. Still in the tree,
+but **not** the install path and not needed for the bee or the swarm. Pass
+`install-bee-smart.py --legacy-env` if you do want the `.env` it reads.
 
 ### Bee CLI
 ```bash
@@ -153,14 +176,23 @@ GET  /api/v1/cluster            # Cluster status (EIP-0009)
 - **Test discovery** — Root `test/` is nearly empty; real tests in `bees/tests/`.
 - **Web UI served by Bee** — Access at `http://localhost:8765/` (not separate server).
 - **Offline mode** — Set `offline_mode=true` in config or `BEE_OFFLINE_MODE=true` env var.
-- **Cluster config** — Enable with `cluster.enabled=true` in config.json.
+- **Cluster config** — `cluster.enabled` in `<data-dir>/config.json`. The
+  installer writes it (`--cluster` / `--no-cluster`, or the prompt it shows when
+  it finds other bees). Set it to `false` to keep a bee out of the swarm: it then
+  skips mDNS announcement entirely, so peers cannot elect it.
 
 ---
 
 ## File References
 
-- Installer guide: `api/install/README.md`
-- Universal installer: `bees/install/universal_installer.py`
+- Installer guide: `README.md` (§ Instalação) — one command
+- Installer implementation: `bees/install/bee_installer.py` (the only one)
+- Installer support modules: `bees/install/cluster_setup.py` (config.json,
+  swarm opt-in, mDNS discovery), `bees/install/bee_setup.py` (shortcuts,
+  systemd/LaunchAgent/schtasks service)
+- Shims that delegate to it: `install-bee-smart.py` (repo root),
+  `bees/install/universal_installer.py` (PyInstaller/AppImage entry point)
+- Legacy stack guide: `api/install/README.md`
 - Kernel architecture: `kernel/README.md`
 - EIP specs: `spec/en/eip/`
 - Bees protocol specs: `bees/spec/`

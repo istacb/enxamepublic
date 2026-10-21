@@ -1,8 +1,37 @@
-# Enxame - Sistema Oficial de Instalação
+# Enxame — Stack antiga (`api/install/`, porta 7700)
+
+> ## ⚠️ Este NÃO é o caminho de instalação
+>
+> Para instalar o ENXAME, use **um** comando a partir da raiz do repositório:
+>
+> ```bash
+> python3 install-bee-smart.py --auto
+> ```
+>
+> Ele instala a **abelha** (`bees/service.py`, aiohttp, porta 8765), que sozinha
+> faz tudo: responde, mantém o próprio RAG, aplica a Guarda e serve a interface
+> de `web/` em `http://localhost:8765/`. Em 3+ máquinas na mesma rede local as
+> abelhas formam o enxame e elegem os papéis entre si. Guia completo:
+> [`bees/install/README.md`](../../bees/install/README.md).
+>
+> O que está documentado **nesta** página é a stack antiga: processos FastAPI
+> separados (`juiz/app.py`, `bibliotecario/app.py`, `agentes/service.py`)
+> servidos na porta 7700 por `run_node.py`, mais scripts de infraestrutura de
+> sistema executados como root. Ela continua no repositório e continua
+> funcional, mas não é necessária para usar a abelha nem o enxame, e não é mais
+> o caminho recomendado. O instalador só gera o `.env` que ela lê se você pedir
+> com `install-bee-smart.py --legacy-env`.
+>
+> Historicamente esta página e o `README.md` da raiz apresentavam os dois
+> caminhos como equivalentes — e havia ainda `bees/install/universal_installer.py`
+> e scripts por sistema operacional, num total de 5 comandos documentados para 3
+> stacks diferentes. Era a causa direta de "instalei e nada funciona".
 
 ## Visão Geral
 
-O Enxame possui um sistema de instalação multi-plataforma totalmente automatizado com fluxo **Next > Next > Finish**. Os instaladores detectam automaticamente instalações antigas (Enxame ou OpenWebUI), fazem backup dos dados, removem a versão antiga e instalam a nova versão limpa.
+Estes scripts montam a infraestrutura de sistema da stack antiga: diretórios em
+`/var/lib/enxame`, `/etc/enxame/.env`, serviço, e migração a partir de
+instalações antigas (Enxame legado ou OpenWebUI) com backup dos dados.
 
 ---
 
@@ -10,8 +39,8 @@ O Enxame possui um sistema de instalação multi-plataforma totalmente automatiz
 
 | Sistema | Arquivo | Requisitos |
 |---------|---------|------------|
-| **Windows, macOS, Debian, Arch** | `install-bee-smart.py` (na raiz do repositório) | Python 3; admin/root para instalar Ollama |
-| **Ubuntu/Debian (infra de sistema)** | `install` | root/sudo |
+| **Windows, macOS, Debian, Arch** | `install-bee-smart.py` (raiz do repositório) — **caminho recomendado**, instala a abelha | Python 3; admin/root para instalar Ollama |
+| **Ubuntu/Debian (infra de sistema desta stack antiga)** | `install` | root/sudo |
 | **Atualização (todos os SO)** | `update` | root/sudo (exceto Windows) |
 | **Migração de dados** | `migrate` | — |
 | **Desinstalação (infra de sistema)** | `uninstall` | root/sudo |

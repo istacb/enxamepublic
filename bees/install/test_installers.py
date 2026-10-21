@@ -5,6 +5,7 @@ Testes rápidos dos instaladores da Abelha
 Executa validações básicas sem modificar o sistema.
 """
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -246,6 +247,11 @@ class TestClusterOptIn(unittest.TestCase):
     `cluster.enabled` era gravado por enable_cluster_mode e nunca lido pelo
     serviço, então responder "n" era decorativo: o enxame se formava do mesmo
     jeito. Estes testes travam os dois lados (aceitar e recusar).
+
+    Os patches miram `install.cluster_setup`, que é onde a implementação única
+    mora hoje. `universal_installer` reexporta os mesmos objetos (e os testes
+    abaixo importam dele justamente para provar que o shim continua inteiro),
+    mas fazer patch do alias não interceptaria a chamada interna.
     """
 
     def setUp(self):
@@ -309,7 +315,7 @@ class TestClusterOptIn(unittest.TestCase):
         """Sem 2+ outras abelhas não há o que perguntar — e nada deve ser gravado."""
         from install.universal_installer import prompt_cluster_optin
 
-        with patch("install.universal_installer.discover_local_peers", return_value=[]):
+        with patch("install.cluster_setup.discover_local_peers", return_value=[]):
             resposta = prompt_cluster_optin(self.data_dir, auto=False)
 
         self.assertIsNone(resposta)
@@ -321,7 +327,7 @@ class TestClusterOptIn(unittest.TestCase):
             {"node_id": "abelha-02", "role": "bee", "host": "h", "port": 1, "capabilities": []},
             {"node_id": "abelha-03", "role": "bee", "host": "h", "port": 2, "capabilities": []},
         ]
-        with patch("install.universal_installer.discover_local_peers", return_value=peers):
+        with patch("install.cluster_setup.discover_local_peers", return_value=peers):
             resposta = prompt_cluster_optin(self.data_dir, auto=True)
 
         self.assertTrue(resposta)
@@ -333,9 +339,9 @@ class TestClusterOptIn(unittest.TestCase):
             {"node_id": "abelha-02", "role": "bee", "host": "h", "port": 1, "capabilities": []},
             {"node_id": "abelha-03", "role": "bee", "host": "h", "port": 2, "capabilities": []},
         ]
-        with patch("install.universal_installer.discover_local_peers", return_value=peers), \
+        with patch("install.cluster_setup.discover_local_peers", return_value=peers), \
              patch("builtins.input", return_value="n"):
-            resposta = prompt_cluster_optin(self.data_dir, auto=False)
+            resposta = prompt_cluster_optin(self.data_dir, auto=False, confirmar=lambda _: "n")
 
         self.assertFalse(resposta)
 
@@ -347,10 +353,263 @@ class TestClusterOptIn(unittest.TestCase):
             {"node_id": "juiz-x", "role": "juiz", "host": "h", "port": 1, "capabilities": []},
             {"node_id": "impressora", "role": "printer", "host": "h", "port": 2, "capabilities": []},
         ]
-        with patch("install.universal_installer.discover_local_peers", return_value=peers):
+        with patch("install.cluster_setup.discover_local_peers", return_value=peers):
             resposta = prompt_cluster_optin(self.data_dir, auto=True)
 
         self.assertIsNone(resposta)
+
+
+class TestInstaladorUnico(unittest.TestCase):
+    """Existe UM instalador. Os outros arquivos são shim ou biblioteca.
+
+    Eram 22 arquivos de instalação e 5 comandos documentados diferentes
+    apontando para 3 stacks. Este teste impede que volte a existir um segundo
+    caminho: qualquer "instalador" executável precisa delegar para
+    bees/install/bee_installer.py.
+    """
+
+    def setUp(self):
+        self.install_dir = Path(__file__).resolve().parent
+        self.repo_root = self.install_dir.parents[1]
+
+    def test_shim_universal_reexporta_os_mesmos_objetos(self):
+        from install import cluster_setup, universal_installer
+
+        for nome in ("enable_cluster_mode", "disable_cluster_mode",
+                     "prompt_cluster_optin", "discover_local_peers",
+                     "write_bee_config", "set_node_id"):
+            self.assertIs(
+                getattr(universal_installer, nome), getattr(cluster_setup, nome),
+                f"{nome} não é o mesmo objeto: existe uma segunda implementação",
+            )
+
+    def test_instalacao_raiz_delega_para_bee_installer(self):
+        shim = self.repo_root / "install-bee-smart.py"
+        self.assertTrue(shim.exists(), "o comando documentado sumiu da raiz")
+        texto = shim.read_text(encoding="utf-8")
+        self.assertIn("bees.install.bee_installer", texto)
+
+    def test_install_bee_nao_e_segundo_caminho(self):
+        texto = (self.install_dir / "install_bee.py").read_text(encoding="utf-8")
+        # O __main__ precisa delegar, não rodar um fluxo próprio de instalação.
+        bloco = texto.split('if __name__ == "__main__":', 1)[1]
+        self.assertIn("bee_installer", bloco)
+
+    def test_scripts_por_so_concorrentes_foram_removidos(self):
+        for nome in ("install-bee.sh", "install_debian.sh", "install_arch.sh",
+                     "install_macos.sh", "install_unix.sh", "install_windows.bat",
+                     "install_enxame.py"):
+            self.assertFalse(
+                (self.install_dir / nome).exists(),
+                f"{nome} voltou a existir: dois caminhos de instalação de novo",
+            )
+
+
+class TestDataDirCompartilhado(unittest.TestCase):
+    """O instalador tem que escrever onde o serviço lê.
+
+    Bug real: o instalador usava ~/enxame/data enquanto `load_config` lia
+    <data_dir>/config.json do diretório padrão da plataforma. A configuração
+    gravada nunca era lida — o mesmo padrão de "escreveu mas ninguém lê" que
+    fez cluster.enabled ser decorativo.
+    """
+
+    def test_default_bate_com_bees_config(self):
+        from install.cluster_setup import default_data_dir
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from bees.config import get_default_data_dir
+
+        self.assertEqual(Path(default_data_dir()), Path(get_default_data_dir()))
+
+    def test_resolve_respeita_explicito_e_env(self):
+        from install.cluster_setup import resolve_data_dir
+
+        self.assertEqual(resolve_data_dir("/tmp/abelha-x"), Path("/tmp/abelha-x"))
+        with patch.dict(os.environ, {"BEE_DATA_DIR": "/tmp/abelha-env"}):
+            self.assertEqual(resolve_data_dir(None), Path("/tmp/abelha-env"))
+        # explícito vence a variável de ambiente, como em load_config
+        with patch.dict(os.environ, {"BEE_DATA_DIR": "/tmp/abelha-env"}):
+            self.assertEqual(resolve_data_dir("/tmp/abelha-cli"), Path("/tmp/abelha-cli"))
+
+
+class TestConfiguracaoDaAbelha(unittest.TestCase):
+    """configure_bee() é o que a etapa final do instalador realmente grava."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data_dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _ler(self, nome="config.json"):
+        import json
+        return json.loads((self.data_dir / nome).read_text(encoding="utf-8"))
+
+    def _configurar(self, **kw):
+        from install.bee_setup import configure_bee
+        padrao = dict(
+            data_dir=self.data_dir, port=8765,
+            ollama_url="http://localhost:11434", model="llama3.2:3b",
+            cluster=True, log_info=lambda m: None, log_warn=lambda m: None,
+        )
+        padrao.update(kw)
+        return configure_bee(**padrao)
+
+    def test_grava_os_campos_que_o_servico_le(self):
+        self._configurar()
+        config = self._ler()
+        self.assertEqual(config["port"], 8765)
+        self.assertEqual(config["model"], "llama3.2:3b")
+        self.assertEqual(config["ollama_base_url"], "http://localhost:11434")
+        self.assertTrue(config["cluster"]["enabled"])
+
+    def test_node_id_explicito_vai_para_identity_json(self):
+        """`_load_identity()` sobrescreve o nome com o de identity.json.
+
+        Gravar só em config.json seria decorativo — o serviço usaria outro nome.
+        """
+        self._configurar(node_id="abelha-07")
+        self.assertEqual(self._ler("identity.json")["node_id"], "abelha-07")
+        self.assertEqual(self._ler()["node_id"], "abelha-07")
+
+    def test_primeira_instalacao_fixa_nome_estavel(self):
+        """Sem isto o node_id é um uuid4 NOVO a cada boot.
+
+        Observado em instalação real: a abelha subiu como
+        "bb5c32e7-7e80-4d5d-..." e, como a eleição desempata por node_id, os
+        papéis do enxame mudariam a cada reinício da máquina.
+        """
+        resumo = self._configurar()
+        self.assertFalse(resumo["node_id"].count("-") == 4,
+                         "node_id voltou a ser um uuid4")
+        self.assertTrue((self.data_dir / "identity.json").exists())
+
+    def test_reinstalar_nao_troca_o_nome(self):
+        primeiro = self._configurar(node_id="abelha-07")
+        segundo = self._configurar()  # sem --node-id
+        self.assertEqual(primeiro["node_id"], "abelha-07")
+        self.assertEqual(segundo["node_id"], "abelha-07")
+
+    def test_reinstalar_preserva_configuracao_do_usuario(self):
+        self._configurar()
+        import json
+        config = self._ler()
+        config["max_concurrent_queries"] = 9
+        (self.data_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+        self._configurar(model="phi3:mini")
+        novo = self._ler()
+        self.assertEqual(novo["model"], "phi3:mini")
+        self.assertEqual(novo["max_concurrent_queries"], 9,
+                         "reinstalar apagou uma chave que o usuário ajustou")
+
+    def test_no_cluster_grava_recusa(self):
+        resumo = self._configurar(cluster=False)
+        self.assertFalse(self._ler()["cluster"]["enabled"])
+        self.assertIs(resumo["cluster"], False)
+
+    def test_sem_decisao_nao_grava_nada_de_cluster(self):
+        """Não ter o que perguntar não é o mesmo que recusar.
+
+        Recusar precisa gravar cluster.enabled=false; não ter perguntado não
+        pode gravar nada, porque o enxame pode se formar depois quando outras
+        abelhas aparecerem na rede.
+        """
+        with patch("install.cluster_setup.discover_local_peers", return_value=[]):
+            resumo = self._configurar(cluster=None)
+        self.assertIsNone(resumo["cluster"])
+        self.assertNotIn("cluster", self._ler())
+
+    def test_dry_run_nao_grava_nada(self):
+        resumo = self._configurar(dry_run=True)
+        self.assertFalse((self.data_dir / "config.json").exists())
+        self.assertFalse((self.data_dir / "identity.json").exists())
+        self.assertEqual(resumo["port"], 8765)
+
+
+class TestComandoDeSubida(unittest.TestCase):
+    """O comando que o instalador ensina tem que ser o que funciona."""
+
+    def test_usa_modulo_e_nao_caminho(self):
+        from install.bee_setup import bee_start_command
+
+        cmd = bee_start_command("/venv/bin/python", "/dados", 8765,
+                                "http://localhost:11434", "llama3.2:3b", "/repo")
+        self.assertIn("-m", cmd)
+        self.assertIn("bees.service", cmd)
+        self.assertNotIn("bees/service.py", cmd,
+                         "python bees/service.py falha: imports relativos + core")
+        self.assertIn("--data-dir", cmd)
+        self.assertIn("/dados", cmd)
+
+    def test_dry_run_nao_cria_atalho_nem_servico(self):
+        from install.bee_setup import create_bee_shortcuts, install_bee_service
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            kw = dict(venv_py="/venv/bin/python", data_dir=tmp, port=8765,
+                      ollama_url="http://localhost:11434", model="m",
+                      repo_root="/repo", dry_run=True,
+                      log_info=lambda m: None, log_warn=lambda m: None)
+            self.assertEqual(create_bee_shortcuts(**kw), [])
+            servico = install_bee_service(**kw)
+            self.assertIsNone(servico["criado"])
+            self.assertFalse(servico["ativo"])
+
+
+class TestParseDeCapacidades(unittest.TestCase):
+    """A abelha anuncia capabilities como JSON; tratar como CSV imprimia lixo."""
+
+    def test_json_array(self):
+        from install.cluster_setup import _parse_lista
+        self.assertEqual(_parse_lista('["rag", "index"]'), ["rag", "index"])
+
+    def test_csv_como_fallback(self):
+        from install.cluster_setup import _parse_lista
+        self.assertEqual(_parse_lista("rag,index"), ["rag", "index"])
+
+    def test_lista_e_vazio(self):
+        from install.cluster_setup import _parse_lista
+        self.assertEqual(_parse_lista(["rag"]), ["rag"])
+        self.assertEqual(_parse_lista(""), [])
+        self.assertEqual(_parse_lista(None), [])
+
+
+class TestWebUiNaRaiz(unittest.TestCase):
+    """A URL que o instalador manda abrir precisa mostrar a interface.
+
+    O add_static do aiohttp NÃO serve index.html: para diretório ele devolve a
+    listagem (show_index=True) ou 403 (show_index=False). Com show_index=True —
+    o que estava no código — http://localhost:8765/ mostrava "Index of /." com
+    links para app.js e style.css em vez do painel. Trava-se aqui a regressão
+    por inspeção do código-fonte porque reproduzir o servidor inteiro num teste
+    unitário exigiria Ollama e rede.
+    """
+
+    def setUp(self):
+        self.servico = Path(__file__).resolve().parents[1] / "service.py"
+        self.codigo = self.servico.read_text(encoding="utf-8")
+
+    def test_nao_habilita_listagem_de_diretorio(self):
+        # O literal exato da chamada: o comentário explicativo ao lado menciona
+        # "show_index=True" para dizer o que NÃO fazer, então procurar a
+        # substring solta daria falso positivo.
+        self.assertNotIn("add_static('/', web_dir, show_index=True)", self.codigo)
+        self.assertIn("show_index=False", self.codigo)
+
+    def test_tem_rota_explicita_para_a_raiz(self):
+        self.assertIn("add_get('/', _serve_index)", self.codigo)
+        self.assertIn("FileResponse(index_file)", self.codigo)
+
+    def test_rota_da_raiz_vem_antes_do_mount_estatico(self):
+        pos_rota = self.codigo.index("add_get('/', _serve_index)")
+        pos_static = self.codigo.index("add_static('/', web_dir")
+        self.assertLess(pos_rota, pos_static,
+                        "o mount estático em '/' sombrearia a rota do index")
+
 
 
 if __name__ == '__main__':

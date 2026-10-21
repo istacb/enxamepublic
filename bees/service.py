@@ -1159,9 +1159,33 @@ class BeeService:
         # (<pai-do-repo>/web), então a pasta nunca existia e a UI nunca era
         # servida — o browser recebia 404 em "/".
         web_dir = Path(__file__).resolve().parents[1] / "web"
-        if web_dir.exists():
-            app.router.add_static('/', web_dir, show_index=True)
+        index_file = web_dir / "index.html"
+        if index_file.is_file():
+            # Rota explícita para "/" e "/index.html".
+            #
+            # Isto é obrigatório: o add_static do aiohttp NÃO serve index.html
+            # sozinho. Para um caminho que é diretório ele faz exatamente duas
+            # coisas (web_urldispatcher.StaticResource._resolve_path_to_response):
+            #   show_index=True  -> devolve a LISTAGEM do diretório
+            #   show_index=False -> devolve 403 Forbidden
+            # Ou seja, com show_index=True (o que estava aqui) quem abria
+            # http://localhost:8765/ via "Index of /." com links para app.js e
+            # style.css em vez da interface - a URL que o instalador manda abrir
+            # nunca mostrou o painel. Com show_index=False daria 403. A rota
+            # registrada antes do mount resolve os dois casos e ainda evita
+            # expor a listagem de arquivos.
+            async def _serve_index(request: web.Request) -> web.FileResponse:
+                return web.FileResponse(index_file)
+
+            app.router.add_get('/', _serve_index)
+            app.router.add_get('/index.html', _serve_index)
+            app.router.add_static('/', web_dir, show_index=False)
             logger.info(f"Servindo Web UI de {web_dir}")
+        elif web_dir.exists():
+            app.router.add_static('/', web_dir, show_index=False)
+            logger.warning(
+                f"Web UI sem index.html em {web_dir}: servindo apenas estáticos"
+            )
         else:
             logger.warning(f"Web UI não encontrada em {web_dir}")
 

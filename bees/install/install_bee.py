@@ -8,8 +8,15 @@ Instalação automática de:
 3. Verificação de funcionamento
 4. Registro do manifesto
 
-Uso:
-    python install_bee.py [--force-ollama] [--force-model-download] [--dry-run]
+⚠️ Este arquivo NÃO é mais um caminho de instalação. Executá-lo delega ao
+instalador único (`bees/install/bee_installer.py`, ou `install-bee-smart.py` na
+raiz). Ele continua aqui como biblioteca de helpers puros que os testes cobrem
+(`detect_ollama`, `get_os_info`, `select_best_model`, `CANDIDATE_MODELS`,
+`fallback_model_selection`) e como gerador de manifesto.
+
+Havia 22 arquivos de instalação e 5 comandos documentados apontando para 3
+stacks diferentes; por isso "instalar" podia terminar com qualquer uma de três
+coisas distintas na máquina.
 """
 
 import os
@@ -27,26 +34,28 @@ from typing import Optional, Dict, Any, List, Tuple
 # Adicionar bees ao path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Instalar dependências mínimas antes de importar capabilities
-def _ensure_deps():
-    """Instala dependências mínimas via pip se não estiverem disponíveis."""
-    required = [
-        "httpx", "pydantic", "pydantic-settings", "psutil", "zeroconf",
-        "cryptography", "rich", "pyyaml"
-    ]
-    for pkg in required:
-        try:
-            __import__(pkg.replace("-", "_"))
-        except ImportError:
-            print(f"[INFO] Instalando dependência: {pkg}")
-            subprocess.run([sys.executable, "-m", "pip", "install", "--user", pkg],
-                         capture_output=True, check=False)
-
-_ensure_deps()
-
-from capabilities.discovery import scan_hardware, scan_ollama, discover_capabilities
-from capabilities.selector import recommend_model
-from capabilities.provider import create_provider
+# NÃO instalar dependências no import.
+#
+# Aqui havia `_ensure_deps()` chamado no nível do módulo: para cada pacote
+# ausente ele rodava `pip install --user`. Como isso acontecia no IMPORT, bastava
+# `import install_bee` (os testes fazem exatamente isso) para disparar
+# instalações no ambiente do usuário — fora de qualquer venv, ignorando o
+# isolamento que o instalador cria, e com `check=False` a falha era engolida
+# (em Debian 12+/Ubuntu 24.04+ a PEP 668 bloqueia esse pip). O import seguia em
+# frente mesmo assim.
+#
+# O instalador único (`bee_installer.py`) cria `.venv-bee` e instala as
+# dependências lá, conferindo o código de retorno. Nada neste módulo deve tocar o
+# ambiente do sistema.
+try:
+    from capabilities.discovery import scan_hardware, scan_ollama, discover_capabilities
+    from capabilities.selector import recommend_model
+    from capabilities.provider import create_provider
+    CAPABILITIES_DISPONIVEIS = True
+except ImportError:  # sem bees/ no sys.path, ou sem as dependências instaladas
+    scan_hardware = scan_ollama = discover_capabilities = None
+    recommend_model = create_provider = None
+    CAPABILITIES_DISPONIVEIS = False
 
 # Configurações
 BEE_HOME = Path.home() / ".enxame" / "bee"
@@ -518,6 +527,19 @@ def print_status(manifest: Dict[str, Any]):
 
 
 def main():
+    """Fluxo antigo desta biblioteca. Não é mais o caminho de instalação.
+
+    Executar o arquivo delega para `bee_installer.main()`; isto continua aqui
+    porque gera o manifesto e porque os helpers puros do módulo são testados.
+    """
+    if not CAPABILITIES_DISPONIVEIS:
+        print(
+            "bees.capabilities não está importável neste ambiente.\n"
+            "Use o instalador único: python3 install-bee-smart.py --auto",
+            file=sys.stderr,
+        )
+        return 2
+
     parser = argparse.ArgumentParser(description="Instalador da Abelha")
     parser.add_argument("--force-ollama", action="store_true", 
                        help="Forçar reinstalação do Ollama")
@@ -626,4 +648,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Delega ao instalador único em vez de rodar um segundo fluxo de instalação.
+    _raiz = Path(__file__).resolve().parents[2]
+    if str(_raiz) not in sys.path:
+        sys.path.insert(0, str(_raiz))
+    from bees.install.bee_installer import main as _instalador_unico
+
+    sys.exit(_instalador_unico())

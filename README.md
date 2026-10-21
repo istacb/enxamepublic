@@ -89,7 +89,7 @@ Eficiência é requisito não negociável:
 | `kernel/` | Núcleo inteligente. Toda regra de negócio vive aqui. |
 | `runtime/` | Ambiente de execução isolado para código gerado. |
 | `web/` | Interface mínima (HTML/CSS/JS puros). |
-| `api/install/` | Sistema oficial de distribuição (install/update/migrate/uninstall). |
+| `api/install/` | Stack **antiga** de distribuição (FastAPI na porta 7700). Não é o caminho de instalação — veja [Instalação](#-instalação). |
 | `agentes/` | Agentes especializados para tarefas específicas. |
 | `bibliotecario/` | Gestão de conhecimento, documentação e contexto. |
 | `juiz/` | Validação de conformidade arquitetural e EIPs. |
@@ -103,75 +103,97 @@ Eficiência é requisito não negociável:
 
 ## 🚀 Instalação
 
-### Pré-requisitos
-- Python 3.10+
-- Node.js 18+ (apenas para ferramentas opcionais)
-- Ollama instalado e configurado
-
-### Instalação Rápida
-
-Use o instalador inteligente (Next > Next > Finish), que cuida de Python,
-Ollama, modelo, `.env` e do start do serviço. Ele é cross-platform — Windows,
-macOS, Debian e Arch — e é o mesmo nos três sistemas:
+**Um comando.** Ele confere o Python, instala o Ollama se não existir, escolhe e
+baixa o modelo adequado ao hardware, cria o ambiente virtual `.venv-bee`,
+configura a abelha e no final imprime exatamente como abrir a interface.
 
 ```bash
-# Clonar repositório (público, sem necessidade de login)
 git clone https://github.com/istacb/enxamepublic.git
 cd enxamepublic
 
-# Interativo (pergunta só o necessário)
-python3 install-bee-smart.py
-
-# Ou 100% automático, sem nenhuma pergunta:
 python3 install-bee-smart.py --auto
 ```
 
-No Windows use `py install-bee-smart.py` se `python3` não estiver no PATH.
+- **Windows:** `py install-bee-smart.py --auto`
+- **macOS / Debian / Ubuntu / Arch:** o mesmo comando acima
 
-Opções úteis: `--role juiz|bibliotecario|agente|auto`, `--node-port`,
-`--bee-port`, `--model`, `--skip-model`, `--uninstall`.
-
-Para instalar a infraestrutura de sistema (diretórios em `/var/lib/enxame`,
-`/etc/enxame/.env`, serviço) existe um segundo conjunto de scripts, exclusivo
-de Linux e executado como root:
+Sem `--auto` ele pergunta só o que precisa (next > next > finish). Para ver o
+plano sem alterar nada na máquina:
 
 ```bash
-sudo ./api/install/install     # cria dirs + .env
-sudo ./api/install/update      # dependências (também roda em macOS/Windows)
-./api/install/migrate          # migrações de dados/estrutura
+python3 install-bee-smart.py --dry-run
 ```
 
-> ⚠️ Os nomes `install-ubuntu.sh`, `install-macos.sh` e `install-windows.bat`
-> apareciam nesta documentação mas **nunca existiram no repositório**. Os
-> caminhos acima são os arquivos reais.
-> Veja `api/install/README.md` para o passo a passo completo.
+### Depois de instalar
 
-Para iniciar manualmente um node sem os instaladores (ex.: ambiente de
-desenvolvimento), use o runner unificado, que lê a função do node
-(`ENXAME_NODE_ROLE`) do arquivo `.env` informado:
+O instalador termina mostrando dois comandos — são literalmente estes:
 
 ```bash
-python3 api/install/run_node.py --env-file /caminho/para/.env
+cd /caminho/para/enxamepublic
+.venv-bee/bin/python -m bees.service --host 0.0.0.0 --port 8765 --data-dir <seu-data-dir>
 ```
 
-> **[Não verificado]** `python -m kernel.main`, citado em versões
-> anteriores deste README, não corresponde ao código atual: `kernel/` é um
-> pacote TypeScript (`kernel.ts`, `index.ts`) sem `package.json` no
-> repositório, então esse comando não executa nada. Os serviços que de
-> fato rodam em Python hoje são `juiz/app.py`, `bibliotecario/app.py`
-> (FastAPI, servidos via uvicorn) e `agentes/service.py` (worker
-> assíncrono) — é isso que `run_node.py` inicia.
+E então abrir **http://localhost:8765/** no navegador. A interface está em
+`web/` e é servida pela própria abelha: painel do enxame, chat, descoberta de
+rede e estado da Guarda. Para parar, `Ctrl+C`.
 
-### Scripts Oficiais
+> `python bees/service.py` **não** funciona: o módulo usa imports relativos e
+> importa `core`, então precisa ser executado como módulo (`-m bees.service`) a
+> partir da raiz do repositório.
 
-| Comando | Descrição |
-|---------|-----------|
-| `./api/install/install` | Instala infraestrutura e verifica dependências |
-| `./api/install/update` | Atualiza preservando dados e configuração |
-| `./api/install/migrate` | Detecta instalações antigas (OpenWebUI/Enxame legacy) e migra |
-| `./api/install/uninstall` | Remove completamente o Enxame do sistema |
+### Opções do instalador
 
----
+| Flag | Efeito |
+|------|--------|
+| `--auto` | Nenhuma pergunta; assume os padrões |
+| `--dry-run` | Detecta tudo e mostra o plano sem instalar nem gravar nada |
+| `--data-dir CAMINHO` | Diretório de dados da abelha (padrão: o mesmo que o serviço usa — `~/.local/share/enxame/bee` no Linux, `%LOCALAPPDATA%\enxame\bee` no Windows, `~/Library/Application Support/enxame/bee` no macOS) |
+| `--node-id NOME` | Nome desta abelha (padrão: hostname, gravado de forma estável) |
+| `--bee-port PORTA` | Porta HTTP e da interface (padrão: 8765) |
+| `--cluster` / `--no-cluster` | Participa ou não do enxame, sem perguntar |
+| `--install-service` | Instala como serviço do usuário (systemd `--user`, LaunchAgent, tarefa de logon) |
+| `--no-shortcuts` | Não cria atalho de inicialização |
+| `--model NOME` / `--skip-model` | Força um modelo / não baixa modelo |
+| `--ollama-url URL` | Usa um Ollama remoto em vez do local |
+| `--uninstall` | Remove venv, `.env`, dashboard e configuração criados |
+| `--legacy-env` | Também gera `.env` para a stack antiga (não é necessário) |
+
+### Formar um enxame
+
+Instale **o mesmo comando** em 3 ou mais máquinas na mesma rede local. Não há
+papel para escolher nem configuração extra: as abelhas se descobrem por mDNS e
+elegem os papéis entre si — Juiz, Bibliotecária, Guarda e Workers.
+
+O Juiz recebe a pergunta, descobre qual abelha tem aquele conhecimento offline,
+delega a ela e faz a curadoria da resposta antes de devolver. Cada abelha
+mantém o próprio RAG. Se uma abelha cair, há reeleição e failover.
+
+Se o instalador encontrar outras abelhas já no ar, ele pergunta se esta máquina
+deve entrar no enxame; responder "não" grava `cluster.enabled=false` e a abelha
+fica isolada de verdade (nem anuncia no mDNS).
+
+> mDNS é link-local: as máquinas precisam estar no mesmo segmento de rede.
+> VPN ou sub-redes diferentes não se descobrem.
+
+### O que este instalador **não** é
+
+`api/install/` (`install`, `update`, `migrate`, `uninstall`, `run_node.py`) é a
+stack **antiga**: processos FastAPI separados (`juiz/app.py`,
+`bibliotecario/app.py`, `agentes/service.py`) servidos na porta 7700. Continua
+no repositório e continua funcional, mas **não é o caminho de instalação** e não
+é necessário para usar a abelha nem o enxame. Os scripts por sistema operacional
+que existiam ao lado dela (`install_debian.sh`, `install_arch.sh`,
+`install_macos.sh`, `install_unix.sh`, `install_windows.bat`, `install-bee.sh`)
+foram removidos — eram caminhos concorrentes que instalavam coisas diferentes.
+
+> ⚠️ Versões anteriores desta página documentavam cinco pontos de entrada
+> diferentes (`install-bee-smart.py`, `bees/install/universal_installer.py`,
+> `install-bee.sh`, `api/install/install` e `install_enxame.bat`) apontando para
+> três stacks. Era a causa direta de "instalei e nada funciona": dependendo do
+> comando, terminava-se com um produto diferente na máquina. Hoje existe uma
+> implementação única em `bees/install/bee_installer.py`; os outros nomes são
+> atalhos que delegam para ela.
+
 
 ## 💻 Interface Web
 
@@ -280,6 +302,10 @@ cd bees && python -m pytest
 
 Se você possui uma instalação anterior do OpenWebUI:
 
+> ⚠️ `migrate` pertence à stack antiga (`api/install/`) e migra dados para a
+> estrutura dela. A abelha instalada por `install-bee-smart.py` usa outro
+> layout (`--data-dir`), então rode isto apenas se você também usa a stack antiga.
+
 ```bash
 # O script de migração detecta automaticamente
 ./api/install/migrate
@@ -340,4 +366,5 @@ Desenvolvido pela comunidade, para a comunidade.
 
 **Documentação Completa:** [`spec/en/`](spec/en/)  
 **EIPs Ativas:** [`spec/en/eip/`](spec/en/eip/)  
-**Guia de Instalação:** [`api/install/README.md`](api/install/README.md)
+**Guia de Instalação:** a seção [🚀 Instalação](#-instalação) desta página (um comando só).  
+**Stack antiga (porta 7700):** [`api/install/README.md`](api/install/README.md)

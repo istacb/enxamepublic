@@ -1,267 +1,119 @@
-# Instaladores e Desinstaladores da Abelha
+# Instalação da Abelha
 
-Este diretório contém scripts para instalação e remoção completa da Abelha.
+Existe **um** instalador. Ele é a implementação única e todos os outros nomes
+deste diretório delegam para ele ou são ferramentas de quem empacota o projeto.
 
-## Estrutura
-
-```
-install/
-├── install_bee.py          # Instalador principal (Python)
-├── uninstall_bee.py        # Desinstalador principal (Python)
-├── install-bee.sh          # Wrapper bash para Linux/macOS
-├── uninstall-bee.sh        # Wrapper bash para Linux/macOS
-├── install-bee.ps1         # Wrapper PowerShell para Windows (TODO)
-└── uninstall-bee.ps1       # Wrapper PowerShell para Windows (TODO)
-```
-
-## Instalação Rápida
-
-### Linux/macOS
+## O comando
 
 ```bash
-# Método recomendado (pipe direto)
-curl -fsSL https://.../install-bee.sh | bash
+git clone https://github.com/istacb/enxamepublic.git
+cd enxamepublic
 
-# Ou baixar e executar
-wget https://.../install-bee.sh
-chmod +x install-bee.sh
-./install-bee.sh
-
-# Com opções
-./install-bee.sh --dry-run           # Simular sem instalar
-./install-bee.sh --force-ollama      # Forçar reinstalação do Ollama
-./install-bee.sh --skip-model-test   # Pular teste de inferência
+python3 install-bee-smart.py --auto
 ```
 
-### Windows (PowerShell)
+Windows: `py install-bee-smart.py --auto`. macOS, Debian, Ubuntu e Arch: o mesmo
+comando.
 
-```powershell
-# TODO: Implementar
-# Execute o instalador Python diretamente
-python install_bee.py
-```
+Ele faz, nesta ordem:
 
-### Instalação Manual (Python)
+1. Confere o Python (3.10+) e instala se faltar.
+2. Confere o Ollama pela **API HTTP** e instala se faltar (winget no Windows,
+   brew no macOS, apt/pacman/script oficial no Linux).
+3. Detecta RAM e GPU.
+4. Recomenda um modelo para esse hardware e baixa (`ollama pull`).
+5. Cria o `.venv-bee` e instala as 13 dependências — incluindo `aiohttp` e
+   `cryptography`, sem as quais o serviço nem importa.
+6. Grava `<data-dir>/config.json` e `identity.json`, e pergunta se esta máquina
+   entra no enxame quando encontra outras abelhas na rede.
+7. Imprime os dois comandos para subir a abelha e a URL da interface.
+
+Para ver o que ele faria sem alterar nada:
 
 ```bash
-cd bees/install
-python install_bee.py
-
-# Opções disponíveis:
-# --force-ollama         Forçar reinstalação do Ollama
-# --force-model-download Forçar redownload do modelo
-# --dry-run              Simular instalação
-# --skip-model-test      Pular teste de inferência
+python3 install-bee-smart.py --dry-run
 ```
 
-## Desinstalação
-
-### Linux/macOS
+## Depois de instalar
 
 ```bash
-# Remover apenas a Abelha
-./uninstall-bee.sh
-
-# Remover Abelha + Ollama
-./uninstall-bee.sh --remove-ollama
-
-# Manter documentos indexados
-./uninstall-bee.sh --keep-data
-
-# Simular sem remover
-./uninstall-bee.sh --dry-run
-
-# Confirmar automaticamente (sem prompt)
-./uninstall-bee.sh -y
+cd /caminho/para/enxamepublic
+.venv-bee/bin/python -m bees.service --host 0.0.0.0 --port 8765 --data-dir <data-dir>
 ```
 
-### Windows (PowerShell)
+Abra **http://localhost:8765/**. A abelha serve `web/` na raiz e a mesma API que
+o enxame usa (`/api/session`, `/api/chat`, `/api/status`, `/api/cluster/*`,
+`/api/guardian`). Para parar, `Ctrl+C`.
 
-```powershell
-# TODO: Implementar
-python uninstall_bee.py --remove-ollama
-```
+> `python bees/service.py` não funciona: imports relativos + `core` exigem
+> executar como módulo a partir da raiz do repositório.
 
-### Desinstalação Manual (Python)
+## Flags
 
-```bash
-cd bees/install
-python uninstall_bee.py
+| Flag | Efeito |
+|------|--------|
+| `--auto` | Nenhuma pergunta |
+| `--dry-run` | Só detecta e mostra o plano |
+| `--data-dir CAMINHO` | Dados da abelha (padrão = o mesmo que o serviço usa) |
+| `--node-id NOME` | Nome da abelha, gravado de forma estável |
+| `--bee-port PORTA` | Porta HTTP/UI (padrão 8765) |
+| `--cluster` / `--no-cluster` | Entra ou não no enxame, sem perguntar |
+| `--install-service` | Serviço do usuário: systemd `--user`, LaunchAgent, tarefa de logon |
+| `--no-shortcuts` | Não cria atalho de inicialização |
+| `--model NOME` / `--skip-model` | Força modelo / não baixa modelo |
+| `--ollama-url URL` | Usa Ollama remoto |
+| `--uninstall` | Remove o que o instalador criou |
+| `--legacy-env` | Também gera `.env` para a stack antiga |
 
-# Opções disponíveis:
-# --remove-ollama        Também remover Ollama
-# --force-remove-ollama  Forçar remoção mesmo se não instalado pela Abelha
-# --keep-data            Manter documentos e índices
-# --dry-run              Simular desinstalação
-# -y, --yes              Confirmar automaticamente
-```
+## Enxame
 
-## O Que é Instalado
+Rode o mesmo comando em 3+ máquinas na mesma rede local. As abelhas se descobrem
+por mDNS e elegem os papéis entre si (Juiz, Bibliotecária, Guarda, Workers). O
+Juiz recebe a pergunta, descobre qual abelha tem o conhecimento offline, delega e
+faz a curadoria da resposta. Cada abelha mantém o próprio RAG. mDNS é link-local:
+VPN e sub-redes diferentes não se descobrem.
 
-### Diretórios
+## O que há neste diretório
 
-| Caminho | Conteúdo |
-|---------|----------|
-| `~/.enxame/bee/` | Diretório principal da Abelha |
-| `~/.enxame/bee/models/` | Modelos baixados (se aplicável) |
-| `~/.enxame/bee/documents/` | Documentos indexados |
-| `~/.enxame/bee/index/` | Índices vetoriais (LanceDB) |
-| `~/.enxame/bee/memory/` | Memória e contexto (SQLite) |
-| `~/.cache/enxame/` | Cache temporário |
+**Instalador (o caminho do usuário)**
 
-### Arquivos
+| Arquivo | Papel |
+|---------|-------|
+| `bee_installer.py` | **A implementação única.** 7 passos, cross-platform. |
+| `cluster_setup.py` | `config.json`/`identity.json`, opt-in de enxame, descoberta mDNS. |
+| `bee_setup.py` | Etapa final: comando de subida, atalhos, serviço do usuário. |
+| `test_installers.py` | Testes dos três acima. |
 
-| Arquivo | Descrição |
-|---------|-----------|
-| `~/.enxame/bee/manifest.json` | Manifesto da instalação |
-| `~/.enxame/bee/install.log` | Log da instalação |
-| `/usr/local/bin/ollama` | Binário do Ollama (Linux) |
-| `/etc/systemd/system/ollama.service` | Serviço systemd (Linux) |
+**Atalhos que delegam para `bee_installer.py`** (existem para não quebrar quem
+já usa esses nomes, e para o empacotamento)
 
-### Sistema
+| Arquivo | Papel |
+|---------|-------|
+| `../../install-bee-smart.py` | Comando documentado, na raiz do repositório. |
+| `universal_installer.py` | Entry point do PyInstaller (`.app`/`.dmg`) e do AppImage. |
+| `install_bee.py` | Biblioteca de helpers puros + gerador de manifesto. |
+| `uninstall_bee.py` | Remoção (`install-bee-smart.py --uninstall`). |
 
-| Componente | Linux | macOS | Windows |
-|------------|-------|-------|---------|
-| Ollama binary | ✓ | ✓ | ✓ |
-| Systemd service | ✓ | - | - |
-| Launchd daemon | - | ✓ | - |
-| Windows service | - | - | ✓ |
+**Empacotamento (só para quem mantém o projeto)** — veja
+[`README_INSTALLERS.md`](README_INSTALLERS.md).
 
-## Seleção Automática de Modelo
+| Arquivo | Papel |
+|---------|-------|
+| `build_installer.py` | Gera `.dmg` (macOS) e AppImage (Linux). |
+| `build_deb.sh`, `build_macos_pkg.sh`, `PKGBUILD` | Pacotes `.deb`, `.pkg`, Arch. |
+| `enxame_installer.spec`, `version_info.txt` | Metadados do PyInstaller. |
+| `install_enxame.{sh,ps1,bat,iss}`, `uninstall_enxame.{ps1,bat}` | Usados pelos pacotes acima. |
+| `enxame-bee.{service,install,sysusers,tmpfiles}`, `config.json.example` | Arquivos de pacote de distro. |
 
-O instalador detecta hardware e seleciona modelo adequado:
+## Removidos
 
-| RAM Disponível | Modelo Recomendado | Categoria |
-|----------------|-------------------|-----------|
-| < 4 GB | qwen2:0.5b | tiny |
-| 4-8 GB | llama3.2:1b | small |
-| 8-16 GB | llama3.2:3b | medium |
-| 16-32 GB | llama3:8b | large |
-| > 32 GB | llama3.1:8b | xl |
+`install-bee.sh`, `install_debian.sh`, `install_arch.sh`, `install_macos.sh`,
+`install_unix.sh`, `install_windows.bat`, `install_enxame.py` e os
+`uninstall_*.sh` correspondentes foram **removidos**: eram caminhos concorrentes
+que instalavam coisas diferentes. Havia 22 arquivos de instalação e 5 comandos
+documentados apontando para 3 stacks — era daí que vinha o "instalei e nada
+funciona".
 
-**Com GPU dedicada:** Pode subir uma categoria se VRAM ≥ 8GB.
-
-## Fluxo de Instalação
-
-```
-1. Detectar hardware (CPU, RAM, GPU, OS)
-2. Verificar Ollama instalado
-   ├─ Se não existir → Instalar
-   └─ Se existir → Verificar versão
-3. Selecionar modelo recomendado
-   ├─ Analisar RAM + VRAM + CPU
-   └─ Escolher categoria adequada
-4. Baixar modelo via `ollama pull`
-5. Testar inferência real
-   ├─ Se falhar → Tentar modelo inferior
-   └─ Se sucesso → Continuar
-6. Salvar manifesto
-7. Exibir status final
-```
-
-## Fluxo de Desinstalação
-
-```
-1. Verificar estado atual
-2. Confirmar com usuário (exceto -y)
-3. Parar serviços rodando
-4. Remover diretórios da Abelha
-   ├─ ~/.enxame/bee/
-   └─ ~/.cache/enxame/
-5. Se --remove-ollama:
-   ├─ Parar serviço Ollama
-   └─ Desinstalar Ollama
-6. Limpar shell configs (.bashrc, .zshrc)
-7. Exibir resumo
-```
-
-## Troubleshooting
-
-### Falha na instalação do Ollama (Linux)
-
-```bash
-# Instalar manualmente
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Depois executar instalador da Abelha
-python install_bee.py --skip-ollama
-```
-
-### Modelo muito grande para hardware
-
-```bash
-# Forçar modelo menor
-python install_bee.py --force-model-download
-
-# Ou editar manifest e baixar manualmente
-ollama pull llama3.2:1b
-```
-
-### Ollama não inicia automaticamente
-
-```bash
-# Linux
-sudo systemctl start ollama
-sudo systemctl enable ollama
-
-# macOS
-launchctl load -w /Library/LaunchDaemons/com.ollama.ollama.plist
-```
-
-### Espaço em disco insuficiente
-
-```bash
-# Limpar cache
-rm -rf ~/.cache/enxame
-
-# Remover modelos não usados
-ollama rm <nome-do-modelo>
-```
-
-## Variáveis de Ambiente
-
-| Variável | Padrão | Descrição |
-|----------|--------|-----------|
-| `BEE_HOME` | `~/.enxame/bee` | Diretório base da Abelha |
-| `OLLAMA_HOST` | `127.0.0.1:11434` | Host do Ollama |
-| `OLLAMA_MODELS` | `~/.ollama/models` | Diretório de modelos |
-
-## Logs
-
-Após instalação, verifique:
-
-```bash
-# Log da instalação
-cat ~/.enxame/bee/install.log
-
-# Status da Abelha
-python -c "from bees.install.install_bee import print_status; import json; m=json.load(open('~/.enxame/bee/manifest.json')); print_status(m)"
-```
-
-## Segurança
-
-- Scripts verificam integridade antes de executar
-- Ollama é baixado apenas de fontes oficiais
-- Modelos são verificados após download
-- Teste de inferência confirma funcionamento
-- Manifesto registra auditoria completa
-
-## Próximos Passos
-
-Após instalação bem-sucedida:
-
-```bash
-# Verificar status
-bee status
-
-# Iniciar Abelha
-bee start
-
-# Ver outras Abelhas na rede
-bee discover
-
-# Fazer primeira consulta
-bee query "Qual é o seu conhecimento sobre X?"
-```
-
-Documentação completa em: `bees/docs/`
+A stack antiga (`api/install/`, processos FastAPI separados na porta 7700) segue
+no repositório, mas não é caminho de instalação. Veja
+[`../../api/install/README.md`](../../api/install/README.md).
