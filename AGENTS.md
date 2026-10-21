@@ -27,7 +27,9 @@ anywhere, so uncompilable), and `api/`, `juiz/`, `agentes/`, `enxame_evolved/`
 Removed as a consequence: `core/cluster/` and `core/memory/` were imported
 **only** by that legacy stack, so they became orphans when it went away — the
 bee has its own election in `bees/cluster/` and its own memory in
-`bees/memory.py`. The root `spec/` tree (101 files, every document duplicated in
+`bees/memory.py`, and `core/exp/server.py` + `core/exp/client.py` (the only two
+consumers of `fastapi` and `websockets`). The root `spec/` tree (101 files, every
+document duplicated in
 `en/` and `pt-BR/`) described the previous architecture — missions, workflows,
 specializations, microkernel — of which exactly **one** file mentioned the bee.
 The EIPs that do describe live code were consolidated into `bees/spec/`; the
@@ -144,12 +146,27 @@ Config: `bees/pyproject.toml` — ruff line-length=100, target-version=py310; my
 - **mDNS Discovery**: `core.discovery.mdns_discovery.NodeAnnouncer` for node announcement
 - **Bee Discovery**: `bees.discovery.BeeDiscoveryService` for peer discovery with capabilities
 - **Async**: Use `asyncio` throughout Python services
-- **Dependencies**: the installer owns them (`PYTHON_REQUIREMENTS` in
-  `bees/install/bee_installer.py`, installed into `.venv-bee`). For manual
-  setups use `bees/requirements.txt` or `pip install -e bees`. There is no
-  root `requirements.txt` — the one that existed listed only legacy-stack
-  packages (fastapi/uvicorn/typer) and omitted `aiohttp` and `cryptography`,
-  so following it produced a bee that could not even import.
+- **Dependencies**: exactly six are mandatory — `aiohttp`, `cryptography`,
+  `httpx`, `psutil`, `pydantic`, `zeroconf`. That set was derived by an AST scan
+  of every `.py` in the repo for imports that are NOT inside a `try/except`, and
+  the three sources now agree: `PYTHON_REQUIREMENTS` in
+  `bees/install/bee_installer.py` (what the installer puts in `.venv-bee`),
+  `bees/pyproject.toml` `dependencies`, and `bees/requirements.txt`.
+  Everything else is optional and imported behind a guard, so the code degrades
+  with a log warning instead of crashing: `lancedb`/`pyarrow`/
+  `sentence-transformers` (falls back to a keyword index), `pytesseract`/`Pillow`
+  (OCR), the document readers in `bibliotecario/universal_reader.py`, and
+  `GPUtil`/`pynvml` (CPU tier). Install them as extras:
+  `pip install -e "bees[rag]"`, `[ocr]`, `[docs]`, `[gpu]`, `[all]`.
+  Removed as dead weight: `fastapi`/`uvicorn`/`websockets` (used only by two
+  orphan modules), and `typer`, `rich`, `PyYAML`, `platformdirs`, `numpy`,
+  `torch`, `ollama`, `pdfplumber`, `redis` — zero imports anywhere. The Ollama
+  client speaks HTTP through `httpx`, so the `ollama` package was never used.
+  There is no root `requirements.txt`; the one that existed listed only
+  legacy-stack packages and omitted `aiohttp` and `cryptography`, so following it
+  produced a bee that could not even import. `bibliotecario/requirements.txt` is
+  gone too: its first line was `-r ../requirements.txt`, pointing at that deleted
+  file, so `pip install -r` on it failed outright.
 - **Specs**: All architectural changes require EIP in `bees/spec/` before implementation
 
 ---

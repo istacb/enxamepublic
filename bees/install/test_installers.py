@@ -753,6 +753,152 @@ class TestModelAvailability(unittest.TestCase):
 
 
 
+class TestVerifyImports(unittest.TestCase):
+    """`pip install` sair 0 não é prova de que o serviço vai subir.
+
+    install_python_dependencies() devolvia o interpretador assim que o pip
+    terminava sem erro, e main() só testava `venv_py is None`. Um venv com o pip
+    "ok" mas pacote não importável passava como instalação concluída — o resumo
+    final chegava a mandar o USUÁRIO rodar `import bees, core` à mão para
+    descobrir. Agora o instalador faz esse teste e falha quando tem que falhar.
+    """
+
+    def test_imports_ok_devolve_true(self):
+        from install.bee_installer import verify_imports
+
+        proc = MagicMock(returncode=0, stdout="ok\n", stderr="")
+        with patch("install.bee_installer.subprocess.run", return_value=proc):
+            self.assertTrue(verify_imports("/caminho/do/python"))
+
+    def test_module_not_found_devolve_false(self):
+        """O caso real: pip ok, mas falta aiohttp -> ModuleNotFoundError."""
+        from install.bee_installer import verify_imports
+
+        proc = MagicMock(returncode=1, stdout="",
+                         stderr="ModuleNotFoundError: No module named 'aiohttp'")
+        with patch("install.bee_installer.subprocess.run", return_value=proc):
+            self.assertFalse(verify_imports("/caminho/do/python"))
+
+    def test_pip_ok_mas_sem_ok_no_stdout_devolve_false(self):
+        """returncode 0 sem imprimir 'ok' não pode contar como sucesso."""
+        from install.bee_installer import verify_imports
+
+        proc = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("install.bee_installer.subprocess.run", return_value=proc):
+            self.assertFalse(verify_imports("/caminho/do/python"))
+
+    def test_rodar_a_partir_da_raiz_do_repo(self):
+        """Os pacotes do repo não vêm do PyPI: importam a partir da raiz, que é o
+        cwd do comando documentado no PASSO 7. Sem cwd certo, o teste mentiria."""
+        from install.bee_installer import verify_imports, REPO_ROOT
+
+        capturado = {}
+
+        def gravar(cmd, **kwargs):
+            capturado.update(cmd=cmd, cwd=kwargs.get("cwd"))
+            return MagicMock(returncode=0, stdout="ok", stderr="")
+
+        with patch("install.bee_installer.subprocess.run", gravar):
+            verify_imports("/py")
+
+        self.assertEqual(Path(capturado["cwd"]).resolve(), Path(REPO_ROOT).resolve())
+        self.assertIn("import bees", " ".join(capturado["cmd"]))
+
+    def test_verificacao_esta_ligada_ao_passo_5(self):
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertIn("if not verify_imports(py):", codigo)
+        pos = codigo.index("if not verify_imports(py):")
+        self.assertIn("return None", codigo[pos:pos + 120],
+                      "a verificação precisa poder vetar o PASSO 5")
+
+
+class TestDependenciasObrigatorias(unittest.TestCase):
+    """As três fontes de dependências têm que concordar.
+
+    Elas divergiam: o requirements.txt da raiz (removido) listava só pacotes da
+    stack antiga e omitia aiohttp e cryptography, então segui-lo produzia uma
+    abelha que nem importava. O pyproject.toml e o requirements.txt de bees/
+    tratavam torch, lancedb, numpy e sentence-transformers como obrigatórios,
+    quando todo uso deles é protegido por try/except — gigabytes baixados à toa,
+    inclusive pela CI em toda execução.
+    """
+
+    OBRIGATORIAS = {"aiohttp", "cryptography", "httpx", "psutil", "pydantic", "zeroconf"}
+    MORTAS = {"fastapi", "uvicorn", "websockets", "typer", "rich", "pyyaml",
+              "platformdirs", "numpy", "torch", "ollama", "pdfplumber", "redis"}
+
+    @staticmethod
+    def _nomes(lista):
+        """Extrai só o nome do pacote de um requisito PEP 508.
+
+        Corta no primeiro caractere de versão/extra: `>=`, `==`, `~=`, `[standard]`.
+        """
+        import re
+        return {re.split(r"[><=!~\[^]", x)[0].strip().lower() for x in lista}
+
+    def test_instalador_lista_so_as_obrigatorias(self):
+        from install.bee_installer import PYTHON_REQUIREMENTS
+
+        self.assertEqual(self._nomes(PYTHON_REQUIREMENTS), self.OBRIGATORIAS)
+
+    def test_pyproject_concorda_com_o_instalador(self):
+        import tomllib
+        from install.bee_installer import PYTHON_REQUIREMENTS
+
+        toml_path = Path(__file__).parent.parent / "pyproject.toml"
+        dados = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+        self.assertEqual(self._nomes(dados["project"]["dependencies"]),
+                         self._nomes(PYTHON_REQUIREMENTS))
+
+    def test_requirements_txt_concorda_com_o_instalador(self):
+        from install.bee_installer import PYTHON_REQUIREMENTS
+
+        raiz = Path(__file__).resolve().parents[2]   # bees/install/ -> bees/ -> raiz do repo
+        linhas = (raiz / "bees" / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        ativas = [l.split("#")[0].strip() for l in linhas
+                  if l.strip() and not l.strip().startswith("#")]
+        duras = [x for x in ativas
+                 if not x.lower().startswith(("pytest", "mypy", "ruff"))]
+        self.assertEqual(self._nomes(duras), self._nomes(PYTHON_REQUIREMENTS))
+
+    def test_nenhuma_dependencia_morta_volta(self):
+        import tomllib
+        from install.bee_installer import PYTHON_REQUIREMENTS
+
+        raiz = Path(__file__).resolve().parents[2]   # bees/install/ -> bees/ -> raiz do repo
+        fontes = {
+            "instalador": self._nomes(PYTHON_REQUIREMENTS),
+            "requirements": self._nomes([
+                l.split("#")[0].strip()
+                for l in (raiz / "bees" / "requirements.txt").read_text(
+                    encoding="utf-8").splitlines()
+                if l.strip() and not l.strip().startswith("#")
+            ]),
+        }
+        toml_path = Path(__file__).parent.parent / "pyproject.toml"
+        dados = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+        fontes["pyproject"] = self._nomes(dados["project"]["dependencies"])
+        for extra in dados["project"]["optional-dependencies"].values():
+            fontes.setdefault("extras", set()).update(self._nomes(extra))
+
+        for nome, conj in fontes.items():
+            mortas = conj & self.MORTAS
+            self.assertFalse(mortas, f"{nome} ainda lista dependência morta: {mortas}")
+
+    def test_opcionais_ficam_em_extras(self):
+        """Quem quiser o RAG completo precisa ter como instalar — sem voltar a
+        ser obrigatório."""
+        import tomllib
+
+        toml_path = Path(__file__).parent.parent / "pyproject.toml"
+        extras = tomllib.loads(toml_path.read_text(encoding="utf-8"))[
+            "project"]["optional-dependencies"]
+        nomes = self._nomes([p for grupo in extras.values() for p in grupo])
+        for opcional in ("lancedb", "sentence-transformers", "pytesseract"):
+            self.assertIn(opcional, nomes, f"{opcional} sumiu dos extras")
+
+
+
 if __name__ == '__main__':
     print("="*60)
     print("🐝 TESTES DOS INSTALADORES DA ABELHA")

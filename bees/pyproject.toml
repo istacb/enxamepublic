@@ -22,22 +22,25 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
 ]
+# Obrigatórios de verdade: o que o código importa SEM guarda try/except,
+# conferido por varredura AST de todos os .py do repositório.
+#
+# Saíram daqui PyYAML, torch, numpy, ollama, platformdirs e rich: nenhum tem um
+# único import em qualquer arquivo. O cliente do Ollama fala HTTP via httpx
+# (core/ollama/client.py), então o pacote `ollama` nunca foi usado; torch e numpy
+# só chegariam de carona com sentence-transformers, que é extra (abaixo).
+#
+# O efeito prático é grande: `pip install -e bees` deixava de baixar gigabytes
+# (torch + lancedb + sentence-transformers) para instalar um serviço que sobe e
+# funciona sem nada disso — e a CI, que roda `pip install -e ".[dev]"`, pagava o
+# mesmo custo em toda execução.
 dependencies = [
-    "zeroconf>=0.38.0",
     "aiohttp>=3.9.0",
-    "httpx>=0.26.0",
-    "pydantic>=2.6.0",
-    "PyYAML>=6.0.0",
-    "lancedb>=0.8.0",
-    "sentence-transformers>=3.0.0",
-    "torch>=2.2.0",
-    "numpy>=1.26.0",
-    "ollama>=0.2.0",
-    "pytesseract>=0.3.10",
     "cryptography>=42.0.0",
+    "httpx>=0.26.0",
     "psutil>=5.9.0",
-    "platformdirs>=4.0.0",
-    "rich>=13.0.0",
+    "pydantic>=2.6.0",
+    "zeroconf>=0.38.0",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +52,53 @@ dev = [
     "ruff>=0.3.0",
 ]
 zim = ["zimply>=0.1.0"]
+# RAG vetorial e embeddings locais. sentence-transformers arrasta o torch
+# (gigabytes), por isso é extra e não dependência: sem ele a abelha funciona e
+# cai no índice por palavra-chave, avisando no log ("LanceDB indisponível").
+rag = [
+    "lancedb>=0.8.0",
+    "pyarrow>=14.0.0",
+    "sentence-transformers>=3.0.0",
+]
+# OCR de imagens e PDFs escaneados. Precisa TAMBÉM do binário tesseract no
+# sistema (apt install tesseract-ocr tesseract-ocr-por).
+ocr = [
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+]
+# Leitores usados por bibliotecario/universal_reader.py. Cada um é importado
+# dentro de try/except: sem ele, aquele formato é pulado com aviso no log.
+docs = [
+    "PyMuPDF>=1.23.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.0",
+    "odfpy>=1.4.0",
+    "mutagen>=1.47.0",
+]
+# Detecção de GPU NVIDIA; instalador e descoberta de capacidades degradam para
+# CPU sem eles.
+gpu = [
+    "GPUtil>=1.4.0",
+    "nvidia-ml-py>=12.535.0",
+]
+# Tudo que é opcional, para quem quer a abelha completa numa máquina só.
+all = [
+    "zimply>=0.1.0",
+    "lancedb>=0.8.0",
+    "pyarrow>=14.0.0",
+    "sentence-transformers>=3.0.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+    "PyMuPDF>=1.23.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.0",
+    "odfpy>=1.4.0",
+    "mutagen>=1.47.0",
+    "GPUtil>=1.4.0",
+    "nvidia-ml-py>=12.535.0",
+]
 
 [project.scripts]
 bee = "bees.cli:main"

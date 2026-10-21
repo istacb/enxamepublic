@@ -105,23 +105,35 @@ KERNEL_PATH = REPO_ROOT / "kernel" / "kernel.ts"
 PYTHON_MIN_VERSION = (3, 10)
 
 # --- Dependências por pacote ---
+# Só o que o código importa SEM guarda try/except — conferido por varredura AST
+# de todos os .py do repositório. As restrições de versão dos seis sobreviventes
+# são as mesmas que já estavam aqui e que a instalação real validou.
+#
+# O que era peso morto e saiu:
+#   fastapi / uvicorn / websockets -> eram usados só por core/exp/server.py e
+#       core/exp/client.py, que NENHUM módulo importava (removidos). O serviço da
+#       abelha é aiohttp; o cliente do Ollama fala HTTP via httpx.
+#   typer / rich / PyYAML / platformdirs -> zero imports em qualquer arquivo.
+#
+# Remover isto não é cosmético: eram centenas de MB a mais de download, mais
+# tempo de instalação e mais pontos de falha na máquina do usuário. EIP-0002,
+# princípio do próprio repositório, é "dependências mínimas".
+#
+# Os opcionais ficam DE FORA de propósito — lancedb/pyarrow, sentence-transformers
+# (que arrasta o torch, gigabytes), pytesseract/Pillow, os leitores de documento e
+# GPUtil/pynvml. Todos têm import protegido por try/except e degradam com aviso
+# (ex.: índice por palavra-chave no lugar do vetorial). Quem quiser o RAG completo
+# instala à parte:  pip install -e "bees[rag]"
 PYTHON_REQUIREMENTS = [
-    "fastapi==0.115.0",
-    "uvicorn[standard]==0.30.6",
-    "pydantic==2.9.2",
-    "httpx==0.27.2",
-    "websockets==13.1",
-    "typer==0.12.5",
-    "rich==13.8.1",
-    "zeroconf==0.135.0",
-    "psutil>=5.9.0",
     # O serviço BEE é aiohttp (bees/service.py) e a identidade usa cryptography
-    # (bees/config.py). Nenhum dos dois estava aqui, então mesmo com o
-    # instalador "concluindo com sucesso" o serviço não subia: ModuleNotFoundError.
+    # (bees/config.py). Nenhum dos dois estava aqui originalmente, então mesmo com
+    # o instalador "concluindo com sucesso" o serviço não subia: ModuleNotFoundError.
     "aiohttp>=3.9.0",
     "cryptography>=42.0.0",
-    "platformdirs>=4.0.0",
-    "PyYAML>=6.0.0",
+    "httpx==0.27.2",
+    "psutil>=5.9.0",
+    "pydantic==2.9.2",
+    "zeroconf==0.135.0",
 ]
 
 # Modelos recomendados por hardware
@@ -1168,6 +1180,48 @@ def venv_python(venv_path):
     return venv_path / "bin" / "python"
 
 
+def verify_imports(py, repo_root=None):
+    """Confere que o serviço importa DE VERDADE com o Python do venv.
+
+    `pip install` sair 0 não é prova de que a abelha vai subir. Os pacotes do
+    repositório (bees/, core/, guardian/, bibliotecario/) não vêm do PyPI: eles
+    importam a partir da raiz do repositório, que é exatamente o cwd do comando
+    documentado no PASSO 7. Se faltar um, a abelha morre no primeiro
+    ModuleNotFoundError — depois de o instalador ter anunciado "Abelha instalada
+    e configurada!". Este é o teste que o resumo final mandava o usuário fazer à
+    mão; agora o instalador o faz e falha quando tem que falhar.
+    """
+    if DRY_RUN:
+        return _dry("verificar se bees/core/guardian/bibliotecario importam", True)
+
+    raiz = Path(repo_root or REPO_ROOT)
+    codigo = "import bees, bees.service, core, guardian, bibliotecario; print('ok')"
+    try:
+        proc = subprocess.run(
+            [str(py), "-c", codigo],
+            cwd=str(raiz), capture_output=True, text=True, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        print_error("A verificação de imports excedeu o tempo limite")
+        return False
+    except Exception as e:
+        print_error(f"Não consegui verificar os imports com {py}: {e}")
+        return False
+
+    if proc.returncode != 0 or "ok" not in (proc.stdout or ""):
+        print_error("O pip terminou sem erro, mas o serviço NÃO importa com este Python:")
+        print((proc.stderr or proc.stdout or "").strip()[-2000:])
+        cprint(
+            f"   Verifique se {raiz} contém bees/, core/, guardian/ e\n"
+            "   bibliotecario/, e se o clone está completo.",
+            Colors.WARNING,
+        )
+        return False
+
+    print_success("Serviço importa corretamente com o Python do venv")
+    return True
+
+
 def install_python_dependencies():
     """Instala as dependências Python em um venv e RETORNA o python do venv.
 
@@ -1248,6 +1302,11 @@ def install_python_dependencies():
         return None
 
     print_success("Dependências instaladas")
+
+    # Sem isto, um venv com pip "ok" mas pacote não importável passava como
+    # instalação concluída (main() só testava `venv_py is None`).
+    if not verify_imports(py):
+        return None
     return py
 
 

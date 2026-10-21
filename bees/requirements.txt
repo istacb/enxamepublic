@@ -1,51 +1,68 @@
-# Bees - Dependências Python
-# Instalar com: pip install -r requirements.txt
+# Abelha (bees) — dependências Python
+#
+# O caminho recomendado NÃO é este arquivo: é o instalador único, que confere
+# tudo e avisa quando algo não funcionou.
+#
+#     python install-bee-smart.py --auto          (a partir da raiz do repositório)
+#
+# Este arquivo existe para instalação manual e para o pip-audit da CI. Ele lista
+# APENAS o que o código importa sem guarda try/except — conferido por varredura
+# AST de todos os .py do repositório. Instalar com:
+#
+#     pip install -r bees/requirements.txt
+#
+# Equivalente a `pip install -e bees` (as dependências obrigatórias são as mesmas
+# em bees/pyproject.toml).
 
-# Core
-zeroconf>=0.38.0
-aiohttp>=3.9.0
-httpx>=0.26.0
-pydantic>=2.6.0
-PyYAML>=6.0.0
+# ---------------------------------------------------------------- obrigatórias
+aiohttp>=3.9.0          # serviço HTTP e Web UI (bees/service.py)
+cryptography>=42.0.0    # identidade Ed25519 (bees/config.py)
+httpx>=0.26.0           # cliente Ollama e busca web (core/ollama, bees/librarian)
+psutil>=5.9.0           # carga/CPU/RAM para eleição e capacidades
+pydantic>=2.6.0         # envelope EXP (core/exp/envelope.py)
+zeroconf>=0.38.0        # descoberta mDNS do enxame (bees/discovery.py)
 
-# Banco de dados
-lancedb>=0.8.0
+# ---------------------------------------------------------------- opcionais
+# TODAS as linhas abaixo são opcionais de verdade: cada uma é importada dentro de
+# try/except e o código degrada com aviso no log quando falta. Nada aqui é
+# necessário para a abelha subir, responder, eleger papéis no enxame ou servir a
+# interface web.
+#
+# Antes elas estavam misturadas às obrigatórias, o que fazia uma instalação
+# manual baixar gigabytes (torch + sentence-transformers + lancedb) e ainda
+# listar pacotes com zero imports no repositório: PyYAML, numpy, ollama,
+# platformdirs, rich, pdfplumber e redis. O cliente do Ollama fala HTTP via
+# httpx (core/ollama/client.py), então o pacote `ollama` nunca foi usado.
+#
+# Instale só o grupo que você quer — ou use os extras do pyproject:
+#     pip install -e "bees[rag]"    pip install -e "bees[ocr]"
+#     pip install -e "bees[docs]"   pip install -e "bees[all]"
+#
+# RAG vetorial + embeddings locais (sentence-transformers arrasta o torch):
+#   lancedb>=0.8.0
+#   pyarrow>=14.0.0
+#   sentence-transformers>=3.0.0
+#   Sem eles: índice por palavra-chave, com "LanceDB indisponível" no log.
+#
+# OCR de imagens e PDFs escaneados (precisa também do binário tesseract no SO):
+#   pytesseract>=0.3.10
+#   Pillow>=10.0.0
+#
+# Leitores de documento (bibliotecario/universal_reader.py); sem cada um, aquele
+# formato é pulado com aviso:
+#   PyMuPDF>=1.23.0        python-docx>=1.1.0     python-pptx>=0.6.23
+#   openpyxl>=3.1.0        odfpy>=1.4.0           mutagen>=1.47.0
+#
+# Detecção de GPU NVIDIA (sem eles, patamar de CPU):
+#   GPUtil>=1.4.0          nvidia-ml-py>=12.535.0
+#
+# ZIM (arquivos .zim offline):
+#   zimply>=0.1.0
 
-# ML/Embeddings
-sentence-transformers>=3.0.0
-torch>=2.2.0
-numpy>=1.26.0
-
-# Ollama client
-ollama>=0.2.0
-
-# OCR (opcional)
-pytesseract>=0.3.10
-
-# ZIM (opcional)
-zimply>=0.1.0
-
-# Crypto (para identidade Ed25519)
-cryptography>=42.0.0
-
-# Sistema
-psutil>=5.9.0
-platformdirs>=4.0.0
-
-# Logging
-rich>=13.0.0
-
-# Vision/Multimodal (para OCR, análise de imagem, PDF, DOCX)
-pillow>=10.0.0
-pymupdf>=1.23.0
-pdfplumber>=0.10.0
-python-docx>=1.1.0
-
-# Testes
+# ------------------------------------------------------- desenvolvimento/testes
+# Mesmo conjunto do extra `dev` em bees/pyproject.toml: pip install -e "bees[dev]"
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 pytest-cov>=4.1.0
-
-# Type checking (dev)
 mypy>=1.8.0
 ruff>=0.3.0
