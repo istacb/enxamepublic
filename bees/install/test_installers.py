@@ -7,6 +7,7 @@ Executa validações básicas sem modificar o sistema.
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -17,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestInstallBee(unittest.TestCase):
     """Testes do instalador"""
-    
+
     def test_imports(self):
         """Testa se módulos podem ser importados"""
         try:
@@ -30,91 +31,91 @@ class TestInstallBee(unittest.TestCase):
             self.assertTrue(True)
         except ImportError as e:
             self.fail(f"Falha ao importar: {e}")
-    
+
     def test_detect_ollama_no_install(self):
         """Testa detecção quando Ollama não está instalado"""
         from install.install_bee import detect_ollama
-        
+
         # Mock para simular ausência de Ollama
         with patch('shutil.which', return_value=None):
             with patch('os.path.isfile', return_value=False):
                 result = detect_ollama()
                 self.assertIsNone(result)
-    
+
     def test_get_os_info(self):
         """Testa obtenção de informações do SO"""
         from install.install_bee import get_os_info
-        
+
         info = get_os_info()
-        
+
         self.assertIn('system', info)
         self.assertIn('release', info)
         self.assertIn('machine', info)
         self.assertTrue(len(info['system']) > 0)
-    
+
     def test_select_best_model_low_ram(self):
         """Testa seleção de modelo com pouca RAM"""
         from install.install_bee import select_best_model
-        
+
         hardware = {
             'total_ram_gb': 2,
             'gpu_vram_gb': 0,
             'has_gpu': False,
             'cpu_cores': 2
         }
-        
+
         model, metadata = select_best_model(hardware)
-        
+
         self.assertIsNotNone(model)
         self.assertEqual(metadata['category'], 'tiny')
         self.assertIn('Memória limitada', metadata['reason'])
-    
+
     def test_select_best_model_medium_ram(self):
         """Testa seleção de modelo com RAM média"""
         from install.install_bee import select_best_model
-        
+
         hardware = {
             'total_ram_gb': 8,
             'gpu_vram_gb': 0,
             'has_gpu': False,
             'cpu_cores': 4
         }
-        
+
         model, metadata = select_best_model(hardware)
-        
+
         self.assertIsNotNone(model)
         self.assertEqual(metadata['category'], 'medium')
-    
+
     def test_select_best_model_with_gpu(self):
         """Testa seleção de modelo com GPU dedicada"""
         from install.install_bee import select_best_model
-        
+
         hardware = {
             'total_ram_gb': 16,
             'gpu_vram_gb': 8,
             'has_gpu': True,
             'cpu_cores': 8
         }
-        
+
         model, metadata = select_best_model(hardware)
-        
+
         self.assertIsNotNone(model)
         # Com 16GB já é large, GPU pode ou não subir categoria dependendo da lógica
         self.assertIn(metadata['category'], ['large', 'xl'])
-    
+
     def test_log_function(self):
         """Testa função de log"""
         from install.install_bee import log, BEE_HOME
         import io
         from contextlib import redirect_stdout
-        
+
         # Criar diretório temporário
         BEE_HOME.mkdir(parents=True, exist_ok=True)
-        
+
         f = io.StringIO()
         with redirect_stdout(f):
             log("Test message", "INFO")
-        
+
         output = f.getvalue()
         self.assertIn("[INFO]", output)
         self.assertIn("Test message", output)
@@ -122,7 +123,7 @@ class TestInstallBee(unittest.TestCase):
 
 class TestUninstallBee(unittest.TestCase):
     """Testes do desinstalador"""
-    
+
     def test_imports(self):
         """Testa se módulos podem ser importados"""
         try:
@@ -135,22 +136,22 @@ class TestUninstallBee(unittest.TestCase):
             self.assertTrue(True)
         except ImportError as e:
             self.fail(f"Falha ao importar: {e}")
-    
+
     def test_remove_directory_nonexistent(self):
         """Testa remoção de diretório inexistente"""
         from install.uninstall_bee import remove_directory
         from pathlib import Path
-        
+
         fake_path = Path("/tmp/bee_fake_test_12345")
-        
+
         result = remove_directory(fake_path, dry_run=True)
         self.assertTrue(result)
-    
+
     def test_list_files_empty(self):
         """Testa listagem quando nada existe"""
         from install.uninstall_bee import list_files_to_remove
         from pathlib import Path
-        
+
         # Mock para simular ausência de diretórios
         with patch('pathlib.Path.exists', return_value=False):
             files = list_files_to_remove()
@@ -159,21 +160,21 @@ class TestUninstallBee(unittest.TestCase):
 
 class TestModelSelection(unittest.TestCase):
     """Testes específicos de seleção de modelo"""
-    
+
     def test_all_categories_have_models(self):
         """Verifica se todas as categorias têm modelos"""
         from install.install_bee import CANDIDATE_MODELS
-        
+
         categories = ['tiny', 'small', 'medium', 'large', 'xl']
-        
+
         for cat in categories:
             self.assertIn(cat, CANDIDATE_MODELS)
             self.assertGreater(len(CANDIDATE_MODELS[cat]), 0)
-    
+
     def test_model_names_valid(self):
         """Verifica se nomes de modelos são válidos"""
         from install.install_bee import CANDIDATE_MODELS
-        
+
         for category, models in CANDIDATE_MODELS.items():
             for model in models:
                 # Modelo deve ter formato nome:tag ou nome
@@ -181,26 +182,26 @@ class TestModelSelection(unittest.TestCase):
                     ':' in model or model.isalpha(),
                     f"Modelo inválido: {model}"
                 )
-    
+
     def test_fallback_selection(self):
         """Testa seleção fallback quando principal falha"""
         from install.install_bee import fallback_model_selection
-        
+
         hardware = {
             'total_ram_gb': 4,
             'gpu_vram_gb': 0,
             'has_gpu': False
         }
-        
+
         model, metadata = fallback_model_selection(hardware)
-        
+
         self.assertIsNotNone(model)
         self.assertTrue(metadata.get('fallback'))
 
 
 class TestManifestStructure(unittest.TestCase):
     """Testes da estrutura do manifesto"""
-    
+
     def test_manifest_fields(self):
         """Verifica campos obrigatórios do manifesto"""
         required_fields = [
@@ -212,7 +213,7 @@ class TestManifestStructure(unittest.TestCase):
             'capabilities',
             'status'
         ]
-        
+
         # Simular manifesto mínimo
         manifest = {
             'bee_version': '1.0.0',
@@ -226,17 +227,17 @@ class TestManifestStructure(unittest.TestCase):
             'capabilities': {},
             'status': 'READY'
         }
-        
+
         for field in required_fields:
             self.assertIn(field, manifest)
-    
+
     def test_status_values(self):
         """Verifica valores válidos de status"""
         valid_statuses = ['READY', 'DEGRADED']
-        
+
         manifest = {'status': 'READY'}
         self.assertIn(manifest['status'], valid_statuses)
-        
+
         manifest = {'status': 'DEGRADED'}
         self.assertIn(manifest['status'], valid_statuses)
 
@@ -1017,11 +1018,244 @@ class TestSmokeTestBee(unittest.TestCase):
 
 
 
+class TestAtalhoWindows(unittest.TestCase):
+    """O atalho e a tarefa do Windows têm que sobreviver a caminho real de usuário.
+
+    Três defeitos que só aparecem no Windows, onde ninguém consegue reproduzir
+    rodando no Linux:
+
+    1. `cd /d {repo_root}` sem aspas: em `C:\\Users\\Maria Silva\\enxamepublic` o
+       cd falha, a abelha inicia no diretório errado e `-m bees.service` não acha
+       o pacote `bees` nem o `core`.
+    2. `_quote_windows` citava só espaço/tab: um caminho com `&` (ou `^`, `()`,
+       `|`) partia a linha de comando no metacaractere.
+    3. o `.bat` era gravado em UTF-8, mas o cmd.exe lê `.bat` na codepage OEM
+       (cp850 num Windows em português): caminho com acento virava lixo e o
+       atalho morria com "O sistema não pode encontrar o caminho especificado".
+    """
+
+    REPO = "C:\\Users\\Maria Silva\\enxamepublic"
+
+    def _gerar_bat(self, tmp, repo_str=None, venv_str=None):
+        import tempfile
+        from install import bee_setup
+
+        base = Path(tmp)
+        fake_user = base / "Users" / "Maria Silva"
+        (fake_user / "Desktop").mkdir(parents=True, exist_ok=True)
+        repo = Path(repo_str) if repo_str else base / "repo com espaco"
+        venv = Path(venv_str) if venv_str else repo / ".venv-bee" / "Scripts" / "python.exe"
+        with patch.dict(os.environ, {"USERPROFILE": str(fake_user)}), \
+             patch.object(bee_setup.platform, "system", return_value="Windows"):
+            criados = bee_setup.create_bee_shortcuts(
+                venv_py=venv, data_dir=fake_user / "data", port=8765,
+                ollama_url="http://localhost:11434", model="llama3.2:3b",
+                repo_root=repo, log_info=lambda m: None, log_warn=lambda m: None)
+        return criados
+
+    def test_quote_windows_cita_espaco(self):
+        from install.bee_setup import _quote_windows
+
+        self.assertEqual(_quote_windows("C:\\a b\\c"), '"C:\\a b\\c"')
+
+    def test_quote_windows_cita_metacaracteres(self):
+        """`&` separa comandos no cmd.exe: sem aspas o atalho executa outra coisa."""
+        from install.bee_setup import _quote_windows
+
+        for perigoso in ("C:\\R&D\\repo", "C:\\x^y", "C:\\(a)\\b", "a|b", "a<b"):
+            self.assertTrue(_quote_windows(perigoso).startswith('"'),
+                            f"{perigoso!r} deveria ser citado")
+
+    def test_quote_windows_deixa_token_simples(self):
+        from install.bee_setup import _quote_windows
+
+        for simples in ("-m", "bees.service", "8765", "C:\\sem-espaco\\repo"):
+            self.assertEqual(_quote_windows(simples), simples)
+
+    def test_cd_vem_citado_no_bat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            criados = self._gerar_bat(tmp)
+            self.assertEqual(len(criados), 1)
+            texto = criados[0].read_text(encoding="utf-8", errors="replace")
+        self.assertIn('cd /d "', texto, "cd /d sem aspas quebra em caminho com espaço")
+        self.assertIn("cd /d \"", texto)
+
+    def test_bat_usa_crlf(self):
+        """Sem CRLF o cmd.exe pode interpretar o .bat linha a linha de forma
+        inconsistente; é a convenção de arquivo batch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            criados = self._gerar_bat(tmp)
+            bruto = criados[0].read_bytes()
+        self.assertGreater(bruto.count(b"\r\n"), 0)
+        self.assertEqual(bruto.count(b"\n") - bruto.count(b"\r\n"), 0,
+                         "LF solto no .bat")
+
+    def test_bat_contem_python_do_venv_citado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            criados = self._gerar_bat(tmp)
+            texto = criados[0].read_text(encoding="utf-8", errors="replace")
+        # O caminho do venv tem espaço, então precisa vir entre aspas: as aspas
+        # abrem no início do caminho e fecham logo antes de "-m".
+        norm = texto.replace("\\", "/")
+        self.assertIn('python.exe" -m bees.service', norm,
+                      "caminho do python do venv não veio citado")
+        self.assertIn("-m bees.service", texto)
+        self.assertIn("--data-dir", texto)
+
+    def test_bat_encoding_eh_oem_no_windows(self):
+        """cmd.exe lê .bat na codepage OEM, não em UTF-8."""
+        import ctypes
+        import install.bee_setup as bs
+        from install.bee_setup import _bat_encoding
+
+        windll_falso = MagicMock()
+        windll_falso.kernel32.GetOEMCP.return_value = 850
+        with patch.object(bs.os, "name", "nt"), \
+             patch.object(ctypes, "windll", windll_falso, create=True):
+            self.assertEqual(_bat_encoding(), "cp850")
+
+    def test_bat_encoding_eh_utf8_fora_do_windows(self):
+        from install.bee_setup import _bat_encoding
+
+        import install.bee_setup as bs
+        with patch.object(bs.os, "name", "posix"):
+            self.assertEqual(_bat_encoding(), "utf-8")
+
+    def test_gravar_bat_caia_para_utf8_se_oem_nao_cobrir(self):
+        """Um caractere fora da codepage OEM não pode abortar a criação do atalho."""
+        from install.bee_setup import _gravar_bat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            alvo = Path(tmp) / "t.bat"
+            with patch("install.bee_setup._bat_encoding", return_value="ascii"):
+                _gravar_bat(alvo, ["@echo off", "cd /d C:\\José"])
+            self.assertTrue(alvo.exists())
+            self.assertIn("Jos", alvo.read_text(encoding="utf-8", errors="replace"))
+
+    def test_schtasks_cita_o_repo_root(self):
+        """A tarefa de logon tem o mesmo `cd /d` — precisa da mesma citação."""
+        from install import bee_setup
+
+        capturado = {}
+
+        def falso_rodar(cmd, **kwargs):
+            capturado["cmd"] = cmd
+            return MagicMock(returncode=0, stderr="", stdout="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo com espaco"
+            repo.mkdir()
+            with patch.object(bee_setup.platform, "system", return_value="Windows"), \
+                 patch.object(bee_setup.shutil, "which", return_value="C:\\schtasks.exe"), \
+                 patch.object(bee_setup, "_rodar", falso_rodar):
+                res = bee_setup.install_bee_service(
+                    venv_py=repo / ".venv-bee" / "Scripts" / "python.exe",
+                    data_dir=Path(tmp) / "data", port=8765,
+                    ollama_url="http://localhost:11434", model="llama3.2:3b",
+                    repo_root=repo, log_info=lambda m: None, log_warn=lambda m: None)
+
+        self.assertTrue(res["ativo"])
+        tr = capturado["cmd"][capturado["cmd"].index("/TR") + 1]
+        self.assertIn('cd /d "', tr, "schtasks /TR com cd sem aspas")
+        self.assertIn("-m bees.service", tr)
+
+
+
+class TestAtalhoLinuxDesktop(unittest.TestCase):
+    """O lançador .desktop seguia a sintaxe de SHELL, não a de .desktop.
+
+    A linha era `Exec=bash -c 'cd <repo citado> && <comando citado>'`. Dois
+    problemas: a Desktop Entry Specification agrupa argumentos com ASPAS DUPLAS
+    (aspas simples são literais ali), então o ambiente dividia a linha nos
+    espaços e passava `'cd`, o caminho e `&&` como argv separados — o bash
+    executava só `'cd`. E o shlex.quote interno aninhava aspas simples dentro das
+    aspas simples externas, o que rebentava em qualquer caminho com espaço.
+
+    Corrigido usando a chave `Path=` da especificação para o diretório de
+    trabalho, e `_desktop_quote()` (aspas duplas + escape de `\\`, `"`, `$`,
+    backtick) para os argumentos do `Exec=`.
+    """
+
+    def _gerar(self, tmp, nome_repo="repo com espaco & acento"):
+        from install import bee_setup
+
+        base = Path(tmp)
+        home = base / "home" / "maria silva"
+        home.mkdir(parents=True)
+        repo = home / nome_repo
+        repo.mkdir()
+        venv = repo / ".venv-bee" / "bin" / "python"
+        with patch.dict(os.environ, {"HOME": str(home),
+                                     "XDG_DATA_HOME": str(home / ".local" / "share")}), \
+             patch.object(bee_setup.platform, "system", return_value="Linux"):
+            criados = bee_setup.create_bee_shortcuts(
+                venv_py=venv, data_dir=home / "data", port=8765,
+                ollama_url="http://localhost:11434", model="llama3.2:3b",
+                repo_root=repo, log_info=lambda m: None, log_warn=lambda m: None)
+        return criados[0], repo
+
+    def test_desktop_quote_usa_aspas_duplas(self):
+        from install.bee_setup import _desktop_quote
+
+        self.assertEqual(_desktop_quote("/a b/python"), '"/a b/python"')
+        self.assertNotIn("'", _desktop_quote("/a b/python"),
+                         "aspas simples são literais em Exec= de .desktop")
+
+    def test_desktop_quote_escapa_caracteres_especiais(self):
+        from install.bee_setup import _desktop_quote
+
+        for bruto, esperado in [
+            ('/a$b', '"/a\\$b"'),
+            ('/a`b', '"/a\\`b"'),
+            ('/a"b', '"/a\\\"b"'),
+            ('/a\\b', '"/a\\\\b"'),
+        ]:
+            self.assertEqual(_desktop_quote(bruto), esperado, bruto)
+
+    def test_desktop_quote_deixa_token_simples(self):
+        from install.bee_setup import _desktop_quote
+
+        for simples in ("-m", "bees.service", "8765", "/usr/bin/python3"):
+            self.assertEqual(_desktop_quote(simples), simples)
+
+    def test_desktop_usa_path_e_nao_bash_c(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            alvo, repo = self._gerar(tmp)
+            corpo = alvo.read_text(encoding="utf-8")
+        self.assertIn(f"Path={repo}", corpo, "Path= é a chave certa para o cwd")
+        self.assertNotIn("bash -c", corpo, "bash -c com aspas simples não funciona em .desktop")
+
+    def test_desktop_cita_caminho_com_espaco(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            alvo, repo = self._gerar(tmp)
+            corpo = alvo.read_text(encoding="utf-8")
+        linha_exec = [linha for linha in corpo.splitlines() if linha.startswith("Exec=")][0]
+        self.assertIn(f'"{repo / ".venv-bee" / "bin" / "python"}"', linha_exec,
+                      "caminho do python com espaço precisa vir entre aspas duplas")
+        self.assertIn("-m bees.service", linha_exec)
+
+    def test_desktop_nao_tem_aspas_simples_aninhadas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            alvo, _ = self._gerar(tmp)
+            corpo = alvo.read_text(encoding="utf-8")
+        self.assertNotIn("'", corpo, "nenhuma aspa simples deveria sobrar no .desktop")
+
+    def test_desktop_e_legivel_pelo_parse(self):
+        """Sanidade estrutural: seções e chaves obrigatórias."""
+        with tempfile.TemporaryDirectory() as tmp:
+            alvo, _ = self._gerar(tmp)
+            corpo = alvo.read_text(encoding="utf-8")
+        for obrigatorio in ("[Desktop Entry]", "Type=Application", "Name=",
+                            "Exec=", "Path=", "Terminal=true"):
+            self.assertIn(obrigatorio, corpo)
+
+
+
 if __name__ == '__main__':
     print("="*60)
     print("🐝 TESTES DOS INSTALADORES DA ABELHA")
     print("="*60)
     print()
-    
+
     # Executar testes
     unittest.main(verbosity=2)

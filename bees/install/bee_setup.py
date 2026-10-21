@@ -246,11 +246,14 @@ def create_bee_shortcuts(
             linhas = [
                 "@echo off",
                 "title Abelha ENXAME",
-                f"cd /d {repo_root}",
+                # Citado: sem aspas, `cd /d C:\Users\Maria Silva\enxamepublic`
+                # falha e a abelha é iniciada no diretório errado — onde
+                # `-m bees.service` não encontra o pacote `bees` nem o `core`.
+                f'cd /d {_quote_windows(repo_root)}',
                 " ".join(_quote_windows(p) for p in cmd),
                 "pause",
             ]
-            alvo.write_text("\r\n".join(linhas) + "\r\n", encoding="utf-8")
+            _gravar_bat(alvo, linhas)
         elif sistema == "Darwin":
             desktop = Path.home() / "Desktop"
             desktop.mkdir(parents=True, exist_ok=True)
@@ -266,14 +269,19 @@ def create_bee_shortcuts(
             apps = Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "applications"
             apps.mkdir(parents=True, exist_ok=True)
             alvo = apps / "enxame-bee.desktop"
-            exec_line = " ".join(shlex_quote(p) for p in cmd)
+            # Path= é a chave da especificação para o diretório de trabalho, e
+            # não sofre divisão de palavras — substitui o `bash -c 'cd ...'`
+            # anterior, cujas aspas simples aninhadas quebravam em caminho com
+            # espaço (o mesmo defeito que o `cd /d` sem aspas tinha no Windows).
+            exec_line = " ".join(_desktop_quote(parte) for parte in cmd)
             corpo = "\n".join([
                 "[Desktop Entry]",
                 "Type=Application",
                 "Version=1.0",
                 "Name=Abelha ENXAME",
                 "Comment=Inicia a abelha e a interface web",
-                f"Exec=bash -c 'cd {shlex_quote(str(repo_root))} && {exec_line}'",
+                f"Exec={exec_line}",
+                f"Path={repo_root}",
                 "Terminal=true",
                 "Categories=Utility;",
             ]) + "\n"
@@ -288,8 +296,80 @@ def create_bee_shortcuts(
     return criados
 
 
+# Metacaracteres do cmd.exe: sem aspas, qualquer um destes quebra a linha de
+# comando — `&` separa comandos, `^` escapa, `()` agrupam, `|` tubula,
+# `<`/`>` redirecionam, `,`/`;`/`=` delimitam argumentos. Dentro de aspas o
+# cmd.exe os trata como texto.
+_CMD_META = set('&^()|<>,;=" \t')
+
+
 def _quote_windows(parte: str) -> str:
-    return f'"{parte}"' if (" " in parte or "\t" in parte) else parte
+    """Cita um argumento para cmd.exe / arquivo .bat.
+
+    Citava só quando havia espaço ou tab, o que era insuficiente: um caminho como
+    `C:\\Dev\\R&D\\enxamepublic` partia o comando no `&` e o atalho executava
+    outra coisa. Espaço em caminho de usuário (`C:\\Users\\Maria Silva\\...`) é o
+    caso comum; `&`, `^` e `()` são menos comuns, mas igualmente fatais.
+    """
+    texto = str(parte)
+    if any(c in _CMD_META for c in texto):
+        return '"' + texto.replace('"', '\\"') + '"'
+    return texto
+
+
+def _bat_encoding() -> str:
+    """Codepage em que o cmd.exe lê arquivos .bat.
+
+    O cmd.exe interpreta .bat na codepage OEM do sistema (cp850 num Windows em
+    português, cp437 nos EUA), NÃO em UTF-8. Gravar UTF-8 corrompe caminho com
+    acento na hora de executar: `C:\\Users\\José\\...` é lido como
+    `C:\\Users\\JosÃ©\\...` e o atalho morre com "O sistema não pode encontrar o
+    caminho especificado" — um atalho quebrado justamente para quem tem nome com
+    acento.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            cp = ctypes.windll.kernel32.GetOEMCP()
+            if cp:
+                return f"cp{cp}"
+        except Exception:
+            pass
+    return "utf-8"
+
+
+def _gravar_bat(alvo: Path, linhas: list[str]) -> None:
+    """Grava um .bat com CRLF na codepage certa, com UTF-8 como último recurso."""
+    texto = "\r\n".join(linhas) + "\r\n"
+    try:
+        alvo.write_text(texto, encoding=_bat_encoding())
+    except UnicodeEncodeError:
+        # Caractere fora da codepage OEM. UTF-8 ainda vai exibir o caminho errado,
+        # mas o arquivo existe e o resto do .bat funciona — melhor que abortar.
+        alvo.write_text(texto, encoding="utf-8")
+
+
+# Caracteres reservados pela Desktop Entry Specification no valor de `Exec=`.
+_DESKTOP_RESERVADOS = set(" \t\n\\\"'`><~|&;$*?#()")
+
+
+def _desktop_quote(parte: str) -> str:
+    """Cita um argumento para a chave `Exec=` de um arquivo .desktop.
+
+    NÃO é shlex.quote. A especificação de entrada de área de trabalho agrupa
+    argumentos com ASPAS DUPLAS — aspas simples são caracteres literais ali. Por
+    isso `Exec=bash -c 'cd ...'` nunca funcionou como parecia: o ambiente
+    dividia a linha nos espaços e passava `'cd`, o caminho e `&&` como argv
+    separados, então o bash executava só `'cd`. Dentro das aspas duplas a
+    especificação exige escapar `\\`, `"`, `$` e `` ` ``.
+    """
+    texto = str(parte)
+    if not any(c in _DESKTOP_RESERVADOS for c in texto):
+        return texto
+    escapado = (texto.replace("\\", "\\\\").replace('"', '\\"')
+                     .replace("$", "\\$").replace("`", "\\`"))
+    return f'"{escapado}"'
 
 
 def shlex_quote(parte: str) -> str:
@@ -408,7 +488,8 @@ def install_bee_service(
             if not shutil.which("schtasks"):
                 log_warn("  schtasks indisponível; serviço não criado")
                 return resultado
-            executar = f"cmd /c cd /d {repo_root} && " + " ".join(_quote_windows(p) for p in cmd)
+            executar = (f'cmd /c cd /d {_quote_windows(repo_root)} && '
+                        + " ".join(_quote_windows(p) for p in cmd))
             proc = _rodar([
                 "schtasks", "/Create", "/TN", "EnxameBee",
                 "/TR", executar, "/SC", "ONLOGON", "/RL", "LIMITED", "/F",
