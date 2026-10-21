@@ -681,6 +681,78 @@ class TestOllamaVerificado(unittest.TestCase):
 
 
 
+class TestModelAvailability(unittest.TestCase):
+    """`ollama pull` sair 0 não é prova de que o modelo ficou disponível.
+
+    pull_model() devolvia True assim que o subprocesso terminava sem erro, e
+    main() fazia `if pull_model(...)` SEM else — então um download fracassado
+    (disco cheio, tag inexistente, daemon que caiu no meio) seguia em silêncio
+    até o PASSO 7, que imprimia "Abelha instalada e configurada!" com o nome do
+    modelo. A abelha subia sem LLM e não respondia nada: o relato original de
+    "instalei e nada funciona".
+    """
+
+    def test_reconhece_com_e_sem_tag(self):
+        from install.bee_installer import model_available
+
+        self.assertTrue(model_available("llama3.2:3b", ["llama3.2:3b"]))
+        self.assertTrue(model_available("llama3.2", ["llama3.2:3b"]),
+                        "config pode guardar o nome sem a tag")
+        self.assertTrue(model_available("LLAMA3.2:3B", ["llama3.2:3b"]))
+
+    def test_modelo_desconhecido_retorna_false(self):
+        from install.bee_installer import model_available
+
+        self.assertFalse(model_available("phi3:2.7b", ["llama3.2:3b"]))
+        self.assertFalse(model_available("", []))
+        self.assertFalse(model_available("x", None))
+
+    def test_pull_ja_presente_nao_baixa_de_novo(self):
+        from install.bee_installer import pull_model
+
+        def explodir(*a, **k):
+            raise AssertionError("não deveria chamar subprocesso com o modelo já presente")
+
+        with patch("install.bee_installer.subprocess.run", explodir):
+            self.assertTrue(pull_model("llama3.2:3b", ["llama3.2:3b"]))
+
+    def test_pull_que_sai_zero_sem_modelo_eh_falha(self):
+        """O caso que passava como sucesso: returncode 0, modelo ausente."""
+        from install.bee_installer import pull_model
+
+        falso_sucesso = MagicMock(returncode=0)
+        with patch("install.bee_installer.subprocess.run", return_value=falso_sucesso), \
+             patch("install.bee_installer.detect_ollama", return_value={"models": []}):
+            self.assertFalse(pull_model("phi3:2.7b", []),
+                             "pull saiu 0 mas o modelo não está em 'ollama list'")
+
+    def test_pull_confirmado_na_lista_eh_sucesso(self):
+        from install.bee_installer import pull_model
+
+        ok = MagicMock(returncode=0)
+        with patch("install.bee_installer.subprocess.run", return_value=ok), \
+             patch("install.bee_installer.detect_ollama",
+                   return_value={"models": ["phi3:2.7b"]}):
+            self.assertTrue(pull_model("phi3:2.7b", []))
+
+    def test_passo_7_diz_a_verdade_sobre_o_modelo(self):
+        """O resumo final tem que refletir o estado real, não o nome escolhido."""
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertIn("if modelo_ok:", codigo)
+        self.assertIn("NÃO disponível no Ollama", codigo)
+        self.assertIn("Abelha instalada, mas INCOMPLETA", codigo)
+
+    def test_falha_de_download_sai_com_codigo_1(self):
+        """Download TENTADO e fracassado = instalação incompleta = exit 1.
+        --skip-model é escolha de quem chamou, então permanece aviso/exit 0."""
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertIn("if not modelo_ok and not args.skip_model:", codigo)
+        pos_erro = codigo.index("Instalação INCOMPLETA: o modelo não foi baixado")
+        pos_saida = codigo.index("sys.exit(1)", pos_erro)
+        self.assertGreater(pos_saida, pos_erro)
+
+
+
 if __name__ == '__main__':
     print("="*60)
     print("🐝 TESTES DOS INSTALADORES DA ABELHA")

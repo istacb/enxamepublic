@@ -1431,8 +1431,53 @@ def pull_model(model_name, existing_models):
         )
         return False
 
-    print_success(f"Modelo '{model_name}' baixado")
+    # `ollama pull` sair 0 não é prova de que o modelo ficou disponível: disco
+    # cheio, tag inexistente aceita parcialmente ou daemon reiniciado no meio
+    # deixam a abelha sem modelo nenhum. Confirma na lista real antes de dizer
+    # que baixou — mesmo padrão aplicado ao Ollama em ollama_verificado().
+    if not model_available(model_name):
+        print_error(
+            f"'ollama pull {model_name}' terminou sem erro, mas o modelo não "
+            f"aparece em 'ollama list'. Sem modelo a abelha não responde nada."
+        )
+        cprint(
+            "   Verifique espaço em disco e rode manualmente:\n"
+            f"     ollama pull {model_name}\n"
+            "     ollama list",
+            Colors.WARNING,
+        )
+        return False
+
+    print_success(f"Modelo '{model_name}' baixado e presente em 'ollama list'")
     return True
+
+
+def model_available(model_name, known_models=None):
+    """True se o modelo está de fato disponível no Ollama local.
+
+    Compara sem exigir a tag: `ollama list` mostra "llama3.2:3b" enquanto a
+    configuração pode guardar só "llama3.2". Se `known_models` não for passado,
+    consulta `ollama list` na hora.
+    """
+    if not model_name:
+        return False
+    if DRY_RUN:
+        return _dry(f"conferir se o modelo {model_name} está disponível", True)
+
+    if known_models is None:
+        try:
+            known_models = detect_ollama()["models"]
+        except Exception:
+            return False
+
+    def base(nome):
+        return str(nome).split(":", 1)[0].strip().lower()
+
+    alvo = model_name.strip().lower()
+    for m in known_models or []:
+        if str(m).strip().lower() == alvo or base(m) == base(alvo):
+            return True
+    return False
 
 
 def parse_args():
@@ -1584,10 +1629,22 @@ def main():
         recommended_model = recommend_model(hw_detection, existing_models)
     print_success(f"Modelo escolhido: {recommended_model}")
 
+    # `modelo_ok` existe porque o PASSO 7 imprimia "Abelha instalada e
+    # configurada!" com o nome do modelo mesmo quando o download tinha falhado:
+    # o `if pull_model(...)` não tinha else, então a falha seguia em silêncio
+    # até o resumo final. Sem modelo, a abelha sobe mas não responde nada —
+    # exatamente o "instalei e nada funciona".
     if args.skip_model:
         print_warning("--skip-model informado: nenhum modelo será baixado")
+        modelo_ok = model_available(recommended_model, existing_models)
+        if not modelo_ok:
+            print_warning(
+                f"'{recommended_model}' não está no Ollama; a abelha vai subir "
+                "sem LLM até você baixá-lo."
+            )
     else:
-        if pull_model(recommended_model, existing_models):
+        modelo_ok = pull_model(recommended_model, existing_models)
+        if modelo_ok:
             existing_models = list(dict.fromkeys([*(existing_models or []), recommended_model]))
 
     # 5. Instalar dependências Python
@@ -1661,6 +1718,11 @@ def main():
     cprint("PASSO 7: Resumo Final", Colors.OKBLUE)
     if DRY_RUN:
         print_warning("DRY-RUN: nada foi instalado nem gravado.")
+    elif not modelo_ok:
+        # Instalação parcial: os passos de ambiente/configuração funcionaram,
+        # mas sem modelo a abelha não responde. Dizer "instalada e configurada"
+        # aqui seria o falso sucesso que gerou o relato original.
+        print_warning("Abelha instalada, mas INCOMPLETA: falta o modelo.")
     else:
         print_success("Abelha instalada e configurada!")
     print()
@@ -1668,7 +1730,10 @@ def main():
     print(f"  nome da abelha : {resumo['node_id']}")
     print(f"  data-dir       : {resumo['data_dir']}")
     print(f"  porta          : {resumo['port']}")
-    print(f"  modelo         : {resumo['model']}")
+    if modelo_ok:
+        print(f"  modelo         : {resumo['model']} (disponível no Ollama)")
+    else:
+        print(f"  modelo         : {resumo['model']} — NÃO disponível no Ollama")
     print(f"  ollama         : {resumo['ollama_url']}")
     if resumo["cluster"] is True:
         print("  enxame         : participa (cluster.enabled=true)")
@@ -1723,6 +1788,27 @@ def main():
     print("Uma abelha por máquina: para rodar outra nesta mesma máquina, repita a")
     print("instalação com --data-dir e --bee-port diferentes. Cada data-dir tem")
     print("identity.json, config.json, documentos/ e o próprio índice RAG.")
+
+    # Se o download do modelo foi TENTADO e falhou, a instalação não terminou.
+    # main() caía até aqui sem `return`, então o processo saía 0 mesmo com o
+    # PASSO 7 avisando "INCOMPLETA" — o mesmo falso sucesso corrigido no
+    # PASSO 2, só que medido pelo código de saída, que é o que um script ou o
+    # usuário olham. Com --skip-model a ausência é escolha de quem chamou, então
+    # permanece como aviso e sai 0.
+    if not modelo_ok and not args.skip_model:
+        print()
+        print_error(
+            "Instalação INCOMPLETA: o modelo não foi baixado, então a abelha "
+            "sobe mas não responde por LLM."
+        )
+        cprint(
+            "   O resto está pronto. Corrija o motivo indicado acima "
+            "(tag do modelo, espaço em disco, Ollama parado) e rode o mesmo\n"
+            "   comando de novo: ele pula o que já existe.\n"
+            "   Para instalar sem modelo de propósito, use --skip-model.",
+            Colors.WARNING,
+        )
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
