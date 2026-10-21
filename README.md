@@ -289,9 +289,11 @@ python -m pytest bees/install/
 cd bees && python -m pytest
 ```
 
-> ⚠️ Correções nesta seção: `python -m pytest test/` não executa nada
-> (`test/` só contém fixtures, em `test/test_files/`), e `test/kernel/` e
-> `test/runtime/` não existem. `python -m juiz.validate --all` também não
+> ⚠️ Correções nesta seção: os testes ficam em `bees/tests/` e
+> `bees/install/test_installers.py` — rode `python -m pytest bees/`. O diretório
+> `test/` que existia na raiz continha apenas um arquivo de fixture vazio
+> (`test/test_files/image_gen/sd-empty.pt`) e foi removido; `test/kernel/` e
+> `test/runtime/` nunca existiram. `python -m juiz.validate --all` também não
 > existe — não há validador de conformidade EIP no repositório; a menção a
 > "conformidade EIP" em `enxame_evolved/sprint.py` é apenas texto descritivo
 > do planejador de sprints.

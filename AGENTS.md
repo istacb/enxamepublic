@@ -118,11 +118,21 @@ Config: `bees/pyproject.toml` — ruff line-length=100, target-version=py310; my
 ## Key Conventions
 
 - **Config**: `.env` files loaded by `run_node.py` — `ENXAME_NODE_ROLE`, `ENXAME_NODE_PORT`, `ENXAME_NODE_ID`
-- **Bee Config**: `~/.enxame/bee/config.json` — `offline_mode`, `cluster.enabled`, `embedding_model`, `allow_web`
+- **Bee Config**: `<data-dir>/config.json`, where `<data-dir>` is what
+  `bees.config.get_default_data_dir()` returns (`~/.local/share/enxame/bee`
+  on Linux, `%LOCALAPPDATA%\enxame\bee` on Windows,
+  `~/Library/Application Support/enxame/bee` on macOS) unless overridden by
+  `--data-dir` or `BEE_DATA_DIR` — keys include `offline_mode`,
+  `cluster.enabled`, `embedding_model`, `allow_web`
 - **mDNS Discovery**: `core.discovery.mdns_discovery.NodeAnnouncer` for node announcement
 - **Bee Discovery**: `bees.discovery.BeeDiscoveryService` for peer discovery with capabilities
 - **Async**: Use `asyncio` throughout Python services
-- **Dependencies**: Shared base in root `requirements.txt`; subdirs extend with `-r ../requirements.txt`
+- **Dependencies**: the installer owns them (`PYTHON_REQUIREMENTS` in
+  `bees/install/bee_installer.py`, installed into `.venv-bee`). For manual
+  setups use `bees/requirements.txt` or `pip install -e bees`. There is no
+  root `requirements.txt` — the one that existed listed only legacy-stack
+  packages (fastapi/uvicorn/typer) and omitted `aiohttp` and `cryptography`,
+  so following it produced a bee that could not even import.
 - **Specs**: All architectural changes require EIP in `spec/en/eip/` before implementation
 
 ---

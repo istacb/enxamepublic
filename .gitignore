@@ -16,3 +16,5 @@ dist/
 
 # Criado por guardian/Guardian.__init__ relativo ao CWD
 quarantine/
+*.pyc
+*.pyo
