@@ -899,6 +899,124 @@ class TestDependenciasObrigatorias(unittest.TestCase):
 
 
 
+class TestSmokeTestBee(unittest.TestCase):
+    """Instalado tem que significar FUNCIONANDO.
+
+    Todos os outros passos conferem pré-condições (Python, Ollama, modelo,
+    imports, arquivos gravados) — e nenhuma delas garante que o serviço sobe.
+    Esta é a verificação que fecha a conta: sobe a abelha de verdade e confirma
+    que /health responde. Retorna True/False/None, e main() encerra com código 1
+    quando é False.
+
+    Os testes abaixo usam mocks: nenhum abre porta nem dispara processo real.
+    """
+
+    def test_porta_ocupada_detecta_listener(self):
+        import socket
+        from install.bee_installer import porta_ocupada
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            srv.bind(("127.0.0.1", 0)); srv.listen(1)
+            ocupada = srv.getsockname()[1]
+            self.assertTrue(porta_ocupada(ocupada))
+            self.assertFalse(porta_ocupada(1), "porta 1 não deveria ter listener")
+        finally:
+            srv.close()
+
+    def test_health_ok_false_sem_servidor(self):
+        from install.bee_installer import bee_health_ok
+
+        self.assertFalse(bee_health_ok(1, timeout=1))
+
+    def test_pula_quando_a_porta_ja_esta_em_uso(self):
+        """Abelha já rodando não é falha de instalação — e subir uma segunda só
+        produziria 'Address already in use'."""
+        from install.bee_installer import smoke_test_bee
+
+        def nao_deveria(*a, **k):
+            raise AssertionError("não deveria disparar processo com a porta ocupada")
+
+        with patch("install.bee_installer.porta_ocupada", return_value=True), \
+             patch("install.bee_installer.subprocess.Popen", nao_deveria):
+            self.assertIsNone(smoke_test_bee("/py", "/dd", 8765, timeout=5))
+
+    def test_retorna_false_quando_a_abelha_morre(self):
+        from install.bee_installer import smoke_test_bee
+
+        proc = MagicMock()
+        proc.poll.return_value = 1          # morreu imediatamente
+        proc.returncode = 1
+        with patch("install.bee_installer.porta_ocupada", return_value=False), \
+             patch("install.bee_installer.subprocess.Popen", return_value=proc), \
+             patch("install.bee_installer.bee_health_ok", return_value=False), \
+             patch("install.bee_installer.time.sleep", lambda *_: None):
+            resultado = smoke_test_bee("/py", "/dd", 8765, timeout=1)
+
+        self.assertIs(resultado, False)
+
+    def test_retorna_true_quando_health_responde(self):
+        from install.bee_installer import smoke_test_bee
+
+        proc = MagicMock()
+        proc.poll.return_value = None       # viva
+        with patch("install.bee_installer.porta_ocupada", return_value=False), \
+             patch("install.bee_installer.subprocess.Popen", return_value=proc), \
+             patch("install.bee_installer.bee_health_ok", return_value=True), \
+             patch("install.bee_installer.time.sleep", lambda *_: None):
+            resultado = smoke_test_bee("/py", "/dd", 8765, timeout=5)
+
+        self.assertIs(resultado, True)
+        proc.terminate.assert_called()      # nunca deixa órfão na máquina
+
+    def test_filho_e_encerrado_mesmo_com_health_ok(self):
+        """O finally tem que rodar em TODO caminho de sucesso, senão o instalador
+        deixa uma abelha rodando sem o usuário saber."""
+        from install.bee_installer import smoke_test_bee
+
+        proc = MagicMock()
+        proc.poll.return_value = None
+        with patch("install.bee_installer.porta_ocupada", return_value=False), \
+             patch("install.bee_installer.subprocess.Popen", return_value=proc), \
+             patch("install.bee_installer.bee_health_ok", return_value=True):
+            smoke_test_bee("/py", "/dd", 8765, timeout=5)
+
+        self.assertTrue(proc.terminate.called or proc.kill.called)
+
+    def test_saida_vai_para_arquivo_e_nao_para_pipe(self):
+        """Com PIPE o buffer enche, o filho bloqueia escrevendo log e o teste
+        daria timeout FALSO. Tem que ser arquivo."""
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        inicio = codigo.index("def smoke_test_bee(")
+        corpo = codigo[inicio:codigo.index("\ndef ", inicio + 10)]
+        self.assertIn("tempfile.mkstemp", corpo)
+        self.assertNotIn("stdout=subprocess.PIPE", corpo)
+
+    def test_flag_para_pular_existe(self):
+        """parse_args() lê sys.argv (não recebe lista), então o teste patcheia
+        sys.argv em vez de passar argumento."""
+        from install.bee_installer import parse_args
+
+        with patch.object(sys, "argv", ["install-bee-smart.py", "--auto", "--no-smoke-test"]):
+            self.assertTrue(parse_args().no_smoke_test)
+        with patch.object(sys, "argv", ["install-bee-smart.py", "--auto"]):
+            self.assertFalse(parse_args().no_smoke_test)
+
+    def test_falha_na_subida_sai_com_codigo_1(self):
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertIn("if smoke is False:", codigo)
+        pos = codigo.index("if smoke is False:")
+        self.assertIn("sys.exit(1)", codigo[pos:pos + 900])
+
+    def test_passos_foram_renumerados(self):
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertIn("total_steps = 8", codigo)
+        self.assertIn("PASSO 7: Verificação - a abelha sobe?", codigo)
+        self.assertIn("PASSO 8: Resumo Final", codigo)
+
+
+
 if __name__ == '__main__':
     print("="*60)
     print("🐝 TESTES DOS INSTALADORES DA ABELHA")

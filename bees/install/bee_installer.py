@@ -1180,6 +1180,120 @@ def venv_python(venv_path):
     return venv_path / "bin" / "python"
 
 
+def porta_ocupada(port, host="127.0.0.1"):
+    """True se já existe algo atendendo nesta porta."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as so:
+            so.settimeout(1.0)
+            return so.connect_ex((host, int(port))) == 0
+    except OSError:
+        return False
+
+
+def bee_health_ok(port, timeout=3):
+    """True se GET /health da abelha responde 200."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def smoke_test_bee(venv_py, data_dir, port, repo_root=None, timeout=90):
+    """Sobe a abelha DE VERDADE e confirma que ela responde /health.
+
+    É a única verificação que prova o que interessa: instalado = funciona. Tudo
+    antes disto confere pré-condições (Python, Ollama, modelo, imports, arquivos
+    de configuração), e nenhuma delas garante que o serviço sobe.
+
+    Cuidados para que o teste não piore a instalação:
+      - a saída do processo vai para um ARQUIVO, não para PIPE: com PIPE o buffer
+        enche, o filho bloqueia escrevendo log e o teste daria timeout FALSO;
+      - se a porta já está ocupada, PULA: uma abelha já rodando não é falha de
+        instalação, e subir uma segunda só produziria "Address already in use";
+      - o filho é SEMPRE encerrado no finally (terminate e, se insistir, kill),
+        então o instalador não deixa abelha órfã na máquina do usuário;
+      - há prazo duro, então nunca trava o instalador.
+
+    Retorna True (subiu e respondeu), False (falhou) ou None (pulou).
+    """
+    if DRY_RUN:
+        # None (e não True): em dry-run nada subiu, então o resumo tem que dizer
+        # "pulada" em vez de afirmar que a abelha respondeu /health. None é
+        # seguro aqui porque main() só encerra com `smoke is False`.
+        return _dry("subir a abelha e conferir /health", None)
+
+    raiz = Path(repo_root or REPO_ROOT)
+    if porta_ocupada(port):
+        print_warning(
+            f"Porta {port} já está em uso - pulando a verificação de subida "
+            "(se já existe uma abelha rodando aqui, isto não é uma falha)."
+        )
+        return None
+
+    cmd = [str(venv_py), "-m", "bees.service", "--host", "127.0.0.1",
+           "--port", str(port), "--data-dir", str(data_dir), "--log-level", "INFO"]
+    cprint("  subindo a abelha para conferir...", Colors.OKCYAN)
+    print(f"    {' '.join(cmd)}   (cwd={raiz})")
+
+    log_fd, log_path = tempfile.mkstemp(suffix=".log", prefix="bee-smoke-")
+    os.close(log_fd)
+    proc = None
+    try:
+        with open(log_path, "wb") as saida:
+            kwargs = {"cwd": str(raiz), "stdout": saida, "stderr": subprocess.STDOUT,
+                      "stdin": subprocess.DEVNULL}
+            if os.name == "nt":
+                # CREATE_NEW_PROCESS_GROUP: o filho não recebe Ctrl+C do console
+                # junto com o instalador, e o terminate() atinge só ele.
+                kwargs["creationflags"] = 0x00000200
+            else:
+                kwargs["start_new_session"] = True
+            proc = subprocess.Popen(cmd, **kwargs)
+
+        prazo = time.time() + timeout
+        while time.time() < prazo:
+            if proc.poll() is not None:
+                break                      # morreu sozinho: falha, não timeout
+            if bee_health_ok(port):
+                return True
+            time.sleep(1.5)
+
+        if bee_health_ok(port):
+            return True
+
+        motivo = (f"saiu com código {proc.returncode}"
+                  if proc.poll() is not None
+                  else f"não respondeu /health em {timeout}s")
+        print_error(f"A abelha NÃO subiu: {motivo}.")
+        try:
+            conteudo = Path(log_path).read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            conteudo = ""
+        if conteudo:
+            print("  --- últimas linhas da saída da abelha ---")
+            for linha in conteudo[-2500:].splitlines():
+                print(f"  {linha}")
+            print("  --- fim ---")
+        return False
+    except Exception as e:
+        print_error(f"Não consegui executar a verificação de subida: {e}")
+        return False
+    finally:
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+        Path(log_path).unlink(missing_ok=True)
+
+
 def verify_imports(py, repo_root=None):
     """Confere que o serviço importa DE VERDADE com o Python do venv.
 
@@ -1558,6 +1672,10 @@ def parse_args():
         help="Remove dashboard, venv e arquivos deixados por versões anteriores",
     )
     parser.add_argument(
+        "--no-smoke-test", action="store_true",
+        help="Não subir a abelha no fim para conferir se ela responde /health",
+    )
+    parser.add_argument(
         "--bee-port", type=int, default=8765,
         help="Porta do bee standalone (aiohttp) referenciada no dashboard (default: 8765)",
     )
@@ -1626,7 +1744,7 @@ def main():
 
     print_header()
 
-    total_steps = 7
+    total_steps = 8
 
     # 1. Verificar Python
     cprint("PASSO 1: Verificação do Python", Colors.OKBLUE)
@@ -1773,8 +1891,22 @@ def main():
         bee_port=args.bee_port,
     )
 
-    # 7. Resumo final
-    cprint("PASSO 7: Resumo Final", Colors.OKBLUE)
+    # 7. Verificação final: a abelha sobe?
+    cprint("PASSO 7: Verificação - a abelha sobe?", Colors.OKBLUE)
+    if args.no_smoke_test:
+        print_warning("--no-smoke-test informado: pulando a subida de verificação")
+        smoke = None
+    else:
+        smoke = smoke_test_bee(venv_py, data_dir, args.bee_port, repo_root=REPO_ROOT)
+        if smoke is True:
+            print_success("A abelha subiu e respondeu /health - instalação verificada")
+        elif smoke is None:
+            print_warning("Verificação de subida pulada")
+        else:
+            print_error("A abelha não subiu. A instalação NÃO está verificada.")
+
+    # 8. Resumo final
+    cprint("PASSO 8: Resumo Final", Colors.OKBLUE)
     if DRY_RUN:
         print_warning("DRY-RUN: nada foi instalado nem gravado.")
     elif not modelo_ok:
@@ -1789,6 +1921,12 @@ def main():
     print(f"  nome da abelha : {resumo['node_id']}")
     print(f"  data-dir       : {resumo['data_dir']}")
     print(f"  porta          : {resumo['port']}")
+    if smoke is True:
+        print("  verificação    : a abelha subiu e respondeu /health")
+    elif smoke is None:
+        print("  verificação    : pulada (porta em uso, --no-smoke-test ou dry-run)")
+    else:
+        print("  verificação    : FALHOU - a abelha não subiu")
     if modelo_ok:
         print(f"  modelo         : {resumo['model']} (disponível no Ollama)")
     else:
@@ -1854,6 +1992,20 @@ def main():
     # PASSO 2, só que medido pelo código de saída, que é o que um script ou o
     # usuário olham. Com --skip-model a ausência é escolha de quem chamou, então
     # permanece como aviso e sai 0.
+    if smoke is False:
+        print()
+        print_error(
+            "Instalação NÃO verificada: a abelha não subiu. O ambiente e a "
+            "configuração foram gravados, mas algo impede o serviço de iniciar."
+        )
+        cprint(
+            "   A saída da abelha está logo acima. O comando para reproduzir é o\n"
+            "   mesmo do resumo; rode-o à mão para ver o erro completo.\n"
+            "   Para pular esta verificação: --no-smoke-test.",
+            Colors.WARNING,
+        )
+        sys.exit(1)
+
     if not modelo_ok and not args.skip_model:
         print()
         print_error(
