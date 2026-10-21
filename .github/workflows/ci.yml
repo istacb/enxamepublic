@@ -54,7 +54,9 @@ jobs:
       - name: Run tests
         run: |
           cd bees
-          python -m pytest tests/ -v --tb=short
+          # install/ junto: os testes dos instaladores existiam mas nunca eram
+          # executados, então falhas neles passavam despercebidas.
+          python -m pytest tests/ install/ -v --tb=short
       
       - name: Run linter (ruff)
         run: |

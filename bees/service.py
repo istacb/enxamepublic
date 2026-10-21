@@ -10,23 +10,42 @@ Este é o ponto de entrada principal para executar uma Abelha standalone.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
+import json
 import logging
+import os
+import secrets
 import signal
 import sys
+import time
 from contextlib import suppress
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from aiohttp import web
+
+from core.exp.http import build_auth_headers
 from core.exp.security import EXPSecurity
+
+# O guardião é opcional em runtime: se o pacote não for importável a abelha
+# ainda precisa servir consultas, mas registra em WARNING que está sem
+# inspeção de segurança — nunca silenciosamente.
+try:
+    from guardian import Guardian, GuardianPatrol
+except ImportError:  # pragma: no cover - depende do layout de instalação
+    Guardian = None
+    GuardianPatrol = None
 
 from .protocol.envelope import BeeEnvelope
 from .protocol.handler import BeeProtocolHandler
 from .protocol.messages import BeeMessageType, BeeState, BeeVisionRequest, BeeVisionResponse, BeeStateChange, BeePeerLost
 from .librarian import LocalBeeLibrarian
 from .memory import BeeMemory
-from .discovery import BeeDiscoveryService
+from .discovery import BeeDiscoveryService, DiscoveredPeer
 from .config import BeeConfig, load_config
 from .capabilities.discovery import discover_capabilities
 from .capabilities.selector import recommend_model
@@ -37,6 +56,7 @@ from .cluster import (
     load_cluster_state,
     save_cluster_state,
     elect_roles,
+    score_peer,
     InternetGate,
     InternetPurpose,
     GlobalIndex,
@@ -50,6 +70,31 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("bee")
+
+
+# Tempo de vida do token de sessão do UI (mesma política que o antigo
+# juiz/app.py usava; aquele módulo foi removido junto com a stack antiga,
+# e este contrato passou a ser o único).
+UI_SESSION_TTL = timedelta(minutes=30)
+
+
+@dataclass
+class UiTask:
+    """Tarefa de chat aberta pelo UI web.
+
+    Espelha o contrato que ``web/app.js`` consome: ele abre um EventSource em
+    ``/api/chat/stream/{task_id}`` e espera eventos ``data: {"event": ...}``,
+    tratando ``final`` (usa ``content``) e ``error`` (usa ``message``).
+    """
+
+    task_id: str
+    prompt: str
+    status: str = "pending"  # pending | running | completed | failed | cancelled
+    events: list[dict[str, Any]] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+
+    def emit(self, event: str, **payload: Any) -> None:
+        self.events.append({"event": event, **payload})
 
 
 class BeeService:
@@ -71,19 +116,58 @@ class BeeService:
         self._discovery: BeeDiscoveryService | None = None
 
         self._running = False
+        self._stopping = False
         self._tasks: list[asyncio.Task] = []
+
+        # Servidor HTTP (precisam existir desde o __init__: stop() é chamado
+        # pelo finally de main() mesmo quando start() falha no meio, e antes
+        # eles só eram criados no passo 8 de start() -> AttributeError no
+        # shutdown mascarava o erro real do startup.)
+        self._own_http_server = False
+        self._http_runner: Any = None
+
+        # Interface web (web/): sessões e tarefas de chat. Um bee standalone
+        # faz tudo que o enxame faz em uma máquina só, então precisa servir o
+        # MESMO contrato de UI que o juiz expõe — senão a interface, que existe
+        # justamente para quem não usa terminal, só funcionava no enxame.
+        self._ui_sessions: dict[str, datetime] = {}
+        self._ui_tasks: dict[str, UiTask] = {}
+        self._ui_paused: set[str] = set()
+
+        # Guarda: a rotina de segurança precisa rodar em QUEM RECEBE O PROMPT e
+        # em QUEM FAZ A CURADORIA. Antes só o juiz inspecionava (o antigo juiz/app.py
+        # chama detect_injection) e a abelha — que em modo standalone é justamente
+        # quem recebe o prompt e quem cura a resposta — não aplicava nenhuma.
+        self._guardian: Any = None
+        self._guardian_patrol: Any = None
+        self._patrol_task: "asyncio.Task | None" = None
+
+        # Formação dinâmica do enxame: peers que aparecem DEPOIS do boot.
+        self._cluster_reelect_task: "asyncio.Task | None" = None
+        self._cluster_reelect_lock = asyncio.Lock()
+        self._guardian_alerts: list[dict[str, Any]] = []
+        self._guard_stats: dict[str, int] = {
+            "prompts_inspecionados": 0,
+            "prompts_bloqueados": 0,
+            "respostas_inspecionadas": 0,
+            "respostas_retidas": 0,
+        }
 
         self._register_protocol_handlers()
 
         # Capacidades descobertas (BEE-0003)
         self._capabilities: dict[str, Any] | None = None
 
-        # Cluster (EIP-0009)
+        # Cluster — eleição de papéis (bees/spec/EIP-0009-cluster-role-election.md)
         self.cluster_state: ClusterState | None = None
         self.cluster_role: ClusterRole | None = None
         self._cluster_monitor: ClusterMonitor | None = None
         self._internet_gate: InternetGate | None = None
         self._global_index: GlobalIndex | None = None
+        # True quando há <3 peers: a abelha faz tudo sozinha (juiz +
+        # bibliotecária + guarda na mesma máquina). Usado pelo UI para
+        # desenhá-la como rainha em vez de worker.
+        self._standalone = True
 
     def _register_protocol_handlers(self) -> None:
         """Registra handlers para mensagens do protocolo BEE."""
@@ -183,10 +267,19 @@ class BeeService:
         logger.info("Descoberta mDNS iniciada")
 
         # 6. Anunciar presença via mDNS usando BeeDiscoveryService (não NodeAnnouncer)
-        self._discovery.start_announcement()
-        logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
+        #
+        # Quem desativou o cluster NÃO se anuncia. As outras abelhas contam os
+        # anúncios para medir o tamanho do enxame e distribuem papéis entre quem
+        # aparece; uma abelha opt-out visível seria contada e poderia ser eleita
+        # juiz sem nunca agir — um enxame com líder ausente. Continua descobrindo
+        # e servindo a própria interface, apenas invisível para eleição.
+        if self._cluster_enabled():
+            await self._discovery.start_announcement()
+            logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
+        else:
+            logger.info("cluster.enabled=false: fora do enxame, não anunciando no mDNS")
 
-        # 7. Inicializar Cluster (EIP-0009) - aguardar descoberta inicial
+        # 7. Inicializar Cluster (EIP-0009: eleição de papéis) - aguardar descoberta inicial
         await self._initialize_cluster()
 
         # 8. Servidor HTTP
@@ -200,22 +293,57 @@ class BeeService:
                 await self._start_http_server()
                 self._own_http_server = True
 
-        # 9. Iniciar loops de background
+        # 9. Guarda: inspeção de prompts/respostas + ronda contínua.
+        # Precisa vir ANTES dos loops de background porque a ronda é uma task
+        # como as outras e o stop() cancela tudo que estiver em self._tasks.
+        self._init_guardian()
+
+        # 10. Iniciar loops de background
         self._running = True
         self._tasks = [
             asyncio.create_task(self._heartbeat_loop()),
             asyncio.create_task(self._peer_maintenance_loop()),
             asyncio.create_task(self._load_metrics_loop()),
         ]
+        patrol_task = self._start_guardian_patrol()
+        if patrol_task is not None:
+            self._tasks.append(patrol_task)
 
         self.state = BeeState.RUNNING
         logger.info(f"Abelha {self.node_id} ONLINE - Estado: RUNNING")
 
     async def stop(self) -> None:
-        """Finaliza graceful da Abelha."""
+        """Finaliza graceful da Abelha. Idempotente.
+
+        `main()` registra um handler de sinal que agenda `bee.stop()` e, ao
+        final, chama `await bee.stop()` outra vez. As duas chamadas corriam
+        juntas: ambas passavam no `if self._http_runner` antes de qualquer uma
+        colocá-lo em None, e o segundo `cleanup()` encontrava o servidor já
+        desligado — AttributeError: 'NoneType' object has no attribute
+        'pre_shutdown'. O processo morria com traceback e código diferente de
+        zero, o que num serviço systemd/Windows (criado pelo instalador)
+        aparece como "failed".
+        """
+        if self._stopping:
+            logger.debug(f"stop() já em andamento em {self.node_id}; ignorando duplicata")
+            return
+        self._stopping = True
+
         logger.info(f"Parando Abelha {self.node_id}...")
         self.state = BeeState.STOPPING
         self._running = False
+
+        # Parar a ronda do guardião (o cancelamento das tasks vem logo abaixo)
+        if self._guardian_patrol:
+            self._guardian_patrol.stop()
+            self._guardian_patrol = None
+
+        # Cancelar reavaliação de enxame pendente
+        if self._cluster_reelect_task is not None:
+            self._cluster_reelect_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._cluster_reelect_task
+            self._cluster_reelect_task = None
 
         # Notificar peers sobre parada
         if self._handler:
@@ -243,12 +371,17 @@ class BeeService:
 
         # Parar servidor HTTP próprio (se iniciamos)
         if self._own_http_server and self._http_runner:
-            await self._http_runner.cleanup()
-            self._http_runner = None
+            runner, self._http_runner = self._http_runner, None
+            try:
+                await runner.cleanup()
+            except Exception as exc:
+                # Nada aqui pode impedir o resto do desligamento (mDNS,
+                # bibliotecário, memória) de acontecer.
+                logger.warning(f"Falha ao encerrar o servidor HTTP: {exc}")
 
         # Parar anúncio mDNS
         if self._discovery:
-            self._discovery.stop_announcement()
+            await self._discovery.stop_announcement()
 
         # Parar descoberta
         if self._discovery:
@@ -265,24 +398,120 @@ class BeeService:
         self.state = BeeState.STOPPED
         logger.info(f"Abelha {self.node_id} OFFLINE")
 
+    def _self_peer(self) -> DiscoveredPeer:
+        """Representa ESTA abelha como um `DiscoveredPeer`.
+
+        A descoberta mDNS lista apenas os OUTROS nodes — o próprio node nunca
+        aparece em `get_active_peers()`. Mas a eleição distribui papéis entre
+        todos os participantes do enxame, inclusive este. Sem uma representação
+        própria, esta abelha ficava de fora da eleição e
+        `cluster_state.get_role(self.node_id)` devolvia None.
+        """
+        return DiscoveredPeer(
+            node_id=self.node_id,
+            role="bee",
+            host=self.config.host_ip,
+            port=self.config.port,
+            capabilities=self._get_capabilities_list(),
+            models=self._get_models_list(),
+        )
+
+    def _cluster_flag(self, name: str, default: bool) -> bool:
+        """Lê um booleano de config.cluster tolerando configuração malformada."""
+        cluster_cfg = getattr(self.config, "cluster", None) or {}
+        try:
+            return bool(cluster_cfg.get(name, default))
+        except AttributeError:
+            return default
+
+    def _cluster_enabled(self) -> bool:
+        """Se esta abelha pode participar de um enxame.
+
+        `cluster.enabled` era gravado pelo instalador (`enable_cluster_mode`) e
+        nunca lido pelo serviço: responder "n" à pergunta "Deseja ativar modo
+        cluster?" não impedia nada — bastavam 2 outras abelhas na rede para o
+        enxame se formar à revelia do usuário.
+        """
+        return self._cluster_flag("enabled", True)
+
+    def _auto_elect_enabled(self) -> bool:
+        """Se a eleição pode rodar sozinha (False = só estado persistido)."""
+        return self._cluster_flag("auto_elect", True)
+
+    def _apply_standalone_roles(self) -> None:
+        """Papéis de quem opera sozinho: sem enxame, sem papel de liderança."""
+        self._standalone = True
+        self.cluster_role = ClusterRole.WORKER
+        if self.cluster_state and self.node_id in self.cluster_state.artist_workers:
+            self.cluster_role = ClusterRole.WORKER_ARTIST
+
+    def _min_bees_for_cluster(self) -> int:
+        """Quantas abelhas (contando esta) formam um enxame. Default: 3."""
+        cluster_cfg = getattr(self.config, "cluster", None) or {}
+        try:
+            value = int(cluster_cfg.get("min_peers", 3))
+        except (AttributeError, TypeError, ValueError):
+            value = 3
+        return max(1, value)
+
     async def _initialize_cluster(self) -> None:
-        """Inicializa cluster: carrega estado, elege papéis se 3+ peers, inicia monitoramento."""
+        """Inicializa cluster: carrega estado, elege papéis se 3+ abelhas, inicia monitoramento."""
         # Carregar estado persistido
         self.cluster_state = load_cluster_state(self.config.data_dir)
-        
+
+        # Opt-out: o usuário pode ter dito "não" ao instalador.
+        if not self._cluster_enabled():
+            logger.info("cluster.enabled=false: esta abelha não forma enxame (standalone)")
+            self._apply_standalone_roles()
+            return
+
         # Aguardar descoberta inicial de peers (2s)
         await asyncio.sleep(2)
         
-        peers = []
+        peers: list[DiscoveredPeer] = []
         if self._discovery:
             peers = self._discovery.get_active_peers()
-        
-        logger.info(f"Peers descobertos para cluster: {len(peers)}")
-        
-        if len(peers) >= 3:
-            # Eleger papéis
-            self.cluster_state = elect_roles(peers, self.cluster_state)
-            self.cluster_role = self.cluster_state.get_role(self.node_id)
+
+        # DOIS erros viviam aqui:
+        #
+        # 1) O enxame é formado por esta abelha + as descobertas, mas `peers`
+        #    vem do mDNS e NÃO inclui o próprio node. O teste `len(peers) >= 3`
+        #    exigia portanto 4 MÁQUINAS para formar enxame, enquanto a
+        #    especificação é "3+ abelhas". Com exatamente 3 abelhas cada uma via
+        #    2 peers e todas ficavam standalone — o enxame nunca nascia.
+        #
+        # 2) `elect_roles(peers)` recebia a lista SEM esta abelha. Como a
+        #    eleição sorteia juiz/bibliotecário/guarda entre os elementos da
+        #    lista e joga o resto em workers, esta abelha não recebia papel
+        #    algum: `get_role(self.node_id)` devolvia None e a linha
+        #    `self.cluster_role.value` logo abaixo levantaria AttributeError,
+        #    derrubando o startup. Era um crash latente que só não acontecia
+        #    porque o erro (1) impedia este ramo de executar.
+        enxame = [*peers, self._self_peer()]
+        min_bees = self._min_bees_for_cluster()
+
+        logger.info(
+            f"Abelhas no enxame: {len(enxame)} ({len(peers)} peer(s) + esta) "
+            f"| mínimo para cluster: {min_bees}"
+        )
+
+        if len(enxame) >= min_bees and not self._auto_elect_enabled():
+            # Sem eleição automática só entra num enxame que já está registrado.
+            if not (self.cluster_state and self.cluster_state.juiz_id):
+                logger.info("cluster.auto_elect=false e sem estado persistido: standalone")
+                self._apply_standalone_roles()
+                return
+            logger.info("cluster.auto_elect=false: reaproveitando os papéis persistidos")
+
+        if len(enxame) >= min_bees:
+            self._standalone = False
+            if self._auto_elect_enabled():
+                # Eleger papéis entre TODAS as abelhas do enxame, inclusive esta
+                self.cluster_state = elect_roles(enxame, self.cluster_state)
+            # `or ClusterRole.WORKER`: se a eleição não atribuir papel a este
+            # node (ex.: estado persistido inconsistente), assumir worker em vez
+            # de deixar None e estourar AttributeError no .value abaixo.
+            self.cluster_role = self.cluster_state.get_role(self.node_id) or ClusterRole.WORKER
             
             # Determinar se é Worker Artist
             if self.cluster_role == ClusterRole.WORKER and self.node_id in self.cluster_state.artist_workers:
@@ -297,21 +526,30 @@ class BeeService:
             # Inicializar InternetGate
             self._internet_gate = InternetGate(self.cluster_state, self.node_id)
             
-            # Se sou Bibliotecário, construir índice global
+            # Se sou Bibliotecário, construir índice global lendo o índice de
+            # TODAS as abelhas do enxame (build_global_index pula a si mesma
+            # comparando node_id, então passar `enxame` é seguro).
             if self.cluster_role == ClusterRole.BIBLIOTECARIO:
-                self._global_index = await build_global_index(self, peers)
+                self._global_index = await build_global_index(self, enxame)
                 self.cluster_state.global_index = self._global_index.data
                 save_cluster_state(self.config.data_dir, self.cluster_state)
             
             # Iniciar monitoramento de failover
+            # O monitor chama save_state_fn(state) com UM argumento, mas
+            # save_cluster_state(data_dir, state) exige DOIS. Passar a função
+            # crua quebrava o failover na primeira vez que ele era acionado
+            # (TypeError engolido e logado como "Erro no monitoramento").
             self._cluster_monitor = await start_monitoring(
-                self, self.cluster_state, save_cluster_state, check_interval=60.0
+                self,
+                self.cluster_state,
+                lambda state: save_cluster_state(self.config.data_dir, state),
+                check_interval=60.0,
             )
         else:
-            logger.info(f"Menos de 3 peers ({len(peers)}), operando como standalone")
-            self.cluster_role = ClusterRole.WORKER
-            if self.node_id in (self.cluster_state.artist_workers if self.cluster_state else []):
-                self.cluster_role = ClusterRole.WORKER_ARTIST
+            logger.info(
+                f"Menos de {min_bees} abelhas ({len(enxame)}), operando como standalone"
+            )
+            self._apply_standalone_roles()
 
     def _get_capabilities_list(self) -> list[str]:
         """Retorna lista de capabilities da Abelha baseada em descoberta BEE-0003."""
@@ -347,9 +585,58 @@ class BeeService:
             return self._librarian.get_available_models()
         return []
 
-    def _on_peer_discovered(self, peer: "DiscoveredPeer") -> None:
+    def _on_peer_discovered(self, peer: DiscoveredPeer) -> None:
         """Callback quando novo peer é descoberto."""
         logger.info(f"Peer descoberto: {peer.node_id} ({peer.role}) em {peer.host}:{peer.port}")
+        self._maybe_form_cluster()
+
+    def _maybe_form_cluster(self) -> None:
+        """Reavalia a formação do enxame quando peers aparecem depois do boot.
+
+        `_initialize_cluster()` roda UMA vez no startup, com uma janela de 2s de
+        descoberta. No caso real — uma abelha ligada aqui, outra acolá, minutos
+        depois — quem subiu sozinha ficava standalone para sempre, mesmo com o
+        enxame completo na rede. Aqui o enxame se forma assim que o número de
+        abelhas atinge o mínimo.
+
+        Callback síncrono (vem do zeroconf), então apenas agenda a tarefa.
+        """
+        if not self._running or self._standalone is False:
+            return  # ainda no boot, ou já faz parte de um enxame
+        if not self._cluster_enabled():
+            return  # opt-out do usuário: não formar enxame nem dinamicamente
+        if self._cluster_reelect_task is not None:
+            return  # já existe uma reavaliação agendada
+        if not self._discovery:
+            return
+        total = len(self._discovery.get_active_peers()) + 1
+        if total < self._min_bees_for_cluster():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # chamado fora de um loop asyncio: nada a agendar
+        self._cluster_reelect_task = loop.create_task(self._reelect_cluster())
+
+    async def _reelect_cluster(self) -> None:
+        """Reexecuta a eleição com debounce e de forma serializada."""
+        try:
+            # Debounce: o mDNS anuncia vários peers em rajada. Esperar um pouco
+            # evita uma eleição por peer descoberto e guerra de estados.
+            await asyncio.sleep(3.0)
+            async with self._cluster_reelect_lock:
+                if not self._running or not self._standalone:
+                    return
+                logger.info("Peers suficientes descobertos: formando o enxame")
+                await self._initialize_cluster()
+                if not self._standalone:
+                    # A ronda decide no construtor se agrega localmente ou
+                    # reporta ao juiz; ao entrar num enxame é preciso recriá-la.
+                    self._restart_guardian_patrol()
+        except Exception as exc:
+            logger.warning(f"Falha ao formar o enxame dinamicamente: {exc}")
+        finally:
+            self._cluster_reelect_task = None
 
     def _on_peer_lost(self, node_id: str) -> None:
         """Callback quando peer é perdido."""
@@ -367,6 +654,368 @@ class BeeService:
         else:
             # Identidade já foi gerada no config
             logger.info(f"Nova identidade: {self.node_id}")
+
+    # =========================================================================
+    # Interface web (web/) — mesmo contrato que o antigo juiz/app.py expunha
+    # =========================================================================
+
+    def _ui_new_session(self) -> str:
+        """Cria um token de sessão para o browser."""
+        token = secrets.token_urlsafe(16)
+        self._ui_sessions[token] = datetime.now(UTC)
+        return token
+
+    def _ui_prune_sessions(self) -> None:
+        now = datetime.now(UTC)
+        for token in [t for t, ts in self._ui_sessions.items() if now - ts > UI_SESSION_TTL]:
+            self._ui_sessions.pop(token, None)
+
+    def _ui_session_ok(self, request: Any) -> bool:
+        """Valida sessão pelo header x-session-token ou query string ?session=.
+
+        O EventSource do browser não permite enviar headers, então o stream
+        precisa aceitar o token por query string (igual ao juiz).
+        """
+        token = request.headers.get("x-session-token") or request.query.get("session")
+        if not token or token not in self._ui_sessions:
+            return False
+        self._ui_sessions[token] = datetime.now(UTC)
+        self._ui_prune_sessions()
+        return True
+
+    def _ui_node_snapshot(self, node_id: str, role: str, models: list[str]) -> dict[str, Any]:
+        """Métricas de um nó no formato que web/app.js desenha no canvas."""
+        cpu_pct = 0.0
+        free_ram_gb = 0.0
+        try:
+            import psutil
+
+            cpu_pct = psutil.cpu_percent(interval=None)
+            free_ram_gb = round(psutil.virtual_memory().available / (1024 ** 3), 2)
+        except Exception:
+            pass
+
+        active = sum(1 for t in self._ui_tasks.values() if t.status == "running")
+        max_concurrency = max(1, int(getattr(self.config, "max_concurrent_queries", 4) or 4))
+        return {
+            "node_id": node_id,
+            "cluster_role": role,
+            "active_tasks": active if node_id == self.node_id else 0,
+            "max_concurrency": max_concurrency,
+            "queue_size": 0,
+            "utilization": round(min(1.0, active / max_concurrency), 3),
+            "cpu_pct": cpu_pct,
+            "free_ram_gb": free_ram_gb,
+            "est_tps": 0.0,
+            "models": models,
+            "fail_count": 0,
+            "benchmark_score": 0.0,
+            "paused": node_id in self._ui_paused,
+            "ready": self._running,
+        }
+
+    def _ui_role_for(self, node_id: str, fallback: str = "") -> str:
+        """Papel de um node para exibição no UI.
+
+        `peer.role` vem do anúncio mDNS e é sempre "bee". Quem sabe o papel de
+        cada abelha é o `cluster_state`, resultado da eleição. Enquanto o UI
+        usava `peer.role`, todas as colegas apareciam como "bee" e o usuário não
+        via o enxame (juiz / bibliotecária / guarda) que acabara de ser eleito —
+        justamente o que a interface existe para mostrar.
+        """
+        role = ""
+        if node_id == self.node_id:
+            role = self._ui_cluster_role()
+        elif self.cluster_state is not None:
+            elected = self.cluster_state.get_role(node_id)
+            if elected is not None:
+                role = getattr(elected, "value", str(elected))
+        if not role:
+            role = fallback or "worker"
+        # web/app.js compara com 'bibliotecaria' (feminino) para pintar de azul.
+        return "bibliotecaria" if role == "bibliotecario" else role
+
+    def _ui_cluster_role(self) -> str:
+        """Papel para exibição no UI.
+
+        Standalone (<3 peers): a abelha faz tudo sozinha na mesma máquina —
+        recebe o prompt, consulta o próprio RAG, busca na web se preciso e faz
+        a curadoria. Por isso aparece como 'juiz' (a rainha no canvas), e não
+        como 'worker', que é o que cluster_role guarda internamente nesse caso.
+        Em enxame, usa o papel eleito de fato.
+        """
+        if self._standalone or self.cluster_role is None:
+            return "juiz"
+        value = getattr(self.cluster_role, "value", str(self.cluster_role))
+        # web/app.js compara com 'bibliotecaria' (feminino) para pintar de azul.
+        return "bibliotecaria" if value == "bibliotecario" else value
+
+    def _ui_models(self) -> list[str]:
+        try:
+            return list(self._get_models_list())
+        except Exception:
+            return [self.config.model] if self.config.model else []
+
+    async def _ui_run_task(self, task: UiTask) -> None:
+        """Executa o chat e publica os eventos que o UI espera."""
+        task.status = "running"
+        task.emit("task_received", task_id=task.task_id,
+                  timestamp=datetime.now(UTC).isoformat())
+        try:
+            task.emit("decomposed", subtasks=1, timestamp=datetime.now(UTC).isoformat())
+            result = await self.process_query(task.prompt)
+            source = str(result.get("source", "local"))
+            task.emit("dispatch", subtask=task.prompt[:120], specialty=source,
+                      timestamp=datetime.now(UTC).isoformat())
+            task.emit("judge", candidates=1, specialty=source,
+                      confidence=result.get("confidence", 0.0),
+                      timestamp=datetime.now(UTC).isoformat())
+            answer = result.get("answer") or "(sem resposta)"
+            if result.get("fallback"):
+                answer += "  [fallback: nenhuma fonte local relevante]"
+            task.emit("final", content=answer, source=source,
+                      timestamp=datetime.now(UTC).isoformat())
+            task.status = "completed"
+        except asyncio.CancelledError:
+            task.status = "cancelled"
+            task.emit("error", message="tarefa cancelada")
+            raise
+        except Exception as e:
+            logger.error(f"Erro na tarefa de UI {task.task_id}: {e}")
+            task.status = "failed"
+            task.emit("error", message=str(e))
+
+    def _register_protocol_routes(self, app: Any) -> None:
+        """Registra POST /api/v1/bee/message — o endpoint que RECEBE envelopes.
+
+        Este era o único elo que faltava para o enxame existir de fato:
+
+        * `BeeProtocolHandler.handle_message()` já estava completo (validação,
+          expiração, verificação de assinatura HMAC, atualização de peer e
+          dispatch para o handler do tipo);
+        * `BeeService._register_protocol_handlers()` já registrava 11 handlers
+          (HELLO, HEARTBEAT, KNOWLEDGE_QUERY, RESEARCH_REQUEST, MODEL_REQUEST,
+          VISION_REQUEST, CAPABILITY_QUERY, STATE_CHANGE, PEER_LOST...);
+        * os emissores `_send_to_peer()` e `_send_with_response()` já faziam
+          POST para `/api/v1/bee/message`.
+
+        Mas NENHUM node servia essa rota. Toda mensagem caía no mount estático
+        "/" e voltava **405 Method Not Allowed**. Na prática o protocolo BEE
+        inteiro era código morto: eleição de papéis, descoberta de quem tem o
+        conhecimento offline, delegação de pesquisa e curadoria distribuída
+        nunca chegaram a acontecer.
+
+        Precisa ser registrada ANTES do mount estático em "/" (aiohttp casa as
+        rotas na ordem de registro).
+        """
+        from aiohttp import web
+
+        async def bee_message(request: Any) -> Any:
+            try:
+                data = await request.json()
+            except Exception:
+                return web.json_response({"error": "corpo JSON inválido"}, status=400)
+            if not isinstance(data, dict):
+                return web.json_response({"error": "corpo deve ser um objeto"}, status=400)
+
+            try:
+                envelope = BeeEnvelope.from_dict(data)
+            except Exception as exc:
+                logger.warning(f"Envelope BEE malformado recebido: {exc}")
+                return web.json_response({"error": f"envelope inválido: {exc}"}, status=400)
+
+            # Aceita broadcast (target_node_id None) e o que é para este node.
+            # Rejeitar o endereçado a outro evita processar mensagem que chegou
+            # aqui por engano (ex.: descoberta com porta trocada).
+            if envelope.target_node_id and envelope.target_node_id != self.node_id:
+                logger.debug(
+                    f"Envelope destinado a {envelope.target_node_id} "
+                    f"ignorado por {self.node_id}"
+                )
+                return web.json_response(
+                    {"error": "destino não é este node",
+                     "target_node_id": envelope.target_node_id},
+                    status=404,
+                )
+
+            logger.debug(
+                f"BEE recebido: {envelope.msg_type} de {envelope.source_node_id or '?'} "
+                f"(correlation={envelope.correlation_id})"
+            )
+
+            try:
+                response = await self._handler.handle_message(envelope)
+            except Exception as exc:
+                logger.error(f"Erro ao processar {envelope.msg_type}: {exc}")
+                return web.json_response({"error": str(exc)}, status=500)
+
+            if response is None:
+                # Aceita sem resposta (ex.: HEARTBEAT_ACK, STATE_CHANGE, PEER_LOST)
+                return web.json_response(
+                    {"status": "accepted", "msg_id": envelope.msg_id}, status=202
+                )
+            return web.json_response(response.to_dict())
+
+        app.router.add_post("/api/v1/bee/message", bee_message)
+
+    def _register_ui_routes(self, app: Any) -> None:
+        """Registra as rotas consumidas por web/app.js.
+
+        Sem isto, o bee montava a pasta web/ em "/" mas não tinha NENHUM dos
+        endpoints que o app.js chama (/api/session, /api/status, /api/chat,
+        /api/chat/stream/{id}, /api/node/{id}/pause, /api/cluster/*): a página
+        carregava e toda chamada dava 404.
+        """
+        from aiohttp import web
+
+        async def ui_session(request: Any) -> Any:
+            return web.json_response({"token": self._ui_new_session()})
+
+        async def ui_status(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            agents = [self._ui_node_snapshot(self.node_id, self._ui_cluster_role(), self._ui_models())]
+            if self._discovery:
+                for peer in self._discovery.get_active_peers():
+                    agents.append(self._ui_node_snapshot(
+                        peer.node_id,
+                        self._ui_role_for(peer.node_id, peer.role or ""),
+                        list(peer.models),
+                    ))
+            return web.json_response({
+                "node": self.node_id,
+                "agents": agents,
+                "tasks_total": len(self._ui_tasks),
+            })
+
+        async def ui_models(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            try:
+                from core.ollama.client import OllamaClient, OllamaError
+
+                client = OllamaClient(self.config.ollama_base_url)
+                try:
+                    models = await client.list_models()
+                    best = await client.select_best_model()
+                except OllamaError:
+                    models, best = [], None
+                finally:
+                    await client.close()
+            except Exception:
+                models, best = [], None
+            return web.json_response({
+                "models": [{"name": m.name, "size_mb": round(m.size_mb, 1)} for m in models],
+                "best": best,
+            })
+
+        async def ui_discover(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            peers: list[dict[str, Any]] = []
+            if self._discovery:
+                for p in self._discovery.get_active_peers():
+                    peers.append({
+                        "node_id": p.node_id,
+                        "ip": p.host,
+                        "http_port": p.port,
+                        "ws_port": p.port,
+                        "role": self._ui_role_for(p.node_id, p.role or ""),
+                        "score": round(score_peer(p), 2),
+                        "models": list(p.models),
+                    })
+            return web.json_response({"peers": peers})
+
+        async def ui_chat(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            prompt = str((body or {}).get("prompt", "")).strip()
+            if not prompt:
+                return web.json_response({"detail": "Campo 'prompt' é obrigatório"}, status=400)
+
+            task_id = f"t-{secrets.token_hex(5)}"
+            task = UiTask(task_id=task_id, prompt=prompt)
+            self._ui_tasks[task_id] = task
+            # Limpeza simples: mantém no máximo as 200 últimas tarefas.
+            if len(self._ui_tasks) > 200:
+                for old in sorted(self._ui_tasks, key=lambda k: self._ui_tasks[k].created_at)[:-200]:
+                    self._ui_tasks.pop(old, None)
+
+            asyncio.create_task(self._ui_run_task(task))
+            return web.json_response({"task_id": task_id, "status": task.status})
+
+        async def ui_stream(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            task_id = request.match_info["task_id"]
+            task = self._ui_tasks.get(task_id)
+            if task is None:
+                return web.json_response({"detail": "Tarefa não encontrada"}, status=404)
+
+            resp = web.StreamResponse(
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+            await resp.prepare(request)
+
+            sent = 0
+            while True:
+                while sent < len(task.events):
+                    payload = json.dumps(task.events[sent], ensure_ascii=False)
+                    await resp.write(f"data: {payload}\n\n".encode("utf-8"))
+                    sent += 1
+                if task.status in {"completed", "failed", "cancelled"} and sent >= len(task.events):
+                    break
+                await asyncio.sleep(0.1)
+            with suppress(Exception):
+                await resp.write_eof()
+            return resp
+
+        async def ui_pause(request: Any) -> Any:
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            node_id = request.match_info["node_id"]
+            known = {self.node_id}
+            if self._discovery:
+                known |= {p.node_id for p in self._discovery.get_active_peers()}
+            if node_id not in known:
+                return web.json_response({"detail": "Nó não encontrado"}, status=404)
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            paused = bool((body or {}).get("paused", True))
+            if paused:
+                self._ui_paused.add(node_id)
+            else:
+                self._ui_paused.discard(node_id)
+            return web.json_response({"node_id": node_id, "paused": paused})
+
+        async def ui_guardian(request: Any) -> Any:
+            """Estado de segurança desta abelha: guarda ativo, contadores de
+            inspeção e alertas da ronda. Sem isto não há como o usuário
+            constatar que a rotina de guarda está de fato rodando."""
+            if not self._ui_session_ok(request):
+                return web.json_response({"detail": "Sessão inválida ou expirada"}, status=401)
+            return web.json_response(self.guardian_summary())
+
+        app.router.add_post("/api/session", ui_session)
+        app.router.add_get("/api/status", ui_status)
+        app.router.add_get("/api/cluster/models", ui_models)
+        app.router.add_get("/api/cluster/discover", ui_discover)
+        app.router.add_post("/api/chat", ui_chat)
+        app.router.add_get("/api/chat/stream/{task_id}", ui_stream)
+        app.router.add_post("/api/node/{node_id}/pause", ui_pause)
+        app.router.add_get("/api/guardian", ui_guardian)
 
     async def _start_http_server(self) -> None:
         """Inicia servidor HTTP para API, WebSocket e UI estática."""
@@ -498,11 +1147,49 @@ class BeeService:
         app.router.add_get("/api/v1/peers", peers)
         app.router.add_post("/api/v1/ingest", ingest)
 
+        # Protocolo BEE entre abelhas + rotas da interface web (web/app.js).
+        # Precisam vir ANTES do mount estático em "/" — no aiohttp as rotas
+        # casam na ordem de registro, e add_static('/') capturaria tudo que não
+        # estivesse registrado acima (era assim que /api/v1/bee/message voltava
+        # 405 em vez de chegar ao handler).
+        self._register_protocol_routes(app)
+        self._register_ui_routes(app)
+
         # Servir arquivos estáticos da Web UI
-        web_dir = Path(__file__).resolve().parents[2] / "web"
-        if web_dir.exists():
-            app.router.add_static('/', web_dir, show_index=True)
+        # parents[1] = raiz do repositório (este arquivo é <repo>/bees/service.py).
+        # Antes usava parents[2], que apontava para FORA do repositório
+        # (<pai-do-repo>/web), então a pasta nunca existia e a UI nunca era
+        # servida — o browser recebia 404 em "/".
+        web_dir = Path(__file__).resolve().parents[1] / "web"
+        index_file = web_dir / "index.html"
+        if index_file.is_file():
+            # Rota explícita para "/" e "/index.html".
+            #
+            # Isto é obrigatório: o add_static do aiohttp NÃO serve index.html
+            # sozinho. Para um caminho que é diretório ele faz exatamente duas
+            # coisas (web_urldispatcher.StaticResource._resolve_path_to_response):
+            #   show_index=True  -> devolve a LISTAGEM do diretório
+            #   show_index=False -> devolve 403 Forbidden
+            # Ou seja, com show_index=True (o que estava aqui) quem abria
+            # http://localhost:8765/ via "Index of /." com links para app.js e
+            # style.css em vez da interface - a URL que o instalador manda abrir
+            # nunca mostrou o painel. Com show_index=False daria 403. A rota
+            # registrada antes do mount resolve os dois casos e ainda evita
+            # expor a listagem de arquivos.
+            async def _serve_index(request: web.Request) -> web.FileResponse:
+                return web.FileResponse(index_file)
+
+            app.router.add_get('/', _serve_index)
+            app.router.add_get('/index.html', _serve_index)
+            app.router.add_static('/', web_dir, show_index=False)
             logger.info(f"Servindo Web UI de {web_dir}")
+        elif web_dir.exists():
+            app.router.add_static('/', web_dir, show_index=False)
+            logger.warning(
+                f"Web UI sem index.html em {web_dir}: servindo apenas estáticos"
+            )
+        else:
+            logger.warning(f"Web UI não encontrada em {web_dir}")
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -551,7 +1238,7 @@ class BeeService:
                 "load": self._calculate_load(),
             })
 
-        # Cluster status endpoint (EIP-0009)
+        # Cluster status endpoint (EIP-0009: eleição de papéis)
         async def cluster_status(request: Request) -> Response:
             if not self.cluster_state:
                 return web.json_response({
@@ -604,7 +1291,12 @@ class BeeService:
         app.router.add_get("/api/v1/capabilities", capabilities)
         app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
-        
+
+        # Protocolo BEE e interface web: mesmo contrato, também quando a
+        # Abelha roda embutida numa aplicação aiohttp externa (EnxameKernel).
+        self._register_protocol_routes(app)
+        self._register_ui_routes(app)
+
         logger.info("Rotas da Abelha registradas na aplicação externa")
 
     def _calculate_load(self) -> float:
@@ -620,7 +1312,7 @@ class BeeService:
 
     async def _handle_hello(self, envelope: BeeEnvelope) -> BeeEnvelope:
         """Handler para HELLO - handshake inicial."""
-        from .protocol.messages import BeeHello, BeeHelloAck, BeeIdentity, BeeManifesto
+        from .protocol.messages import BeeHello, BeeManifesto
         import secrets
 
         hello = BeeHello.from_dict(envelope.payload)
@@ -639,13 +1331,10 @@ class BeeService:
             version="1.0.0",
         )
 
-        hello_ack = BeeHelloAck(
-            identity=BeeIdentity(node_id=self.node_id, protocol_version="1.0"),
-            manifesto=manifesto,
-            nonce=nonce,
-            echo_nonce=hello.nonce,
-        )
-
+        # Observação: aqui se construía um BeeHelloAck local que era descartado —
+        # o retorno sempre veio de create_hello_ack(). Objeto morto em todo
+        # handshake, removido (junto com BeeHelloAck/BeeIdentity do import acima,
+        # que só existiam para alimentá-lo).
         return self._handler.create_hello_ack(
             target_node_id=envelope.source_node_id,
             manifesto=manifesto,
@@ -724,24 +1413,49 @@ class BeeService:
         from .protocol.messages import BeeResearchRequest, ResearchResultItem
         request = BeeResearchRequest.from_dict(envelope.payload)
 
+        # `LocalLibrarian.search()` devolve {"answer","confidence","source",
+        # "metadata","sources"} — NÃO existe chave "results". O laço antigo
+        # iterava search_result.get("results", []), que era sempre vazio, então
+        # RESEARCH_RESULT voltava com zero itens e o juiz descartava a resposta
+        # mesmo quando a abelha consultada TINHA o conhecimento. Era o último
+        # elo quebrado da delegação no enxame.
         results = []
-        if self._librarian:
+        started = time.perf_counter()
+
+        # GUARDA — quem RECEBE a pergunta delegada também inspeciona.
+        # A especificação pede a rotina de guarda em quem recebe o prompt e em
+        # quem faz a curadoria. No enxame o texto chega aqui pela rede, vindo de
+        # outra abelha; sem inspeção, um prompt malicioso já barrado pelo juiz
+        # entraria pela porta lateral do RESEARCH_REQUEST. Devolver zero itens
+        # faz o juiz cair no fallback normal.
+        bloqueado = self._guard_prompt(request.query) is not None
+        if bloqueado:
+            logger.warning(f"RESEARCH_REQUEST bloqueado pelo guardião em {self.node_id}")
+
+        if self._librarian and not bloqueado:
             search_result = await self._librarian.search(request.query, request.max_results)
-            for item in search_result.get("results", []):
+            answer = str(search_result.get("answer") or "").strip()
+            if answer:
+                metadata = dict(search_result.get("metadata") or {})
+                # Proveniência vai no metadata (não como itens separados): o juiz
+                # concatena o conteúdo dos itens, e repetir o mesmo texto uma vez
+                # por arquivo duplicaria a resposta.
+                metadata["sources"] = list(search_result.get("sources") or [])
+                metadata["answered_by"] = self.node_id
                 results.append(ResearchResultItem(
-                    content=item.get("content", ""),
-                    source=item.get("source"),
-                    confidence=item.get("confidence", 0.0),
-                    page=item.get("page"),
-                    metadata=item.get("metadata", {}),
+                    content=answer,
+                    source=search_result.get("source"),
+                    confidence=float(search_result.get("confidence", 0.0)),
+                    metadata=metadata,
                 ))
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
 
         return self._handler.create_research_result(
             target_node_id=envelope.source_node_id,
             request_id=request.request_id,
             results=results,
             total_results=len(results),
-            processing_time_ms=search_result.get("latency_ms", 0) if "search_result" in locals() else 0,
+            processing_time_ms=elapsed_ms,
             model_used=self.config.model,
             correlation_id=envelope.correlation_id,
         )
@@ -839,7 +1553,7 @@ class BeeService:
                 # Peer vai parar, remover após timeout estimado
                 pass
         
-        # Cluster-specific handling (EIP-0009)
+        # Cluster-specific handling (EIP-0009: eleição de papéis)
         if self.cluster_state and state_change.reason in ("juiz_failover", "juiz_restored", "new_election"):
             if state_change.reason == "juiz_failover":
                 logger.warning(f"Failover de Juiz detectado: {state_change.node_id} assumiu")
@@ -901,12 +1615,12 @@ class BeeService:
                 load = self._calculate_load()
                 # Atualizar anúncio mDNS com nova carga via BeeDiscoveryService
                 if self._discovery:
-                    self._discovery.update_announcement(load, self.state)
+                    await self._discovery.update_announcement(load, self.state)
             except Exception as e:
                 logger.error(f"Erro no load metrics: {e}")
             await asyncio.sleep(60)
 
-    async def _send_to_peer(self, peer: "DiscoveredPeer", envelope: BeeEnvelope) -> None:
+    async def _send_to_peer(self, peer: DiscoveredPeer, envelope: BeeEnvelope) -> None:
         """Envia envelope para peer via HTTP."""
         try:
             import aiohttp
@@ -924,12 +1638,238 @@ class BeeService:
     # Pipeline de Query: LOCAL -> ENXAME -> WEB
     # =========================================================================
 
+    # ------------------------------------------------------------------
+    # Guarda (rotina de segurança da abelha)
+    # ------------------------------------------------------------------
+    def _init_guardian(self) -> None:
+        """Cria o guardião desta abelha.
+
+        Tolerante a falha: um erro ao criar o guardião não pode impedir o node
+        de subir, mas fica registrado em WARNING.
+        """
+        if Guardian is None:
+            logger.warning(
+                "Pacote 'guardian' não importável: esta abelha está rodando SEM "
+                "inspeção de segurança de prompts/respostas"
+            )
+            return
+        try:
+            self._guardian = Guardian(self.node_id)
+        except Exception as exc:
+            logger.warning(f"Não foi possível iniciar o guardião: {exc}")
+            self._guardian = None
+            return
+
+        # O Guardian cria './quarantine' relativo ao CWD no próprio __init__, o
+        # que sujaria o diretório de onde o usuário executou o comando (no
+        # repositório, apareceria como pasta não rastreada). Aponta para o
+        # data_dir da abelha e remove a pasta stray, se estiver vazia.
+        stray = Path("quarantine")
+        try:
+            quarantine = Path(self.config.data_dir) / "quarantine"
+            quarantine.mkdir(parents=True, exist_ok=True)
+            self._guardian.quarantine_dir = str(quarantine)
+        except Exception as exc:
+            logger.debug(f"Não foi possível mover o quarantine para o data_dir: {exc}")
+        else:
+            try:
+                # rmdir só remove diretório VAZIO: se houver algo dentro (ou se a
+                # pasta já existia com conteúdo do usuário), falha sem efeito.
+                stray.rmdir()
+            except OSError:
+                pass
+
+        logger.info(f"Guardião ativo em {self.node_id}")
+
+    def _guard_prompt(self, prompt: str) -> dict[str, Any] | None:
+        """ENTRADA: inspeciona o prompt antes de processá-lo.
+
+        Retorna um resultado já bloqueado (pronto para o UI) quando o guardião
+        reprova, ou None quando o prompt pode seguir.
+        """
+        if not self._guardian:
+            return None
+
+        self._guard_stats["prompts_inspecionados"] += 1
+        try:
+            verdict = self._guardian.inspect_prompt(prompt)
+        except Exception as exc:
+            # Uma falha na inspeção não pode derrubar a consulta inteira.
+            logger.warning(f"Inspeção de segurança falhou, seguindo sem ela: {exc}")
+            return None
+
+        if verdict.get("safe"):
+            return None
+
+        reasons = [str(r) for r in (verdict.get("reasons") or [])]
+        self._guard_stats["prompts_bloqueados"] += 1
+        logger.warning(
+            f"Guardião bloqueou prompt em {self.node_id} "
+            f"(camada {verdict.get('layer')}): {reasons}"
+        )
+        return {
+            "answer": verdict.get("error_message")
+            or "Requisição bloqueada pela rotina de guarda.",
+            "source": "guardian",
+            "confidence": 0.0,
+            "blocked": True,
+            "guard": {"layer": verdict.get("layer"), "reasons": reasons},
+        }
+
+    def _guard_answer(self, answer: str) -> str:
+        """CURADORIA: inspeciona a resposta antes de entregá-la ao usuário.
+
+        Isso importa sobretudo no RAG: um documento indexado pode carregar
+        instruções injetadas que só se revelam na saída, então inspecionar só a
+        entrada não basta.
+        """
+        if not answer or not self._guardian:
+            return answer
+
+        self._guard_stats["respostas_inspecionadas"] += 1
+        try:
+            verdict = self._guardian.inspect_prompt(answer)
+        except Exception as exc:
+            logger.debug(f"Curadoria de segurança falhou: {exc}")
+            return answer
+
+        if verdict.get("safe"):
+            return answer
+
+        reasons = ", ".join(str(r) for r in (verdict.get("reasons") or []))[:180]
+        self._guard_stats["respostas_retidas"] += 1
+        logger.warning(f"Guardião reteve resposta na curadoria: {reasons}")
+        return (
+            "\u26a0\ufe0f A resposta foi retida pela rotina de guarda: o conteúdo "
+            f"gerado apresenta padrões inseguros ({reasons}). Reformule a pergunta "
+            "ou revise os documentos indexados nesta abelha."
+        )
+
+    def _record_guardian_alert(self, alert: dict[str, Any]) -> None:
+        """Guarda alertas localmente, em anel limitado (não cresce sem fim)."""
+        self._guardian_alerts.append(alert)
+        if len(self._guardian_alerts) > 50:
+            del self._guardian_alerts[: len(self._guardian_alerts) - 50]
+
+    async def _report_guardian_alert_to_juiz(self, alert: dict[str, Any]) -> None:
+        """Em enxame, reporta a ronda ao juiz (POST assinado).
+
+        Mesmo contrato que o antigo bibliotecario/app.py usava: agrega o estado de
+        segurança do cluster em /api/v1/guardian.
+        """
+        juiz_url = os.getenv("JUIZ_HTTP_URL", "http://localhost:7700")
+        body = json.dumps(alert, ensure_ascii=False).encode("utf-8")
+        headers: dict[str, str] = {"content-type": "application/json"}
+        if self._security:
+            try:
+                headers.update(build_auth_headers(self._security, body))
+            except Exception as exc:
+                logger.debug(f"Sem assinatura EXP no alerta do guardião: {exc}")
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"{juiz_url}/api/v1/guardian/report", content=body, headers=headers
+                )
+        except Exception as exc:
+            logger.debug(f"Falha ao reportar alerta do guardião ao juiz: {exc}")
+
+    def _start_guardian_patrol(self) -> "asyncio.Task | None":
+        """Inicia a ronda contínua do guardião nesta abelha.
+
+        Standalone: a abelha é o próprio juiz, então agrega os alertas
+        localmente. Em enxame: agrega localmente E reporta ao juiz.
+        """
+        if GuardianPatrol is None or self._guardian is None:
+            return None
+        try:
+            interval = float(os.getenv("GUARDIAN_PATROL_INTERVAL", "15"))
+        except ValueError:
+            interval = 15.0
+        try:
+            self._guardian_patrol = GuardianPatrol(
+                node_id=self.node_id,
+                interval_seconds=interval,
+                local_callback=self._record_guardian_alert,
+                remote_reporter=None if self._standalone else self._report_guardian_alert_to_juiz,
+            )
+        except Exception as exc:
+            logger.warning(f"Não foi possível criar a ronda do guardião: {exc}")
+            return None
+
+        logger.info(
+            "Ronda do guardião ativa "
+            f"({'standalone: alertas locais' if self._standalone else 'reportando ao juiz'})"
+        )
+        self._patrol_task = asyncio.create_task(self._guardian_patrol.run_forever())
+        return self._patrol_task
+
+    def _restart_guardian_patrol(self) -> None:
+        """Recria a ronda para refletir o modo atual (standalone <-> enxame).
+
+        `GuardianPatrol` decide no construtor se entrega alertas localmente
+        (este node É o juiz) ou se os reporta por POST assinado ao juiz. Quando
+        o enxame se forma depois do boot, essa decisão muda e a ronda precisa
+        ser recriada — senão a abelha continuaria agregando alertas sozinha em
+        vez de enviá-los ao juiz eleito.
+        """
+        if self._guardian_patrol is not None:
+            self._guardian_patrol.stop()
+            self._guardian_patrol = None
+        old_task = self._patrol_task
+        self._patrol_task = None
+        if old_task is not None:
+            old_task.cancel()
+            if old_task in self._tasks:
+                self._tasks.remove(old_task)
+        new_task = self._start_guardian_patrol()
+        if new_task is not None:
+            self._tasks.append(new_task)
+
+    def guardian_summary(self) -> dict[str, Any]:
+        """Estado de segurança desta abelha (observabilidade)."""
+        return {
+            "node_id": self.node_id,
+            "ativo": self._guardian is not None,
+            "ronda": self._guardian_patrol is not None,
+            "standalone": self._standalone,
+            "contadores": dict(self._guard_stats),
+            "alertas": list(self._guardian_alerts),
+        }
+
     async def process_query(self, query: str) -> dict[str, Any]:
         """
-        Processa query seguindo a política LOCAL -> ENXAME -> WEB (com cluster).
-        
+        Processa query seguindo a política LOCAL -> ENXAME -> WEB (com cluster),
+        com a rotina de guarda nas duas pontas: inspeção do prompt na ENTRADA e
+        curadoria da resposta na SAÍDA.
+
         Returns:
             dict com answer, source, confidence, metadata
+        """
+        # GUARDA — entrada: quem recebe o prompt inspeciona antes de processar.
+        blocked = self._guard_prompt(query)
+        if blocked is not None:
+            return blocked
+
+        result = await self._process_query_policy(query)
+
+        # GUARDA — curadoria: a resposta também é inspecionada antes de sair.
+        if not result.get("blocked"):
+            answer = result.get("answer")
+            if isinstance(answer, str) and answer:
+                curated = self._guard_answer(answer)
+                if curated != answer:
+                    result["answer"] = curated
+                    result["source"] = "guardian"
+                    result["curated"] = True
+        return result
+
+    async def _process_query_policy(self, query: str) -> dict[str, Any]:
+        """Política LOCAL -> ENXAME -> WEB.
+
+        Chamado por process_query, que acrescenta a inspeção de guarda na
+        entrada e na saída.
         """
         logger.info(f"Processando query: {query[:100]}...")
 
@@ -944,7 +1884,7 @@ class BeeService:
             if enxame_result["confidence"] >= self.config.confidence_threshold_web:
                 return {"answer": enxame_result["answer"], "source": "enxame", **enxame_result}
 
-        # 3. WEB - Fallback se habilitado E papel permite (EIP-0009)
+        # 3. WEB - Fallback se habilitado E papel permite (EIP-0004: despacho híbrido)
         if self.config.allow_web and self._librarian and self._internet_gate:
             if self._internet_gate.can_access(InternetPurpose.BIBLIOTECARIO_FALLBACK):
                 web_result = await self._librarian.search_web(query)
@@ -964,7 +1904,11 @@ class BeeService:
         """Consulta fontes locais: memória + RAG."""
         # 1. Memória semântica
         if self._memory:
-            mem_result = await self._memory.search_semantic(query)
+            # BeeMemory é 100% síncrono (sqlite3, criado com check_same_thread=False).
+            # `await self._memory.search_semantic(...)` estourava
+            # "object NoneType can't be used in 'await' expression" e quebrava
+            # todo POST /api/v1/query. Roda em thread para não bloquear o loop.
+            mem_result = await asyncio.to_thread(self._memory.search_semantic, query)
             if mem_result and mem_result.get("confidence", 0) > 0.8:
                 return {"answer": mem_result["response"], "confidence": mem_result["confidence"], "source_type": "memory"}
 
@@ -990,10 +1934,17 @@ class BeeService:
             return {"answer": "", "confidence": 0.0}
 
         # 1. Se temos índice global (sou Bibliotecário ou recebi do Bibliotecário), usar para rotear
-        target_peers = []
+        # `target_peers` é SEMPRE list[DiscoveredPeer]. O índice global devolve
+        # PeerKnowledge (que tem `peer_id`, não `node_id`), então ele serve só
+        # para obter os ids, que são mapeados de volta para os peers ativos.
+        # Reutilizar a mesma variável para os dois tipos fazia o mypy inferir
+        # PeerKnowledge e reportar "has no attribute node_id" em todo o laço
+        # abaixo — em runtime estava correto, mas o tipo mentia e escondia
+        # erros reais de atributo nessa função.
+        target_peers: list[DiscoveredPeer] = []
         if self._global_index:
-            target_peers = self._global_index.get_peers_for_subject(query, min_confidence=0.5)
-            target_peer_ids = [pk.peer_id for pk in target_peers]
+            known = self._global_index.get_peers_for_subject(query, min_confidence=0.5)
+            target_peer_ids = [pk.peer_id for pk in known]
             # Filtrar peers ativos
             target_peers = [p for p in peers if p.node_id in target_peer_ids]
             logger.debug(f"Roteando via índice global: {len(target_peers)} peers alvo para '{query}'")
@@ -1061,7 +2012,7 @@ class BeeService:
 
         return {"answer": "", "confidence": best_confidence}
 
-    async def _send_with_response(self, envelope: BeeEnvelope, peer: "DiscoveredPeer", timeout_ms: int = 5000) -> BeeEnvelope | None:
+    async def _send_with_response(self, envelope: BeeEnvelope, peer: DiscoveredPeer, timeout_ms: int = 5000) -> BeeEnvelope | None:
         """Envia envelope para peer e aguarda resposta via HTTP/WebSocket."""
         try:
             import aiohttp
@@ -1102,9 +2053,13 @@ async def main() -> int:
     bee = BeeService(config)
 
     # Setup signal handlers
-    loop = asyncio.get_event_loop()
+    # NOTE: loop.add_signal_handler() não existe no Windows (ProactorEventLoop
+    # levanta NotImplementedError). Sem este guard o bee morria no startup em
+    # Windows, que é uma das plataformas que o instalador declara suportar.
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(bee.stop()))
+        with suppress(NotImplementedError, ValueError, OSError, RuntimeError):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(bee.stop()))
 
     try:
         await bee.start()

@@ -7,7 +7,8 @@ Armazena:
 - Histórico de interações
 - Memória semântica (tags, conceitos, relevância)
 
-Reutiliza padrões do core/memory/usuario_memory.py
+Reutiliza os padrões do antigo core/memory/usuario_memory.py, removido
+por estar órfão (nenhum módulo o importava). Este módulo é autossuficiente.
 """
 
 from __future__ import annotations
@@ -288,8 +289,9 @@ class BeeMemory:
             return None
 
         with closing(conn.cursor()) as cur:
-            # Buscar por tags ou conteúdo contendo palavras da query
-            placeholders = ",".join(["?"] * len(words))
+            # Buscar por tags ou conteúdo contendo palavras da query.
+            # A ordem dos parâmetros abaixo é 1 (relevance) + N (content LIKE)
+            # + N (tags LIKE) + 1 (limit) — precisa casar com os "?" do SQL.
             sql = f"""
                 SELECT * FROM semantic_memory
                 WHERE relevance >= ?

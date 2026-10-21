@@ -32,13 +32,18 @@ bees/
 │   ├── discovery.py         # Scan hardware/Ollama/local
 │   ├── selector.py          # Recomendação de modelo
 │   └── provider.py          # Abstração LLM Provider
-├── install/                 # Instaladores
-│   ├── install_bee.py       # Instalador principal
-│   ├── uninstall_bee.py     # Desinstalador
+├── install/                 # Instalação
+│   ├── bee_installer.py     # O instalador único (7 passos)
+│   ├── bee_setup.py         # Atalhos + serviço (systemd/LaunchAgent/schtasks)
+│   ├── cluster_setup.py     # data-dir, node_id, opt-in do enxame
+│   ├── install_bee.py       # Biblioteca de helpers; __main__ delega ao único
+│   ├── uninstall_bee.py     # Desinstalação (--uninstall)
 │   └── README.md
 ├── spec/                    # Especificações
 │   ├── BEE-0001-ABELHA.md   # Conceito de Abelha
-│   └── BEE-0002-PROTOCOLO.md # Protocolo de comunicação
+│   ├── BEE-0002-PROTOCOLO.md # Protocolo de comunicação
+│   ├── BEE-0003-CAPABILITIES.md # Descoberta de capacidades
+│   └── EIP-000{1,2,3,4,9}-*.md  # Princípios e EIPs que a abelha implementa
 └── tests/                   # Testes
     ├── test_protocol.py
     └── test_capabilities.py
@@ -46,14 +51,27 @@ bees/
 
 ## Instalação Rápida
 
-```bash
-# Instalar dependências
-pip install -r requirements.txt
+**Um caminho só.** A partir da raiz do repositório:
 
-# Ou usar instalador automático
-cd bees/install
-python install_bee.py
+```bash
+python install-bee-smart.py --auto
 ```
+
+Ele confere o Python, instala/inicia o Ollama (e **verifica se ele responde**),
+escolhe e baixa o modelo adequado ao hardware, cria o `.venv-bee`, instala as
+dependências (**e confere que o serviço importa com elas**), grava
+`config.json`/`identity.json`, gera o dashboard e mostra o comando para subir a
+abelha. Detalhes e todas as flags: [`install/README.md`](install/README.md).
+
+Instalação manual, sem o instalador:
+
+```bash
+pip install -e bees          # só as 6 dependências obrigatórias
+pip install -e "bees[rag]"   # opcional: RAG vetorial + embeddings locais
+```
+
+> `install_bee.py` continua existindo como biblioteca de helpers e, se executado,
+> delega ao instalador único — mas não é um segundo caminho a documentar.
 
 ## Uso via CLI
 
@@ -217,7 +235,7 @@ mypy bees/
 
 ## Princípios (EIP-0001, EIP-0002)
 
-1. **Architecture First** — Specs em `spec/` antes de implementar
+1. **Architecture First** — Specs em `bees/spec/` antes de implementar
 2. **Resource First** — Zero Docker, zero frameworks frontend, dependências mínimas
 3. **Soberania Digital** — Sem OpenWebUI, infraestrutura própria, controle total
 4. **Offline First** — Internet é fallback, não dependência

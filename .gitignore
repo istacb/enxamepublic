@@ -3,3 +3,18 @@ __pycache__/
 *.log
 .env
 *.db
+
+# Artefatos gerados pelo instalador (install-bee-smart.py)
+.venv-bee/
+.venv*/
+bee-dashboard.html
+
+# Artefatos de build/empacotamento (pip install -e gera *.egg-info no repo)
+*.egg-info/
+build/
+dist/
+
+# Criado por guardian/Guardian.__init__ relativo ao CWD
+quarantine/
+*.pyc
+*.pyo

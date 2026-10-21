@@ -75,15 +75,20 @@ class ClusterMonitor:
         if not juiz_id:
             return  # Sem Juiz eleito
         
-        # Verificar se Juiz está nos peers ativos
-        juiz_peer = None
-        if self.bee_service._discovery:
-            for peer in self.bee_service._discovery.get_active_peers():
-                if peer.node_id == juiz_id:
-                    juiz_peer = peer
-                    break
-        
-        juiz_online = juiz_peer is not None
+        # Verificar se Juiz está nos peers ativos.
+        # get_active_peers() NÃO inclui esta abelha — então, quando o juiz
+        # eleito é o próprio node, o monitor não o encontrava na lista e
+        # disparava failover contra si mesmo já no primeiro tick.
+        if juiz_id == getattr(self.bee_service, "node_id", None):
+            juiz_online = True
+        else:
+            juiz_peer = None
+            if self.bee_service._discovery:
+                for peer in self.bee_service._discovery.get_active_peers():
+                    if peer.node_id == juiz_id:
+                        juiz_peer = peer
+                        break
+            juiz_online = juiz_peer is not None
         
         # 2. Se Juiz caiu e não estávamos em failover
         if not juiz_online and not self.cluster_state.is_juiz_failover_active():
@@ -103,18 +108,34 @@ class ClusterMonitor:
         # 5. Verificar re-eleição periódica se configuração mudou (peers entraram/sairam)
         await self._check_re_election_needed()
     
+    def _swarm_members(self, peers: list) -> list:
+        """Peers descobertos + esta abelha.
+
+        `get_active_peers()` nunca inclui o próprio node. Eleger só com os peers
+        faz cada abelha enxergar um conjunto de candidatos DIFERENTE — no
+        failover, abelha-02 chegou a anunciar "abelha-03 assumiu" enquanto
+        abelha-03 anunciava "abelha-02 assumiu", ou seja, dois juizes ao mesmo
+        tempo. Toda eleição precisa partir do mesmo conjunto: o enxame inteiro.
+        """
+        members = list(peers)
+        self_peer_fn = getattr(self.bee_service, "_self_peer", None)
+        if callable(self_peer_fn):
+            members.append(self_peer_fn())
+        return members
+
     async def _handle_juiz_failure(self, failed_juiz_id: str) -> None:
         """Lida com falha do Juiz - elege temporário."""
         peers = []
         if self.bee_service._discovery:
             peers = self.bee_service._discovery.get_active_peers()
-        
-        if not peers:
-            logger.error("Sem peers disponíveis para failover!")
+
+        enxame = self._swarm_members(peers)
+        if len(enxame) < 2:
+            logger.error("Sem outras abelhas disponíveis para failover!")
             return
         
         # Eleger novo Juiz temporário
-        new_state = elect_juiz_failover(peers, failed_juiz_id, self.cluster_state)
+        new_state = elect_juiz_failover(enxame, failed_juiz_id, self.cluster_state)
         self.cluster_state = new_state
         self.save_state_fn(new_state)
         
@@ -159,13 +180,25 @@ class ClusterMonitor:
         peers = []
         if self.bee_service._discovery:
             peers = self.bee_service._discovery.get_active_peers()
-        
-        if len(peers) < 3:
-            logger.warning("Menos de 3 peers para nova eleição, mantendo failover")
+
+        # Mesmo ajuste de _initialize_cluster: o mDNS lista apenas os OUTROS
+        # nodes, então o enxame é peers + esta abelha. Sem incluir o próprio
+        # node, (a) o limiar exigia 4 máquinas para "3+ abelhas" e (b) esta
+        # abelha ficava sem papel nenhum na nova eleição.
+        enxame = self._swarm_members(peers)
+
+        min_bees_fn = getattr(self.bee_service, "_min_bees_for_cluster", None)
+        min_bees = min_bees_fn() if callable(min_bees_fn) else 3
+
+        if len(enxame) < min_bees:
+            logger.warning(
+                f"Menos de {min_bees} abelhas ({len(enxame)}) para nova eleição, "
+                "mantendo failover"
+            )
             return
         
         # Nova eleição completa
-        new_state = elect_roles(peers, self.cluster_state)
+        new_state = elect_roles(enxame, self.cluster_state)
         self.cluster_state = new_state
         self.save_state_fn(new_state)
         

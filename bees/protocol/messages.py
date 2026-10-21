@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
+
+from .._compat import StrEnum  # enum.StrEnum só existe no Python >= 3.11
 
 
 class BeeMessageType(StrEnum):

@@ -36,7 +36,10 @@ O protocolo DEVE reutilizar mecanismos existentes no repositório sempre que pos
 - **Discovery:** mDNS/Zeroconf existente em `core/discovery/`
 - **Envelope:** Estrutura EXP existente em `core/exp/envelope.py`
 - **Segurança:** HMAC existente em `core/exp/security.py`
-- **Transporte:** WebSocket existente em `core/exp/server.py` e `core/exp/client.py`
+- **Transporte:** HTTP do serviço da abelha (`aiohttp` em `bees/service.py`),
+  com envelope EXP assinado por HMAC. Os módulos WebSocket que este spec citava
+  (`core/exp/server.py` e `core/exp/client.py`) nunca tiveram importador e foram
+  removidos; a entrega de mensagem entre abelhas é `POST /api/v1/bee/message`.
 
 ### 2.2 Minimalismo
 
@@ -943,8 +946,8 @@ Especialização pode emergir organicamente por:
 - `core/discovery/mdns_discovery.py` — Discovery mDNS
 - `core/exp/envelope.py` — Estrutura de mensagens
 - `core/exp/security.py` — Autenticação HMAC
-- `core/exp/server.py` — Servidor WebSocket
-- `core/exp/client.py` — Cliente WebSocket
+- `bees/service.py` — Transporte HTTP (rotas `/api/v1/bee/message`, `/api/v1/peers`)
+- `bees/protocol/handler.py` — Despacho por tipo de mensagem
 
 ---
 

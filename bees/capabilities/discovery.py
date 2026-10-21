@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -297,11 +298,31 @@ async def _fetch_loaded_models(base_url: str) -> list[str]:
     return []
 
 
+def _param_size_from_tag(name: str) -> str:
+    """Extrai o tamanho do modelo da própria tag do Ollama.
+
+    ``/api/tags`` normalmente traz ``details.parameter_size`` ("3B"), mas em
+    algumas versões/registros o campo vem ausente. Quando isso acontecia,
+    ``recommend_model()`` descartava o modelo no ramo "Tamanho desconhecido,
+    pular" e devolvia ``None`` — o bee ficava sem modelo nenhum mesmo com o
+    Ollama cheio de modelos instalados ("Nenhum modelo adequado encontrado").
+
+    A tag quase sempre codifica o tamanho: llama3.2:3b, qwen2.5:0.5b,
+    phi3:3.8b, mistral:7b.
+    """
+    # Exige o sufixo "b" não seguido de letra, para não casar com o número da
+    # família (ex.: "3.2" de "llama3.2:3b" não tem "b" depois).
+    match = re.search(r"(\d+(?:\.\d+)?)\s*b(?![a-z])", name.lower())
+    if not match:
+        return "unknown"
+    return f"{float(match.group(1)):g}B"
+
+
 def _parse_model_info(raw: dict[str, Any], loaded_models: list[str]) -> ModelInfo:
     """Parse de informações de modelo da API do Ollama."""
     details = raw.get("details", {})
     name = raw.get("name", "unknown")
-    param_size = details.get("parameter_size", "unknown")
+    param_size = details.get("parameter_size") or _param_size_from_tag(name)
     quant = details.get("quantization_level")
     
     # Detectar se é modelo de embedding

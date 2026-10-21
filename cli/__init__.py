@@ -1,1 +1,0 @@
-"""Cliente CLI do ENXAME."""

@@ -22,7 +22,7 @@ NC = '\033[0m'
 def log(msg): print(f"{GREEN}[INFO]{NC} {msg}")
 def warn(msg): print(f"{YELLOW}[WARN]{NC} {msg}")
 def error(msg): print(f"{RED}[ERROR]{NC} {msg}")
-def step(msg): print(f"\n{BLUE}=== {msg} ===${NC}")
+def step(msg): print(f"\n{BLUE}=== {msg} ==={NC}")
 
 def get_data_dir():
     """Retorna diretorio de dados da Abelha"""
@@ -35,6 +35,104 @@ def get_data_dir():
         return home / "Library" / "Application Support" / "enxame" / "bee"
     else:
         return home / ".enxame" / "bee"
+
+def remove_directory(path, dry_run: bool = False) -> bool:
+    """Remove um diretorio (ou arquivo) e retorna True se nao resta nada la.
+
+    Idempotente: caminho inexistente conta como sucesso (nada a remover), o que
+    torna o desinstalador re-executavel sem erro. Com dry_run=True apenas
+    registra o que seria feito.
+
+    Retorna False somente quando a remocao de fato falhou.
+    """
+    path = Path(path)
+    if not path.exists():
+        return True
+    if dry_run:
+        log(f"[dry-run] seria removido: {path}")
+        return True
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        log(f"Removido: {path}")
+        return True
+    except Exception as e:
+        error(f"Erro ao remover {path}: {e}")
+        return False
+
+
+def list_files_to_remove() -> list:
+    """Lista os caminhos existentes que a desinstalacao removeria.
+
+    Base do --dry-run: em vez de simplesmente pular todas as etapas (como era
+    antes, quando o modo apenas imprimia "nenhuma acao sera executada"), o
+    usuario ve exatamente o que vai desaparecer. Retorna lista vazia quando nada
+    esta instalado.
+    """
+    candidates = [Path(get_data_dir()), *config_paths(), *binary_paths()]
+    existing = []
+    for path in candidates:
+        try:
+            if path.exists():
+                existing.append(path)
+        except OSError:
+            continue
+    return existing
+
+
+def detect_ollama() -> dict:
+    """Detecta se o Ollama esta instalado/rodando e quais modelos tem.
+
+    O desinstalador precisa disso para avisar antes de apagar modelos: o Ollama
+    pode ser compartilhado com outras aplicacoes, entao a remocao nunca pode ser
+    automatica.
+
+    Normaliza os modelos para nomes (str): o `ollama list` devolve colunas de
+    texto enquanto `/api/tags` devolve objetos — a mesma mistura que quebrava o
+    instalador com TypeError no join.
+    """
+    result = {
+        "installed": False,
+        "running": False,
+        "models": [],
+        "url": "http://localhost:11434",
+    }
+
+    try:
+        proc = subprocess.run(
+            ["ollama", "list"], capture_output=True, text=True, timeout=10
+        )
+        if proc.returncode == 0:
+            result["installed"] = True
+            for line in proc.stdout.strip().splitlines()[1:]:
+                parts = line.split()
+                if parts:
+                    result["models"].append(parts[0])
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        pass
+
+    try:
+        import json
+        import urllib.request
+
+        with urllib.request.urlopen(f"{result['url']}/api/tags", timeout=3) as resp:
+            if resp.status == 200:
+                result["running"] = True
+                data = json.loads(resp.read().decode())
+                names = [
+                    str(m.get("name", ""))
+                    for m in data.get("models", [])
+                    if isinstance(m, dict) and m.get("name")
+                ]
+                if names:
+                    result["models"] = names
+    except Exception:
+        pass
+
+    return result
+
 
 def stop_bee_service():
     """Para servicos da Abelha"""
@@ -57,89 +155,76 @@ def stop_bee_service():
     except Exception as e:
         warn(f"Erro ao parar servicos: {e}")
 
-def remove_data_dir(keep_data: bool = False):
+def remove_data_dir(keep_data: bool = False, dry_run: bool = False):
     """Remove diretorio de dados"""
     if keep_data:
         log("Mantendo dados da Abelha (--keep-data)")
         return
-    
+
     data_dir = get_data_dir()
     if data_dir.exists():
         log(f"Removendo diretorio de dados: {data_dir}")
-        try:
-            shutil.rmtree(data_dir)
-            log("Dados removidos")
-        except Exception as e:
-            error(f"Falha ao remover dados: {e}")
+        remove_directory(data_dir, dry_run=dry_run)
 
-def remove_config_files():
-    """Remove arquivos de configuracao"""
+def config_paths():
+    """Caminhos de configuracao da Abelha, por SO."""
     system = platform.system().lower()
-    
-    configs = []
-    
+
     if system == "linux":
-        configs.extend([
+        return [
             Path("/etc/enxame-bee"),
             Path("/usr/lib/systemd/system/enxame-bee.service"),
             Path("/usr/lib/sysusers.d/enxame-bee.conf"),
             Path("/usr/lib/tmpfiles.d/enxame-bee.conf"),
-        ])
-    elif system == "darwin":
-        configs.extend([
+        ]
+    if system == "darwin":
+        return [
             Path("/usr/local/etc/enxame-bee"),
             Path("/Library/LaunchDaemons/com.enxame.bee.plist"),
-        ])
-    elif system == "windows":
-        configs.extend([
+        ]
+    if system == "windows":
+        return [
             Path(os.getenv("PROGRAMDATA", "C:/ProgramData")) / "enxame-bee",
-        ])
-    
-    for config in configs:
-        if config.exists():
-            try:
-                if config.is_dir():
-                    shutil.rmtree(config)
-                else:
-                    config.unlink()
-                log(f"Removido: {config}")
-            except Exception as e:
-                warn(f"Erro ao remover {config}: {e}")
+        ]
+    return []
 
-def remove_binaries():
-    """Remove binarios e wrappers"""
+
+def remove_config_files(dry_run: bool = False):
+    """Remove arquivos de configuracao"""
+    for config in config_paths():
+        remove_directory(config, dry_run=dry_run)
+
+def binary_paths():
+    """Caminhos de binarios/wrappers da Abelha, por SO."""
     system = platform.system().lower()
-    
-    bins = []
-    
+
     if system == "linux":
-        bins.extend([
+        return [
             Path("/usr/bin/bee"),
             Path("/usr/bin/enxame-install-ollama"),
             Path("/opt/enxame-bee"),
-        ])
-    elif system == "darwin":
-        bins.extend([
+        ]
+    if system == "darwin":
+        return [
             Path("/usr/local/bin/bee"),
             Path("/usr/local/bin/enxame-install-ollama"),
             Path("/usr/local/lib/enxame-bee"),
-        ])
-    elif system == "windows":
-        bins.extend([
-            Path(os.getenv("PROGRAMFILES", "C:/Program Files")) / "ENXAME Bee",
-            Path(os.getenv("LOCALAPPDATA", "")) / "ENXAME Bee",
-        ])
-    
-    for bin_path in bins:
-        if bin_path.exists():
-            try:
-                if bin_path.is_dir():
-                    shutil.rmtree(bin_path)
-                else:
-                    bin_path.unlink()
-                log(f"Removido: {bin_path}")
-            except Exception as e:
-                warn(f"Erro ao remover {bin_path}: {e}")
+        ]
+    if system == "windows":
+        local = os.getenv("LOCALAPPDATA", "")
+        paths = [Path(os.getenv("PROGRAMFILES", "C:/Program Files")) / "ENXAME Bee"]
+        # LOCALAPPDATA vazio produziria Path("/ENXAME Bee"), que seria um alvo
+        # perigoso demais para um rmtree.
+        if local:
+            paths.append(Path(local) / "ENXAME Bee")
+        return paths
+    return []
+
+
+def remove_binaries(dry_run: bool = False):
+    """Remove binarios e wrappers"""
+    for bin_path in binary_paths():
+        remove_directory(bin_path, dry_run=dry_run)
 
 def remove_python_packages():
     """Remove pacotes Python instalados (opcional)"""
@@ -210,9 +295,9 @@ def main():
     parser.add_argument("-y", "--yes", action="store_true", help="Confirmar automaticamente")
     args = parser.parse_args()
     
-    print(f"{BLUE}==================================================${NC}")
-    print(f"{BLUE}  ENXAME Bee - Desinstalador v1.0.0${NC}")
-    print(f"{BLUE}==================================================${NC}")
+    print(f"{BLUE}=================================================={NC}")
+    print(f"{BLUE}  ENXAME Bee - Desinstalador v1.0.0{NC}")
+    print(f"{BLUE}=================================================={NC}")
     
     if not args.yes and not args.dry_run:
         confirm = input("Isso removera a Abelha completamente. Continuar? [y/N]: ")
@@ -221,36 +306,58 @@ def main():
             return 0
     
     if args.dry_run:
-        log("MODO DRY-RUN - Nenhuma acao sera executada")
-    
+        log("MODO DRY-RUN - nenhuma alteracao sera feita no sistema")
+        # Antes o dry-run apenas pulava todas as etapas sem mostrar nada.
+        # Agora lista exatamente o que seria removido.
+        step("O que seria removido")
+        targets = list_files_to_remove()
+        if targets:
+            for target in targets:
+                kind = "diretorio" if target.is_dir() else "arquivo"
+                log(f"  [{kind}] {target}")
+        else:
+            warn("  nada encontrado - a Abelha nao parece estar instalada")
+        if not args.keep_data:
+            log(f"  (dados incluidos; use --keep-data para preserva-los)")
+
+        step("Ollama")
+        ollama = detect_ollama()
+        if ollama["installed"] or ollama["running"]:
+            estado = "instalado e rodando" if ollama["running"] else "instalado (parado)"
+            warn(f"  Ollama {estado} em {ollama['url']}")
+            if ollama["models"]:
+                warn(f"  {len(ollama['models'])} modelo(s): {', '.join(ollama['models'][:8])}")
+            warn("  O Ollama pode ser compartilhado com outros aplicativos;")
+            warn("  nada sera removido sem --remove-ollama/--force-remove-ollama.")
+        else:
+            log("  Ollama nao detectado")
+        return 0
+
     step("Parando servicos da Abelha...")
-    if not args.dry_run:
-        stop_bee_service()
-    
+    stop_bee_service()
+
     step("Removendo binarios...")
-    if not args.dry_run:
-        remove_binaries()
-    
+    remove_binaries()
+
     step("Removendo configuracoes...")
-    if not args.dry_run:
-        remove_config_files()
-    
+    remove_config_files()
+
     step("Removendo dados...")
-    if not args.dry_run:
-        remove_data_dir(args.keep_data)
-    
+    remove_data_dir(args.keep_data)
+
     step("Limpando configuracoes de shell...")
-    if not args.dry_run:
-        clean_shell_configs()
-    
+    clean_shell_configs()
+
     if args.remove_ollama or args.force_remove_ollama:
         step("Removendo Ollama...")
-        if not args.dry_run:
-            remove_ollama(force=args.force_remove_ollama)
-    
+        remove_ollama(force=args.force_remove_ollama)
+    else:
+        ollama = detect_ollama()
+        if ollama["installed"] or ollama["running"]:
+            warn("Ollama detectado e PRESERVADO (use --remove-ollama para remover)")
+
     step("Removendo pacotes Python (opcional)...")
-    if not args.dry_run:
-        remove_python_packages()
+    remove_python_packages()
     
     log("==================================================")
     log("Desinstalacao concluida!")
