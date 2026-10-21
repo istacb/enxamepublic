@@ -158,7 +158,7 @@ class BeeService:
         # Capacidades descobertas (BEE-0003)
         self._capabilities: dict[str, Any] | None = None
 
-        # Cluster (EIP-0009)
+        # Cluster — eleição de papéis (bees/spec/EIP-0009-cluster-role-election.md)
         self.cluster_state: ClusterState | None = None
         self.cluster_role: ClusterRole | None = None
         self._cluster_monitor: ClusterMonitor | None = None
@@ -279,7 +279,7 @@ class BeeService:
         else:
             logger.info("cluster.enabled=false: fora do enxame, não anunciando no mDNS")
 
-        # 7. Inicializar Cluster (EIP-0009) - aguardar descoberta inicial
+        # 7. Inicializar Cluster (EIP-0009: eleição de papéis) - aguardar descoberta inicial
         await self._initialize_cluster()
 
         # 8. Servidor HTTP
@@ -1238,7 +1238,7 @@ class BeeService:
                 "load": self._calculate_load(),
             })
 
-        # Cluster status endpoint (EIP-0009)
+        # Cluster status endpoint (EIP-0009: eleição de papéis)
         async def cluster_status(request: Request) -> Response:
             if not self.cluster_state:
                 return web.json_response({
@@ -1556,7 +1556,7 @@ class BeeService:
                 # Peer vai parar, remover após timeout estimado
                 pass
         
-        # Cluster-specific handling (EIP-0009)
+        # Cluster-specific handling (EIP-0009: eleição de papéis)
         if self.cluster_state and state_change.reason in ("juiz_failover", "juiz_restored", "new_election"):
             if state_change.reason == "juiz_failover":
                 logger.warning(f"Failover de Juiz detectado: {state_change.node_id} assumiu")
@@ -1887,7 +1887,7 @@ class BeeService:
             if enxame_result["confidence"] >= self.config.confidence_threshold_web:
                 return {"answer": enxame_result["answer"], "source": "enxame", **enxame_result}
 
-        # 3. WEB - Fallback se habilitado E papel permite (EIP-0009)
+        # 3. WEB - Fallback se habilitado E papel permite (EIP-0004: despacho híbrido)
         if self.config.allow_web and self._librarian and self._internet_gate:
             if self._internet_gate.can_access(InternetPurpose.BIBLIOTECARIO_FALLBACK):
                 web_result = await self._librarian.search_web(query)

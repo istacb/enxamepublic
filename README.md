@@ -10,7 +10,7 @@ Construído do zero para eliminar dependências herdadas, maximizar eficiência 
 ## 🏗️ Princípios Fundamentais
 
 ### 1. Architecture First (EIP-0001)
-Toda decisão técnica é precedida por especificação arquitetural documentada em `spec/`. 
+Toda decisão técnica é precedida por especificação arquitetural documentada em `bees/spec/`. 
 Não implementamos nada sem antes definir o "porquê" e o "como" na documentação oficial.
 
 ### 2. Resource First (EIP-0002)
@@ -82,7 +82,7 @@ quem recebe o prompt quanto em quem faz a curadoria.
 | `bibliotecario/` | Módulos de RAG que a abelha usa: embeddings, indexador, LanceDB, leitor universal, cliente web e ZIM. |
 | `guardian/` | Segurança: inspeção de prompt, curadoria de resposta e ronda de anomalias. |
 | `core/` | Infraestrutura comum: descoberta mDNS, HTTP assinado, segurança EXP e shims de compatibilidade. |
-| `spec/` | Especificações arquiteturais e EIPs (documentação). |
+| `bees/spec/` | Especificações do produto (BEE-000x) e EIPs que a abelha implementa. |
 | `.github/` | CI. |
 
 O que **não** existe mais e aparecia aqui antes: `kernel/`, `runtime/`,
@@ -93,7 +93,17 @@ elas descreviam hoje está pronto em `bees/`. `api/`, `juiz/`, `agentes/` e
 `enxame_evolved/` eram uma segunda stack (FastAPI, processos separados na porta
 7700) que só importava a si mesma; mantê-la era manter dois produtos e dois
 caminhos de instalação. `cli/`, `security/` e `test/` não eram importados por
-nada
+nada. `core/cluster/` e `core/memory/` eram usados **só** por aquela stack
+antiga e ficaram órfãos quando ela saiu — a abelha tem a sua própria eleição em
+`bees/cluster/` e a sua própria memória em `bees/memory.py`.
+
+O diretório `spec/` (101 arquivos, com o mesmo conjunto de documentos duplicado
+em `en/` e `pt-BR/`) descrevia a arquitetura anterior: missões, workflows,
+especializações e um microkernel que não existem mais no código. Só **um** dos
+101 arquivos mencionava a abelha. O que corresponde ao sistema real foi
+consolidado em [`bees/spec/`](bees/spec/), ao lado do código que descreve; o
+resto permanece no histórico do Git.
+
 ---
 
 ## 🚀 Instalação
@@ -258,7 +268,7 @@ O Enxame utiliza arquivos de configuração em formato JSON/YAML localizados em 
 ### EIP-0001: Architecture First
 > "Nenhuma implementação precede sua especificação."
 
-Todas as mudanças arquiteturais devem ser documentadas em `spec/en/eip/` antes da implementação.
+Todas as mudanças arquiteturais devem ser documentadas em `bees/spec/` antes da implementação.
 
 ### EIP-0002: Resource First
 > "Eficiência é feature, não otimização."
@@ -344,7 +354,7 @@ Para reaproveitar uma instalação OpenWebUI existente:
 
 ## 🤝 Contribuindo
 
-1. Leia as especificações em `spec/en/`
+1. Leia as especificações em `bees/spec/`
 2. Crie uma EIP para mudanças arquiteturais
 3. Implemente seguindo EIP-0001 e EIP-0002
 4. Rode `python -m pytest bees/` e abra o pull request
@@ -386,7 +396,6 @@ Desenvolvido pela comunidade, para a comunidade.
 
 ---
 
-**Documentação Completa:** [`spec/en/`](spec/en/)  
-**EIPs Ativas:** [`spec/en/eip/`](spec/en/eip/)  
+**Especificações:** [`bees/spec/`](bees/spec/) — BEE-000x (o produto) e as EIPs que a abelha implementa.  
 **Guia de Instalação:** a seção [🚀 Instalação](#-instalação) desta página (um comando só).  
 **Detalhes do instalador:** [`bees/install/README.md`](bees/install/README.md)

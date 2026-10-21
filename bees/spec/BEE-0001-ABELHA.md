@@ -1296,6 +1296,25 @@ Uma implementação da Abelha está completa quando:
 
 ## ANEXO A: REFERÊNCIAS A COMPONENTES EXISTENTES
 
+> Nota posterior à escrita deste spec: este anexo é o **mapa de extração** que
+> guiou a construção da abelha a partir do repositório anterior, e não uma lista
+> de arquivos atuais. Vários dos caminhos citados já não existem — a extração foi
+> concluída e as fontes, removidas:
+>
+> - `core/cluster/election.py`, `core/cluster/benchmark.py` e
+>   `core/memory/usuario_memory.py` eram importados **só** pela stack antiga
+>   (`juiz/`, `agentes/`, `api/`, `enxame_evolved/`). Quando ela saiu, ficaram
+>   órfãos e foram removidos. O que se aproveitou deles vive agora em
+>   `bees/cluster/election.py` (eleição por capacidades, não papéis fixos) e em
+>   `bees/memory.py` (`BeeMemory`).
+> - `bibliotecario/search_service.py` e `bibliotecario/translator.py` foram
+>   removidos; a busca da abelha está em `bees/librarian.py`.
+> - `agentes/` e `juiz/` foram removidos por completo.
+>
+> Permanecem válidos e em uso: `core/discovery/`, `core/ollama/client.py`,
+> `core/exp/input_sanitizer.py`, `core/exp/security.py` e os seis módulos de
+> `bibliotecario/` listados em A.2 (exceto `search_service.py`).
+
 ### A.1 Componentes Reutilizáveis (core/)
 
 | Componente | Arquivo | Adaptação Necessária |

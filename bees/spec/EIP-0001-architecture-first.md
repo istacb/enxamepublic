@@ -19,13 +19,18 @@ Estabelecer a prática de "Arquitetura First" como princípio fundamental do pro
 
 ### Estrutura de Especificação
 
-Criar diretório `spec/` com subdiretórios para:
-- `constitution/` - Constituição e glossário
-- `domain/` - Modelos de domínio
-- `protocols/` - Protocolos de comunicação
-- `diagrams/` - Diagramas arquiteturais
-- `schemas/` - Schemas de validação
-- `eip/` - Propostas de melhoria
+> **Nota (revisão de 2026):** a árvore `spec/` original — com `constitution/`,
+> `domain/`, `diagrams/`, `concepts/` e cópias duplicadas em `en/` e `pt-BR/` —
+> descrevia a arquitetura anterior (missões, workflows, especializações,
+> microkernel), que foi removida por não ter nenhum importador vivo. As
+> especificações foram **consolidadas em `bees/spec/`**, ao lado do código que
+> elas descrevem, mantendo apenas o que corresponde ao sistema real: as BEE-000x
+> e as EIPs que a abelha implementa. O histórico completo permanece no Git.
+
+Criar diretório de especificações com:
+- Especificações do produto (BEE-000x) - o que a abelha é e como se comporta
+- Protocolos de comunicação
+- Propostas de melhoria (EIPs)
 
 ### Processo de Mudança
 

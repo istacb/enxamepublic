@@ -217,7 +217,7 @@ mypy bees/
 
 ## Princípios (EIP-0001, EIP-0002)
 
-1. **Architecture First** — Specs em `spec/` antes de implementar
+1. **Architecture First** — Specs em `bees/spec/` antes de implementar
 2. **Resource First** — Zero Docker, zero frameworks frontend, dependências mínimas
 3. **Soberania Digital** — Sem OpenWebUI, infraestrutura própria, controle total
 4. **Offline First** — Internet é fallback, não dependência

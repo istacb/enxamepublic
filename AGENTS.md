@@ -15,13 +15,23 @@ zero frontend frameworks, zero TypeScript.
   `lancedb_store`, `universal_reader`, `web_client`, `zim_reader`
 - `guardian/` — Prompt inspection, answer curation, anomaly patrol
 - `core/` — Shared infra: mDNS discovery, signed HTTP, EXP security, compat shims
-- `spec/en/eip/` — Architecture specs (EIP-0001, EIP-0002)
+- `bees/spec/` — Product specs (BEE-000x) plus the EIPs the bee implements
+  (0001, 0002, 0003, 0004, 0009)
 
 Removed because nothing used them: `kernel/`, `runtime/`, `scheduler/`,
 `service-loader/`, `failover/` (TypeScript with no `package.json`/`tsconfig`
 anywhere, so uncompilable), and `api/`, `juiz/`, `agentes/`, `enxame_evolved/`
 (a second FastAPI stack on port 7700 that only imported itself). Also gone:
 `cli/`, `security/`, `test/`, root `requirements.txt`, and all tracked `.pyc`.
+
+Removed as a consequence: `core/cluster/` and `core/memory/` were imported
+**only** by that legacy stack, so they became orphans when it went away — the
+bee has its own election in `bees/cluster/` and its own memory in
+`bees/memory.py`. The root `spec/` tree (101 files, every document duplicated in
+`en/` and `pt-BR/`) described the previous architecture — missions, workflows,
+specializations, microkernel — of which exactly **one** file mentioned the bee.
+The EIPs that do describe live code were consolidated into `bees/spec/`; the
+rest stays in Git history.
 
 ---
 
@@ -113,7 +123,7 @@ Config: `bees/pyproject.toml` — ruff line-length=100, target-version=py310; my
 
 | Principle | Rule |
 |-----------|------|
-| **EIP-0001: Architecture First** | No implementation without spec in `spec/en/eip/` |
+| **EIP-0001: Architecture First** | No implementation without spec in `bees/spec/` |
 | **EIP-0002: Resource First** | Zero Docker, zero frontend frameworks, minimal deps |
 | **One service** | The bee (`bees/service.py`) is the product. No microkernel, no separate processes. |
 | **Web UI** | Pure HTML/CSS/JS, zero business logic, served by the bee at `/`, REST to the bee's own `/api/*` |
@@ -140,7 +150,7 @@ Config: `bees/pyproject.toml` — ruff line-length=100, target-version=py310; my
   root `requirements.txt` — the one that existed listed only legacy-stack
   packages (fastapi/uvicorn/typer) and omitted `aiohttp` and `cryptography`,
   so following it produced a bee that could not even import.
-- **Specs**: All architectural changes require EIP in `spec/en/eip/` before implementation
+- **Specs**: All architectural changes require EIP in `bees/spec/` before implementation
 
 ---
 
@@ -209,8 +219,7 @@ GET  /api/v1/cluster            # Cluster status (EIP-0009)
   systemd/LaunchAgent/schtasks service)
 - Shims that delegate to it: `install-bee-smart.py` (repo root),
   `bees/install/universal_installer.py` (PyInstaller/AppImage entry point)
-- EIP specs: `spec/en/eip/`
-- Bees protocol specs: `bees/spec/`
+- Specs (product BEE-000x and EIPs): `bees/spec/`
 - Bee CLI: `bees/cli.py`
 - Telemetry: `bees/telemetry.py`
 - Web UI: `web/`

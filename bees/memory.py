@@ -7,7 +7,8 @@ Armazena:
 - Histórico de interações
 - Memória semântica (tags, conceitos, relevância)
 
-Reutiliza padrões do core/memory/usuario_memory.py
+Reutiliza os padrões do antigo core/memory/usuario_memory.py, removido
+por estar órfão (nenhum módulo o importava). Este módulo é autossuficiente.
 """
 
 from __future__ import annotations
