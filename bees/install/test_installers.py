@@ -611,6 +611,75 @@ class TestWebUiNaRaiz(unittest.TestCase):
                         "o mount estático em '/' sombrearia a rota do index")
 
 
+class TestOllamaVerificado(unittest.TestCase):
+    """Instalar o Ollama não é o mesmo que ele estar atendendo.
+
+    Antes desta correção, todos os ramos de instalação (winget no Windows,
+    Homebrew no macOS, curl no Debian, pacman no Arch) devolviam a URL fixa
+    "http://localhost:11434" com a lista de modelos VAZIA, sem nunca conferir se
+    a API HTTP respondia. main() só testava `if not ollama_url`, que é verdade
+    para uma string não vazia — então o instalador seguia para o PASSO 4,
+    terminava com "Abelha instalada e configurada!" e o usuário ficava com uma
+    abelha sem modelo nenhum. Estes testes travam os dois lados do contrato.
+    """
+
+    def test_wait_retorna_true_assim_que_responde(self):
+        from install.bee_installer import wait_ollama_ready
+
+        with patch("install.bee_installer.is_ollama_running", return_value=True):
+            self.assertTrue(wait_ollama_ready(timeout=5))
+
+    def test_wait_retorna_false_quando_nunca_responde(self):
+        from install.bee_installer import wait_ollama_ready
+
+        with patch("install.bee_installer.is_ollama_running", return_value=False), \
+             patch("install.bee_installer.time.sleep", lambda *_: None):
+            self.assertFalse(wait_ollama_ready(timeout=1))
+
+    def test_ollama_verificado_eh_honesto_quando_nao_responde(self):
+        """O contrato que importa: sem resposta, devolve (None, []) — nunca uma
+        URL de mentirinha que faria main() seguir em frente."""
+        from install.bee_installer import ollama_verificado
+
+        with patch("install.bee_installer.wait_ollama_ready", return_value=False):
+            url, modelos = ollama_verificado()
+
+        self.assertIsNone(url, "URL não verificada vazaria como sucesso")
+        self.assertEqual(modelos, [])
+
+    def test_ollama_verificado_redetecta_os_modelos_reais(self):
+        """Quando responde, precisa devolver os modelos DE VERDADE — o ramo de
+        instalação tinha [] em mãos, e o PASSO 4 usa essa lista para não baixar
+        um modelo que já existe."""
+        from install.bee_installer import ollama_verificado
+
+        deteccao = {"url": "http://localhost:11434",
+                    "models": ["llama3.2:3b", "qwen2.5:0.5b"]}
+        with patch("install.bee_installer.wait_ollama_ready", return_value=True), \
+             patch("install.bee_installer.detect_ollama", return_value=deteccao):
+            url, modelos = ollama_verificado()
+
+        self.assertEqual(url, "http://localhost:11434")
+        self.assertEqual(modelos, ["llama3.2:3b", "qwen2.5:0.5b"])
+
+    def test_nenhum_ramo_devolve_url_fixa_sem_verificar(self):
+        """Trava a regressão no código-fonte: o padrão de falso sucesso não pode
+        voltar em nenhum dos quatro ramos de instalação."""
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertNotIn('return "http://localhost:11434", []', codigo,
+                         "ramo de instalação devolvendo URL sem verificar")
+        self.assertNotIn("return url, []", codigo,
+                         "ramo de instalação devolvendo URL sem verificar")
+
+    def test_main_trata_none_como_falha(self):
+        """O que torna a honestidade efetiva: main() encerra quando vem None."""
+        codigo = (Path(__file__).parent / "bee_installer.py").read_text(encoding="utf-8")
+        self.assertIn("ollama_url, existing_models = install_ollama_if_needed()", codigo)
+        self.assertIn("if not ollama_url:", codigo)
+        pos_saida = codigo.index("Não foi possível instalar/verificar o Ollama")
+        self.assertGreater(pos_saida, codigo.index("if not ollama_url:"))
+
+
 
 if __name__ == '__main__':
     print("="*60)

@@ -951,6 +951,56 @@ def is_ollama_running(url="http://localhost:11434"):
         return False
 
 
+def wait_ollama_ready(url="http://localhost:11434", timeout=90):
+    """Espera a API HTTP do Ollama responder, até `timeout` segundos.
+
+    Retorna True se respondeu. Isso existe porque instalar o Ollama NÃO
+    significa que ele está atendendo: no Windows o winget registra o app mas o
+    serviço pode demorar a subir, e no Linux/macOS o daemon inicia em
+    background. Sem esta espera o instalador devolvia uma URL fixa sem
+    verificar, seguia para o PASSO 4 e terminava "com sucesso" sem Ollama
+    nenhum - exatamente o relato de "depois de instalado, nada funciona".
+    """
+    if DRY_RUN:
+        return _dry(f"aguardar o Ollama responder em {url}", True)
+    deadline = time.time() + timeout
+    tentativas = 0
+    while time.time() < deadline:
+        tentativas += 1
+        if is_ollama_running(url):
+            return True
+        if tentativas % 5 == 0:
+            restantes = int(deadline - time.time())
+            cprint(f"   aguardando o Ollama responder em {url} ({restantes}s restantes)...",
+                   Colors.OKCYAN)
+        time.sleep(2)
+    return False
+
+
+def ollama_verificado(url="http://localhost:11434"):
+    """Confirma que o Ollama responde e devolve (url, modelos REAIS).
+
+    Re-detecta em vez de devolver a lista vazia que o ramo de instalação tinha
+    em mãos: logo após instalar, `ollama list` já responde, e o PASSO 4 precisa
+    saber o que existe para não baixar um modelo duplicado.
+    """
+    if not wait_ollama_ready(url):
+        print_error(f"O Ollama foi instalado, mas não está respondendo em {url}.")
+        cprint(
+            "   O instalador NÃO vai fingir que isto funcionou. Para resolver:\n"
+            '   - Windows: abra o menu Iniciar, execute "Ollama" uma vez e rode\n'
+            "     este instalador de novo (o serviço fica residente).\n"
+            "   - Linux/macOS: rode `ollama serve` num terminal e, em outro,\n"
+            "     este instalador de novo.\n"
+            "   - Se já usa outra porta/host: passe --ollama-url http://HOST:PORTA.",
+            Colors.WARNING,
+        )
+        return None, []
+    det = detect_ollama()
+    print_success(f"Ollama respondendo em {det['url']} ({len(det['models'])} modelo(s))")
+    return det["url"], det["models"]
+
+
 def install_ollama_if_needed():
     """Verifica Ollama e instala se necessário. Retorna URL base."""
     if DRY_RUN:
@@ -1003,7 +1053,7 @@ def install_ollama_if_needed():
                     # sessão não foi atualizado; tenta o caminho padrão.
                     _windows_refresh_ollama_path()
                     start_ollama_daemon()
-                    return "http://localhost:11434", []
+                    return ollama_verificado()
 
                 cprint(
                     "winget não encontrado. Baixe o instalador em "
@@ -1025,7 +1075,7 @@ def install_ollama_if_needed():
                         print_error("Homebrew falhou ao instalar o Ollama")
                         return None, []
                     start_ollama_daemon()
-                    return "http://localhost:11434", []
+                    return ollama_verificado()
                 else:
                     cprint("Homebrew não encontrado", Colors.WARNING)
                     return None, []
@@ -1062,10 +1112,7 @@ def install_ollama_if_needed():
                 finally:
                     Path(script_path).unlink(missing_ok=True)
                 start_ollama_daemon()
-                import time
-                time.sleep(3)
-                url = "http://localhost:11434"
-                return url, []
+                return ollama_verificado()
 
             elif os_type == "arch":
                 proc = subprocess.run(
@@ -1075,10 +1122,7 @@ def install_ollama_if_needed():
                     print_error("pacman falhou ao instalar o Ollama")
                     return None, []
                 start_ollama_daemon()
-                import time
-                time.sleep(3)
-                url = "http://localhost:11434"
-                return url, []
+                return ollama_verificado()
 
             else:
                 cprint("Sistema operacional não suportado para instalação automática de Ollama", Colors.FAIL)
@@ -1088,6 +1132,11 @@ def install_ollama_if_needed():
             cprint(f"Erro ao instalar Ollama: {e}", Colors.FAIL)
             return None, []
 
+    # `detection` aqui é a leitura feita ANTES de tentar iniciar o daemon; se
+    # chegamos a este ponto o estado pode ter mudado, então confirma de novo em
+    # vez de devolver informação velha.
+    if not is_ollama_running(detection["url"]):
+        return ollama_verificado(detection["url"])
     return detection["url"], detection["models"]
 
 
