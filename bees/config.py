@@ -60,8 +60,15 @@ class BeeConfig:
     # Embeddings
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # Modelo local leve
 
-    # Cluster
-    cluster: dict = field(default_factory=lambda: {"enabled": False, "auto_elect": True, "min_peers": 3})
+    # Cluster.
+    #
+    # `enabled` default True porque É o comportamento real: com 3+ abelhas se
+    # enxergando na rede o enxame se forma sozinho (é o que a especificação
+    # pede). O instalador pergunta "Deseja ativar modo cluster?" e grava este
+    # campo; colocar False aqui agora é um opt-out que o serviço respeita.
+    # `auto_elect` False = não elege, só reaproveita estado já persistido.
+    # `min_peers` = quantas abelhas (contando esta) formam um enxame.
+    cluster: dict = field(default_factory=lambda: {"enabled": True, "auto_elect": True, "min_peers": 3})
 
     def __post_init__(self) -> None:
         """Resolve paths e valida configuração."""
@@ -152,14 +159,37 @@ def get_default_data_dir() -> Path:
 
 def load_config(args: Any | None = None) -> BeeConfig:
     """
-    Carrega configuração combinando:
+    Carrega configuração combinando, em ordem crescente de prioridade:
     1. Defaults
-    2. Arquivo de configuração (~/.enxame/bee/config.json)
+    2. Arquivo de configuração: <data_dir>/config.json, onde data_dir vem de
+       --data-dir / --config / BEE_DATA_DIR (senão o diretório padrão)
     3. Variáveis de ambiente
     4. Argumentos de linha de comando (args)
     """
     # 1. Defaults
     config = BeeConfig(data_dir=get_default_data_dir())
+
+    # 1b. Resolver o data_dir ANTES de ler o config.json — o arquivo mora
+    #     dentro dele. A ordem antiga lia o config.json do diretório PADRÃO e
+    #     só depois aplicava --data-dir, então o config.json do diretório
+    #     escolhido pelo usuário nunca era lido. Isso anulava na prática tudo
+    #     que o instalador gravava lá (enable_cluster_mode, modelo, segredo...).
+    #     A precedência continua defaults < arquivo < env < CLI: aqui só
+    #     descobrimos ONDE está o arquivo; os passos 3 e 4 ainda sobrescrevem.
+    data_dir_override = None
+    if args:
+        for arg_name in ("data_dir", "config"):
+            value = getattr(args, arg_name, None)
+            if value is not None:
+                data_dir_override = Path(value)
+                break
+    if data_dir_override is None:
+        env_data_dir = os.getenv("BEE_DATA_DIR")
+        if env_data_dir:
+            data_dir_override = Path(env_data_dir)
+    if data_dir_override is not None:
+        config.data_dir = data_dir_override.expanduser().resolve()
+        config.data_dir.mkdir(parents=True, exist_ok=True)
 
     # 2. Arquivo de configuração
     config_file = config.data_dir / "config.json"

@@ -240,6 +240,119 @@ class TestManifestStructure(unittest.TestCase):
         self.assertIn(manifest['status'], valid_statuses)
 
 
+class TestClusterOptIn(unittest.TestCase):
+    """O instalador pergunta "Deseja ativar modo cluster?" — a resposta tem que valer.
+
+    `cluster.enabled` era gravado por enable_cluster_mode e nunca lido pelo
+    serviço, então responder "n" era decorativo: o enxame se formava do mesmo
+    jeito. Estes testes travam os dois lados (aceitar e recusar).
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data_dir = Path(self.tmp.name)
+        self.config_file = self.data_dir / "config.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _escrever_config(self, extra=None):
+        import json
+        base = {"node_id": "abelha-01", "port": 8765}
+        if extra:
+            base.update(extra)
+        self.config_file.write_text(json.dumps(base), encoding="utf-8")
+        return base
+
+    def _ler(self):
+        import json
+        return json.loads(self.config_file.read_text(encoding="utf-8"))
+
+    def test_enable_cluster_mode_grava_enabled_true(self):
+        from install.universal_installer import enable_cluster_mode
+
+        self._escrever_config()
+        enable_cluster_mode(self.data_dir)
+
+        self.assertTrue(self._ler()["cluster"]["enabled"])
+        self.assertEqual(self._ler()["cluster"]["min_peers"], 3)
+
+    def test_enable_preserva_outras_chaves(self):
+        from install.universal_installer import enable_cluster_mode
+
+        self._escrever_config()
+        enable_cluster_mode(self.data_dir)
+
+        self.assertEqual(self._ler()["node_id"], "abelha-01")
+        self.assertEqual(self._ler()["port"], 8765)
+
+    def test_disable_cluster_mode_grava_enabled_false(self):
+        from install.universal_installer import disable_cluster_mode
+
+        self._escrever_config({"cluster": {"enabled": True, "min_peers": 3}})
+        disable_cluster_mode(self.data_dir)
+
+        config = self._ler()
+        self.assertFalse(config["cluster"]["enabled"])
+        # min_peers não pode ser perdido no caminho
+        self.assertEqual(config["cluster"]["min_peers"], 3)
+
+    def test_disable_sem_config_json_nao_cria_arquivo(self):
+        from install.universal_installer import disable_cluster_mode
+
+        disable_cluster_mode(self.data_dir)  # não existe config.json
+
+        self.assertFalse(self.config_file.exists())
+
+    def test_optin_retorna_none_quando_nao_ha_peers(self):
+        """Sem 2+ outras abelhas não há o que perguntar — e nada deve ser gravado."""
+        from install.universal_installer import prompt_cluster_optin
+
+        with patch("install.universal_installer.discover_local_peers", return_value=[]):
+            resposta = prompt_cluster_optin(self.data_dir, auto=False)
+
+        self.assertIsNone(resposta)
+
+    def test_optin_retorna_true_em_modo_auto_com_peers(self):
+        from install.universal_installer import prompt_cluster_optin
+
+        peers = [
+            {"node_id": "abelha-02", "role": "bee", "host": "h", "port": 1, "capabilities": []},
+            {"node_id": "abelha-03", "role": "bee", "host": "h", "port": 2, "capabilities": []},
+        ]
+        with patch("install.universal_installer.discover_local_peers", return_value=peers):
+            resposta = prompt_cluster_optin(self.data_dir, auto=True)
+
+        self.assertTrue(resposta)
+
+    def test_optin_retorna_false_quando_usuario_recusa(self):
+        from install.universal_installer import prompt_cluster_optin
+
+        peers = [
+            {"node_id": "abelha-02", "role": "bee", "host": "h", "port": 1, "capabilities": []},
+            {"node_id": "abelha-03", "role": "bee", "host": "h", "port": 2, "capabilities": []},
+        ]
+        with patch("install.universal_installer.discover_local_peers", return_value=peers), \
+             patch("builtins.input", return_value="n"):
+            resposta = prompt_cluster_optin(self.data_dir, auto=False)
+
+        self.assertFalse(resposta)
+
+    def test_optin_ignora_peers_que_nao_sao_abelhas(self):
+        """Só conta role == "bee"; outro serviço na rede não forma enxame."""
+        from install.universal_installer import prompt_cluster_optin
+
+        peers = [
+            {"node_id": "juiz-x", "role": "juiz", "host": "h", "port": 1, "capabilities": []},
+            {"node_id": "impressora", "role": "printer", "host": "h", "port": 2, "capabilities": []},
+        ]
+        with patch("install.universal_installer.discover_local_peers", return_value=peers):
+            resposta = prompt_cluster_optin(self.data_dir, auto=True)
+
+        self.assertIsNone(resposta)
+
+
 if __name__ == '__main__':
     print("="*60)
     print("🐝 TESTES DOS INSTALADORES DA ABELHA")

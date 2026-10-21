@@ -358,3 +358,167 @@ def test_knowledge_check_prefere_quem_tem_mais_termos():
     completa = asyncio.run(lib_completa.quick_knowledge_check("producao de mel no pantanal"))
 
     assert completa["confidence"] >= parcial["confidence"]
+
+
+# ---------------------------------------------------------------------------
+# Opt-out: a pergunta do instalador precisa valer
+# ---------------------------------------------------------------------------
+
+def _service_stub(cluster_cfg, peers=2):
+    """BeeService mínimo: só o que a formação do enxame consulta."""
+    from bees.service import BeeService
+
+    svc = BeeService.__new__(BeeService)
+    svc.node_id = "abelha-01"
+    # host_ip/port alimentam _self_peer(); sem capabilities/librarian os
+    # fallbacks devolvem listas vazias, que é o suficiente para eleger.
+    svc.config = SimpleNamespace(cluster=cluster_cfg, host_ip="169.254.0.21", port=8765, allow_web=False)
+    svc._capabilities = None
+    svc._librarian = None
+    svc._running = True
+    svc._standalone = True
+    svc._cluster_reelect_task = None
+    svc.cluster_state = None
+    svc._discovery = SimpleNamespace(
+        get_active_peers=lambda: [make_peer(f"abelha-{i:02d}") for i in range(2, 2 + peers)]
+    )
+    return svc
+
+
+def test_cluster_enabled_reflete_a_configuracao():
+    """`cluster.enabled` deixou de ser um campo que ninguém lia."""
+    assert _service_stub({"enabled": True})._cluster_enabled() is True
+    assert _service_stub({"enabled": False})._cluster_enabled() is False
+
+
+def test_cluster_enabled_default_e_true():
+    """Sem configuração o enxame se forma — é o que a especificação pede.
+
+    O default antigo era False, mas o serviço ignorava o campo; mudar o default
+    para True mantém o comportamento real e dá ao False um sentido (opt-out).
+    """
+    assert _service_stub({})._cluster_enabled() is True
+    assert _service_stub(None)._cluster_enabled() is True
+
+
+def test_opt_out_impede_a_formacao_dinamica():
+    """Quem disse "não" ao instalador não entra em enxame nem depois.
+
+    `_maybe_form_cluster` reavalia a formação quando peers aparecem após o boot;
+    sem este gate o opt-out valia só no startup.
+    """
+    svc = _service_stub({"enabled": False}, peers=2)
+
+    async def roda():
+        svc._maybe_form_cluster()
+        assert svc._cluster_reelect_task is None, "não deveria ter agendado reeleição"
+
+    asyncio.run(roda())
+    assert svc._standalone is True
+
+
+def test_com_cluster_ativado_a_formacao_dinamica_agenda():
+    """Contraprova do teste acima: ativado, a reavaliação é agendada."""
+    svc = _service_stub({"enabled": True}, peers=2)
+
+    async def roda():
+        svc._maybe_form_cluster()
+        tarefa = svc._cluster_reelect_task
+        assert tarefa is not None
+        tarefa.cancel()
+        try:
+            await tarefa
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(roda())
+
+
+def test_opt_out_mantem_standalone_mesmo_com_tres_abelhas(tmp_path):
+    """Com enabled=false, 3 abelhas na rede não formam enxame."""
+    svc = _service_stub({"enabled": False}, peers=2)
+    svc.config = SimpleNamespace(
+        cluster={"enabled": False}, data_dir=tmp_path, host_ip="169.254.0.21", port=8765, allow_web=False
+    )
+    svc._standalone = False
+
+    asyncio.run(svc._initialize_cluster())
+
+    assert svc._standalone is True
+    assert svc.cluster_role == ClusterRole.WORKER
+
+
+def test_auto_elect_false_sem_estado_persistido_fica_standalone(tmp_path):
+    """`auto_elect=false` sem eleição anterior não inventa papéis."""
+    svc = _service_stub({"enabled": True, "auto_elect": False}, peers=2)
+    svc.config = SimpleNamespace(
+        cluster={"enabled": True, "auto_elect": False},
+        data_dir=tmp_path,
+        host_ip="169.254.0.21",
+        port=8765,
+        allow_web=False,
+    )
+
+    asyncio.run(svc._initialize_cluster())
+
+    assert svc._standalone is True
+    assert svc.cluster_role == ClusterRole.WORKER
+
+
+def test_config_json_do_data_dir_escolhido_e_lido(tmp_path):
+    """O config.json do --data-dir precisa ser lido.
+
+    `load_config` lia o arquivo do data_dir PADRÃO e só depois aplicava
+    --data-dir, então o config.json do diretório escolhido pelo usuário nunca
+    era lido. Isso anulava tudo que o instalador gravava lá — inclusive o
+    cluster.enabled que a pergunta "Deseja ativar modo cluster?" produz.
+    """
+    import json
+
+    from bees.config import load_config
+
+    (tmp_path / "config.json").write_text(
+        json.dumps({"cluster": {"enabled": False, "auto_elect": True, "min_peers": 3}}),
+        encoding="utf-8",
+    )
+
+    config = load_config(SimpleNamespace(data_dir=tmp_path))
+
+    assert config.data_dir == tmp_path.resolve()
+    assert config.cluster["enabled"] is False
+
+
+def test_cli_sobrescreve_o_config_json(tmp_path):
+    """A precedência documentada é arquivo < env < CLI; o data_dir não é exceção."""
+    import json
+    import os
+
+    from bees.config import load_config
+
+    (tmp_path / "config.json").write_text(
+        json.dumps({"port": 9999, "node_id": "do-arquivo"}), encoding="utf-8"
+    )
+
+    config = load_config(SimpleNamespace(data_dir=tmp_path, port=8765, node_id=None))
+
+    assert config.port == 8765          # CLI vence o arquivo
+    assert config.node_id == "do-arquivo"  # o que a CLI não definiu vem do arquivo
+
+
+def test_segunda_chamada_de_stop_nao_faz_nada():
+    """`stop()` é chamado duas vezes no desligamento e não pode quebrar.
+
+    O handler de sinal agenda `bee.stop()` e o `finally` de main() chama de
+    novo. As duas execuções concorriam e o segundo `cleanup()` do servidor HTTP
+    achava `_server` já nulo (AttributeError), encerrando o processo com
+    traceback — o que num serviço systemd/Windows aparece como "failed".
+    """
+    from bees.service import BeeService
+
+    svc = BeeService.__new__(BeeService)
+    svc.node_id = "abelha-01"
+    svc._stopping = True  # primeira chamada já em andamento
+
+    # Com o guarda, retorna antes de tocar em qualquer atributo. Sem ele,
+    # a primeira linha (self.state = BeeState.STOPPING) levantaria AttributeError.
+    asyncio.run(svc.stop())

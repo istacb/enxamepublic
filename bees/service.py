@@ -114,6 +114,7 @@ class BeeService:
         self._discovery: BeeDiscoveryService | None = None
 
         self._running = False
+        self._stopping = False
         self._tasks: list[asyncio.Task] = []
 
         # Servidor HTTP (precisam existir desde o __init__: stop() é chamado
@@ -264,8 +265,17 @@ class BeeService:
         logger.info("Descoberta mDNS iniciada")
 
         # 6. Anunciar presença via mDNS usando BeeDiscoveryService (não NodeAnnouncer)
-        await self._discovery.start_announcement()
-        logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
+        #
+        # Quem desativou o cluster NÃO se anuncia. As outras abelhas contam os
+        # anúncios para medir o tamanho do enxame e distribuem papéis entre quem
+        # aparece; uma abelha opt-out visível seria contada e poderia ser eleita
+        # juiz sem nunca agir — um enxame com líder ausente. Continua descobrindo
+        # e servindo a própria interface, apenas invisível para eleição.
+        if self._cluster_enabled():
+            await self._discovery.start_announcement()
+            logger.info(f"Anunciando via mDNS em {self.config.host_ip}:{self.config.port}")
+        else:
+            logger.info("cluster.enabled=false: fora do enxame, não anunciando no mDNS")
 
         # 7. Inicializar Cluster (EIP-0009) - aguardar descoberta inicial
         await self._initialize_cluster()
@@ -301,7 +311,22 @@ class BeeService:
         logger.info(f"Abelha {self.node_id} ONLINE - Estado: RUNNING")
 
     async def stop(self) -> None:
-        """Finaliza graceful da Abelha."""
+        """Finaliza graceful da Abelha. Idempotente.
+
+        `main()` registra um handler de sinal que agenda `bee.stop()` e, ao
+        final, chama `await bee.stop()` outra vez. As duas chamadas corriam
+        juntas: ambas passavam no `if self._http_runner` antes de qualquer uma
+        colocá-lo em None, e o segundo `cleanup()` encontrava o servidor já
+        desligado — AttributeError: 'NoneType' object has no attribute
+        'pre_shutdown'. O processo morria com traceback e código diferente de
+        zero, o que num serviço systemd/Windows (criado pelo instalador)
+        aparece como "failed".
+        """
+        if self._stopping:
+            logger.debug(f"stop() já em andamento em {self.node_id}; ignorando duplicata")
+            return
+        self._stopping = True
+
         logger.info(f"Parando Abelha {self.node_id}...")
         self.state = BeeState.STOPPING
         self._running = False
@@ -344,8 +369,13 @@ class BeeService:
 
         # Parar servidor HTTP próprio (se iniciamos)
         if self._own_http_server and self._http_runner:
-            await self._http_runner.cleanup()
-            self._http_runner = None
+            runner, self._http_runner = self._http_runner, None
+            try:
+                await runner.cleanup()
+            except Exception as exc:
+                # Nada aqui pode impedir o resto do desligamento (mDNS,
+                # bibliotecário, memória) de acontecer.
+                logger.warning(f"Falha ao encerrar o servidor HTTP: {exc}")
 
         # Parar anúncio mDNS
         if self._discovery:
@@ -384,6 +414,35 @@ class BeeService:
             models=self._get_models_list(),
         )
 
+    def _cluster_flag(self, name: str, default: bool) -> bool:
+        """Lê um booleano de config.cluster tolerando configuração malformada."""
+        cluster_cfg = getattr(self.config, "cluster", None) or {}
+        try:
+            return bool(cluster_cfg.get(name, default))
+        except AttributeError:
+            return default
+
+    def _cluster_enabled(self) -> bool:
+        """Se esta abelha pode participar de um enxame.
+
+        `cluster.enabled` era gravado pelo instalador (`enable_cluster_mode`) e
+        nunca lido pelo serviço: responder "n" à pergunta "Deseja ativar modo
+        cluster?" não impedia nada — bastavam 2 outras abelhas na rede para o
+        enxame se formar à revelia do usuário.
+        """
+        return self._cluster_flag("enabled", True)
+
+    def _auto_elect_enabled(self) -> bool:
+        """Se a eleição pode rodar sozinha (False = só estado persistido)."""
+        return self._cluster_flag("auto_elect", True)
+
+    def _apply_standalone_roles(self) -> None:
+        """Papéis de quem opera sozinho: sem enxame, sem papel de liderança."""
+        self._standalone = True
+        self.cluster_role = ClusterRole.WORKER
+        if self.cluster_state and self.node_id in self.cluster_state.artist_workers:
+            self.cluster_role = ClusterRole.WORKER_ARTIST
+
     def _min_bees_for_cluster(self) -> int:
         """Quantas abelhas (contando esta) formam um enxame. Default: 3."""
         cluster_cfg = getattr(self.config, "cluster", None) or {}
@@ -397,7 +456,13 @@ class BeeService:
         """Inicializa cluster: carrega estado, elege papéis se 3+ abelhas, inicia monitoramento."""
         # Carregar estado persistido
         self.cluster_state = load_cluster_state(self.config.data_dir)
-        
+
+        # Opt-out: o usuário pode ter dito "não" ao instalador.
+        if not self._cluster_enabled():
+            logger.info("cluster.enabled=false: esta abelha não forma enxame (standalone)")
+            self._apply_standalone_roles()
+            return
+
         # Aguardar descoberta inicial de peers (2s)
         await asyncio.sleep(2)
         
@@ -428,10 +493,19 @@ class BeeService:
             f"| mínimo para cluster: {min_bees}"
         )
 
+        if len(enxame) >= min_bees and not self._auto_elect_enabled():
+            # Sem eleição automática só entra num enxame que já está registrado.
+            if not (self.cluster_state and self.cluster_state.juiz_id):
+                logger.info("cluster.auto_elect=false e sem estado persistido: standalone")
+                self._apply_standalone_roles()
+                return
+            logger.info("cluster.auto_elect=false: reaproveitando os papéis persistidos")
+
         if len(enxame) >= min_bees:
             self._standalone = False
-            # Eleger papéis entre TODAS as abelhas do enxame, inclusive esta
-            self.cluster_state = elect_roles(enxame, self.cluster_state)
+            if self._auto_elect_enabled():
+                # Eleger papéis entre TODAS as abelhas do enxame, inclusive esta
+                self.cluster_state = elect_roles(enxame, self.cluster_state)
             # `or ClusterRole.WORKER`: se a eleição não atribuir papel a este
             # node (ex.: estado persistido inconsistente), assumir worker em vez
             # de deixar None e estourar AttributeError no .value abaixo.
@@ -473,10 +547,7 @@ class BeeService:
             logger.info(
                 f"Menos de {min_bees} abelhas ({len(enxame)}), operando como standalone"
             )
-            self._standalone = True
-            self.cluster_role = ClusterRole.WORKER
-            if self.node_id in (self.cluster_state.artist_workers if self.cluster_state else []):
-                self.cluster_role = ClusterRole.WORKER_ARTIST
+            self._apply_standalone_roles()
 
     def _get_capabilities_list(self) -> list[str]:
         """Retorna lista de capabilities da Abelha baseada em descoberta BEE-0003."""
@@ -530,6 +601,8 @@ class BeeService:
         """
         if not self._running or self._standalone is False:
             return  # ainda no boot, ou já faz parte de um enxame
+        if not self._cluster_enabled():
+            return  # opt-out do usuário: não formar enxame nem dinamicamente
         if self._cluster_reelect_task is not None:
             return  # já existe uma reavaliação agendada
         if not self._discovery:

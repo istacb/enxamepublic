@@ -1059,8 +1059,13 @@ def discover_local_peers(data_dir: Path, timeout: float = 5.0) -> list[dict]:
         return []
 
 
-def prompt_cluster_optin(data_dir: Path, auto: bool = False) -> bool:
+def prompt_cluster_optin(data_dir: Path, auto: bool = False) -> bool | None:
     """Pergunta ao usuário se deseja formar cluster se detectar 3+ peers.
+
+    Retorna True (aceitou), False (recusou) ou None (não houve o que perguntar:
+    menos de 2 outras abelhas na rede). O None importa porque recusar precisa
+    gravar cluster.enabled=false, mas NÃO ter perguntado não deve gravar nada —
+    o enxame pode se formar depois, quando outras abelhas aparecerem.
 
     `auto` segue o mesmo padrão das funções de telemetria: em modo automático
     nenhuma pergunta é feita. Antes o corpo lia `args.auto`, mas `args` só
@@ -1096,7 +1101,35 @@ def prompt_cluster_optin(data_dir: Path, auto: bool = False) -> bool:
             # Modo auto: ativar cluster por padrão se detectado
             return True
     
-    return False
+    return None
+
+
+def disable_cluster_mode(data_dir: Path) -> None:
+    """Grava a recusa do usuário: esta abelha não forma enxame.
+
+    Sem isto a pergunta do instalador era decorativa: `cluster.enabled` nunca
+    era lido pelo serviço, então responder "n" não impedia o enxame de se formar
+    assim que 2 outras abelhas aparecessem na rede.
+    """
+    config_file = data_dir / "config.json"
+    if not config_file.exists():
+        return
+    try:
+        import json
+        with open(config_file, "r") as f:
+            config = json.load(f)
+
+        cluster = dict(config.get("cluster") or {})
+        cluster["enabled"] = False
+        config["cluster"] = cluster
+
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+        log_info("Modo cluster desativado a pedido do usuário")
+        log_info("Para ativar depois: edite config.json e coloque cluster.enabled = true")
+    except Exception as e:
+        log_warn(f"Erro ao gravar recusa de cluster: {e}")
 
 
 def enable_cluster_mode(data_dir: Path) -> None:
@@ -1118,7 +1151,8 @@ def enable_cluster_mode(data_dir: Path) -> None:
                 json.dump(config, f, indent=2, ensure_ascii=False)
             
             log_success("Modo cluster habilitado na configuração")
-            log_info("Na próxima inicialização, a Abelha tentará formar cluster automaticamente")
+            log_info("Na próxima inicialização, com 3+ abelhas se enxergando na rede,")
+            log_info("os papéis (Juiz, Bibliotecário, Guarda) são eleitos automaticamente")
         except Exception as e:
             log_warn(f"Erro ao habilitar cluster: {e}")
 
@@ -1253,8 +1287,11 @@ def main():
     # Auto-cluster opt-in: detectar peers e perguntar se quer formar cluster
     if not args.auto and not args.no_shortcuts:
         try:
-            if prompt_cluster_optin(data_dir, auto=args.auto):
+            resposta = prompt_cluster_optin(data_dir, auto=args.auto)
+            if resposta is True:
                 enable_cluster_mode(data_dir)
+            elif resposta is False:
+                disable_cluster_mode(data_dir)
         except Exception as e:
             log_warn(f"Não foi possível configurar cluster: {e}")
     
