@@ -1,29 +1,42 @@
 # ENXAME v1.0 — Agent Instructions
 
 ## Project Overview
-Decentralized AI architecture with Python services (FastAPI) + TypeScript kernel/runtime. Zero Docker, zero frontend frameworks.
+Decentralized AI architecture: one Python service (the **bee**, aiohttp) that
+works standalone and forms a swarm with other bees over mDNS. Zero Docker,
+zero frontend frameworks, zero TypeScript.
 
 **Key directories:**
-- `kernel/` — TypeScript microkernel (no domain logic)
-- `runtime/` — TypeScript execution sandbox
-- `juiz/` — Validation/conformance (FastAPI)
-- `bibliotecario/` — Knowledge management (FastAPI)
-- `agentes/` — Async agent workers
-- `guardian/` — Security/auth/audit
-- `bees/` — Standalone Python package (pyproject.toml)
+- `bees/` — **The product.** Standalone Python package (own `pyproject.toml`):
+  `service.py`, `cli.py`, `cluster/` (election, failover, global index),
+  `protocol/`, `discovery.py`, `librarian.py`, `memory.py`, and the single
+  installer in `bees/install/`
 - `web/` — Pure HTML/CSS/JS interface (served at `/` by BeeService)
-- `api/install/` — Official installers (Linux/macOS/Windows)
+- `bibliotecario/` — RAG modules the bee imports: `embeddings`, `indexer`,
+  `lancedb_store`, `universal_reader`, `web_client`, `zim_reader`
+- `guardian/` — Prompt inspection, answer curation, anomaly patrol
+- `core/` — Shared infra: mDNS discovery, signed HTTP, EXP security, compat shims
 - `spec/en/eip/` — Architecture specs (EIP-0001, EIP-0002)
+
+Removed because nothing used them: `kernel/`, `runtime/`, `scheduler/`,
+`service-loader/`, `failover/` (TypeScript with no `package.json`/`tsconfig`
+anywhere, so uncompilable), and `api/`, `juiz/`, `agentes/`, `enxame_evolved/`
+(a second FastAPI stack on port 7700 that only imported itself). Also gone:
+`cli/`, `security/`, `test/`, root `requirements.txt`, and all tracked `.pyc`.
 
 ---
 
 ## Developer Commands
 
-### Run a Node (Development)
+### Run a bee (Development)
 ```bash
-python3 api/install/run_node.py --env-file /path/to/.env
+cd <repo-root>
+python -m bees.service --host 0.0.0.0 --port 8765 --data-dir /tmp/bee1 --log-level INFO
 ```
-Role/port from `.env` (`ENXAME_NODE_ROLE`, `ENXAME_NODE_PORT`). Roles: `juiz` (port 7700), `bibliotecario` (7701), `agente`.
+Must be run as a **module from the repo root** — `bees/service.py` uses relative
+imports and imports `core`, so `python bees/service.py` fails. Roles are not
+configured: with 3+ bees they are **elected** at runtime (Juiz, Bibliotecária,
+Guarda, Workers). One data-dir per bee — it holds `identity.json`, `config.json`,
+`documents/` and the RAG index.
 
 ### Install — ONE command (the supported path)
 ```bash
@@ -52,21 +65,16 @@ running it as a module from the repo root. The bee serves `web/` at `/` and the
 same UI API the swarm uses (`/api/session`, `/api/chat`, `/api/status`,
 `/api/cluster/discover`, `/api/guardian`).
 
-### Legacy stack (`api/install/`, port 7700)
-```bash
-./api/install/install      # Install infra + deps
-./api/install/update       # Update preserving data
-./api/install/migrate      # Migrate from OpenWebUI
-./api/install/uninstall    # Full removal
-```
-Separate FastAPI processes (`juiz/app.py`, `bibliotecario/app.py`,
-`agentes/service.py`) started by `api/install/run_node.py`. Still in the tree,
-but **not** the install path and not needed for the bee or the swarm. Pass
-`install-bee-smart.py --legacy-env` if you do want the `.env` it reads.
+### There is no legacy stack any more
+`api/install/`, `juiz/`, `agentes/` and `enxame_evolved/` were deleted, together
+with the `--legacy-env` flag and `generate_env_file()` in the installer (their
+only consumer was `api/install/run_node.py`). Nothing in the bee imported them.
+If you need them back they are in git history before commit
+`Remove stack antiga`.
 
 ### Bee CLI
 ```bash
-bee start --data-dir ~/.enxame/bee      # Start bee
+bee start --data-dir /tmp/bee1          # Start bee (one data-dir per bee)
 bee query "sua pergunta"                 # Local query
 bee discover                             # Discover peers
 bee status                               # Full status
@@ -82,14 +90,14 @@ python -m pytest bees/
 # Bee core only (55 tests)
 python -m pytest bees/tests/
 
-# Installer/uninstaller tests only (15 tests)
+# Installer/uninstaller tests only (45 tests)
 python -m pytest bees/install/
 ```
 
-> ⚠️ There is **no** `juiz.validate` module in this repository, so
-> `python -m juiz.validate --all` (previously documented here as "EIP
-> conformance validation") fails with `No module named juiz.validate`.
-> No EIP conformance validator exists yet.
+> ⚠️ There is **no** EIP conformance validator in this repository. The
+> `python -m juiz.validate --all` documented here before never existed, and the
+> `juiz/` package (a FastAPI process from the removed legacy stack, not a
+> validator) has been deleted.
 
 ### Lint / Typecheck (bees module)
 ```bash
@@ -107,9 +115,8 @@ Config: `bees/pyproject.toml` — ruff line-length=100, target-version=py310; my
 |-----------|------|
 | **EIP-0001: Architecture First** | No implementation without spec in `spec/en/eip/` |
 | **EIP-0002: Resource First** | Zero Docker, zero frontend frameworks, minimal deps |
-| **Kernel** | TypeScript, no IA/LLM/Mission/Judge references (see `kernel/README.md`) |
-| **Services** | Python, independent, registered with Kernel |
-| **Web UI** | Pure HTML/CSS/JS, zero business logic, REST to Kernel only |
+| **One service** | The bee (`bees/service.py`) is the product. No microkernel, no separate processes. |
+| **Web UI** | Pure HTML/CSS/JS, zero business logic, served by the bee at `/`, REST to the bee's own `/api/*` |
 | **Offline-First** | Local embeddings (sentence-transformers) primary, Ollama fallback |
 | **Cluster** | Opt-in auto-cluster when 3+ peers detected (EIP-0009) |
 
@@ -180,10 +187,10 @@ GET  /api/v1/cluster            # Cluster status (EIP-0009)
 
 ## Common Pitfalls
 
-- **No `python -m kernel.main`** — Kernel is TypeScript, not Python. Use `run_node.py` for Python services.
-- **No global package.json** — Kernel/runtime are TypeScript but not npm packages (no build step documented).
+- **No `python bees/service.py`** — relative imports + `core` require `python -m bees.service` from the repo root.
+- **No TypeScript, no package.json** — the `.ts` directories were removed; there is no build step in this repo.
 - **Bees is a separate package** — Has own `pyproject.toml`, install with `pip install -e bees/` if needed.
-- **Test discovery** — Root `test/` is nearly empty; real tests in `bees/tests/`.
+- **Test discovery** — Tests live in `bees/tests/` and `bees/install/test_installers.py`; run `python -m pytest bees/`. The root `test/` directory was removed (it held a single empty fixture).
 - **Web UI served by Bee** — Access at `http://localhost:8765/` (not separate server).
 - **Offline mode** — Set `offline_mode=true` in config or `BEE_OFFLINE_MODE=true` env var.
 - **Cluster config** — `cluster.enabled` in `<data-dir>/config.json`. The
@@ -202,8 +209,6 @@ GET  /api/v1/cluster            # Cluster status (EIP-0009)
   systemd/LaunchAgent/schtasks service)
 - Shims that delegate to it: `install-bee-smart.py` (repo root),
   `bees/install/universal_installer.py` (PyInstaller/AppImage entry point)
-- Legacy stack guide: `api/install/README.md`
-- Kernel architecture: `kernel/README.md`
 - EIP specs: `spec/en/eip/`
 - Bees protocol specs: `bees/spec/`
 - Bee CLI: `bees/cli.py`

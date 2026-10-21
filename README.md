@@ -31,54 +31,45 @@ Eficiência é requisito não negociável:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     INTERFACE WEB (web/)                    │
-│  HTML • CSS • JS Puro • Zero Business Logic                 │
+│              INTERFACE WEB (web/)  —  http://localhost:8765/│
+│   HTML • CSS • JS puros, servidos PELA PRÓPRIA ABELHA       │
 └─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                              │  /api/session /api/chat /api/status
+                              ▼                  /api/cluster/* /api/guardian
 ┌─────────────────────────────────────────────────────────────┐
-│                      KERNEL (kernel/)                       │
-│           Cérebro do Enxame • Toda lógica de negócio        │
-│           • Gerenciamento de mensagens                      │
-│           • Roteamento de requisições                       │
-│           • Orquestração de agentes                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
-┌──────────────┐    ┌──────────────────┐  ┌─────────────────┐
-│   RUNTIME    │    │   BIBLIOTECÁRIO  │  │     JUIZ        │
-│  (runtime/)  │    │  (bibliotecario/)│  │    (juiz/)      │
-│ • Execução   │    │ • Gestão de      │  │ • Validação     │
-│ • Sandboxing │    │   conhecimento   │  │ • Conformidade  │
-│ • Isolamento │    │ • Documentação   │  │ • Auditoria     │
-└──────────────┘    └──────────────────┘  └─────────────────┘
-        │                     │                     │
-        └─────────────────────┼─────────────────────┘
-                              ▼
-              ┌───────────────────────────────┐
-              │         AGENTES               │
-              │  • Programador                │
-              │  • Analista                   │
-              │  • Revisor                    │
-              │  • Especialistas de domínio   │
-              └───────────────────────────────┘
-                              │
-                              ▼
-              ┌───────────────────────────────┐
-              │        GUARDIÃO               │
-              │  • Segurança                  │
-              │  • Controle de acesso         │
-              │  • Auditoria de operações     │
-              └───────────────────────────────┘
-                              │
-                              ▼
-              ┌───────────────────────────────┐
-              │       OLLAMA (externo)        │
-              │  • Modelos de linguagem       │
-              │  • Inferência local           │
-              └───────────────────────────────┘
+│              ABELHA (bees/service.py) — aiohttp             │
+│   Faz tudo sozinha: recebe a pergunta, aplica a Guarda,     │
+│   consulta o próprio RAG, responde e faz a curadoria.       │
+│                                                             │
+│   Política de resposta:  LOCAL ──▶ ENXAME ──▶ WEB           │
+│                                                             │
+│  ┌────────────────┐ ┌────────────────┐ ┌─────────────────┐  │
+│  │ BIBLIOTECÁRIA  │ │     GUARDA     │ │    CLUSTER      │  │
+│  │ (bibliotecario/│ │  (guardian/)   │ │ (bees/cluster/) │  │
+│  │  + bees/       │ │ • inspeção de  │ │ • eleição de    │  │
+│  │   librarian.py)│ │   prompt       │ │   papéis        │  │
+│  │ • índice local │ │ • curadoria da │ │ • failover      │  │
+│  │ • RAG offline  │ │   resposta     │ │ • índice global │  │
+│  │ • documentos/  │ │ • ronda        │ │ • monitor       │  │
+│  └────────────────┘ └────────────────┘ └─────────────────┘  │
+│            ▲              core/ = infraestrutura comum       │
+│            │              (descoberta mDNS, HTTP, segurança) │
+└────────────┼────────────────────────────────────────────────┘
+             │
+             ▼
+┌───────────────────────────────┐        ┌───────────────────────────────┐
+│      OLLAMA (externo)         │        │        ENXAME = 3+ ABELHAS    │
+│ • modelos de linguagem        │        │ descobertas por mDNS na rede  │
+│ • inferência local            │        │ local, que ELEGEM os papéis   │
+│ • embeddings                  │        │ entre si: Juiz, Bibliotecária,│
+└───────────────────────────────┘        │ Guarda e Workers              │
+                                         └───────────────────────────────┘
 ```
+
+Cada abelha tem o próprio RAG e é a própria bibliotecária. No enxame, o Juiz
+recebe a pergunta, descobre qual abelha tem aquele conhecimento offline, delega
+a ela e faz a curadoria da resposta antes de devolver. A Guarda roda tanto em
+quem recebe o prompt quanto em quem faz a curadoria.
 
 ---
 
@@ -86,19 +77,23 @@ Eficiência é requisito não negociável:
 
 | Diretório | Responsabilidade |
 |-----------|------------------|
-| `kernel/` | Núcleo inteligente. Toda regra de negócio vive aqui. |
-| `runtime/` | Ambiente de execução isolado para código gerado. |
-| `web/` | Interface mínima (HTML/CSS/JS puros). |
-| `api/install/` | Stack **antiga** de distribuição (FastAPI na porta 7700). Não é o caminho de instalação — veja [Instalação](#-instalação). |
-| `agentes/` | Agentes especializados para tarefas específicas. |
-| `bibliotecario/` | Gestão de conhecimento, documentação e contexto. |
-| `juiz/` | Validação de conformidade arquitetural e EIPs. |
-| `guardian/` | Segurança, autenticação e auditoria. |
-| `spec/` | Especificações arquiteturais (EIP-0001, EIP-0002, etc). |
-| `scheduler/` | Orquestração de tarefas assíncronas. |
-| `security/` | Criptografia, chaves e controles de acesso. |
-| `failover/` | Mecanismos de resiliência e recuperação. |
+| `bees/` | **O produto.** Abelha standalone (`service.py`), CLI (`cli.py`), cluster (eleição, failover, índice global), protocolo BEE, descoberta mDNS, bibliotecária local, memória e o instalador único (`bees/install/`). |
+| `web/` | Interface mínima (HTML/CSS/JS puros), servida pela abelha em `/`. |
+| `bibliotecario/` | Módulos de RAG que a abelha usa: embeddings, indexador, LanceDB, leitor universal, cliente web e ZIM. |
+| `guardian/` | Segurança: inspeção de prompt, curadoria de resposta e ronda de anomalias. |
+| `core/` | Infraestrutura comum: descoberta mDNS, HTTP assinado, segurança EXP e shims de compatibilidade. |
+| `spec/` | Especificações arquiteturais e EIPs (documentação). |
+| `.github/` | CI. |
 
+O que **não** existe mais e aparecia aqui antes: `kernel/`, `runtime/`,
+`scheduler/`, `service-loader/` e `failover/` eram TypeScript sem `package.json`
+nem `tsconfig` em lugar nenhum do repositório — ou seja, não compilavam nem
+rodavam, e nenhum `.py` os importava. Eram instruções de implementação, e o que
+elas descreviam hoje está pronto em `bees/`. `api/`, `juiz/`, `agentes/` e
+`enxame_evolved/` eram uma segunda stack (FastAPI, processos separados na porta
+7700) que só importava a si mesma; mantê-la era manter dois produtos e dois
+caminhos de instalação. `cli/`, `security/` e `test/` não eram importados por
+nada
 ---
 
 ## 🚀 Instalação
@@ -175,16 +170,26 @@ fica isolada de verdade (nem anuncia no mDNS).
 > mDNS é link-local: as máquinas precisam estar no mesmo segmento de rede.
 > VPN ou sub-redes diferentes não se descobrem.
 
-### O que este instalador **não** é
+### O que existia antes e foi removido
 
-`api/install/` (`install`, `update`, `migrate`, `uninstall`, `run_node.py`) é a
-stack **antiga**: processos FastAPI separados (`juiz/app.py`,
-`bibliotecario/app.py`, `agentes/service.py`) servidos na porta 7700. Continua
-no repositório e continua funcional, mas **não é o caminho de instalação** e não
-é necessário para usar a abelha nem o enxame. Os scripts por sistema operacional
-que existiam ao lado dela (`install_debian.sh`, `install_arch.sh`,
-`install_macos.sh`, `install_unix.sh`, `install_windows.bat`, `install-bee.sh`)
-foram removidos — eram caminhos concorrentes que instalavam coisas diferentes.
+Não há segunda stack nem segundo instalador. Foram removidos:
+
+- **`api/install/`** (`install`, `update`, `migrate`, `uninstall`,
+  `run_node.py`) e os processos FastAPI que ele subia na porta 7700 —
+  **`juiz/`**, **`agentes/`** e `bibliotecario/app.py`. Formavam um conjunto
+  fechado que só importava a si mesmo: nada na abelha dependia dele. Da pasta
+  `bibliotecario/` ficaram apenas os 6 módulos de RAG que a abelha usa
+  (`embeddings`, `indexer`, `lancedb_store`, `universal_reader`, `web_client`,
+  `zim_reader`).
+- **`enxame_evolved/`** — 15 arquivos que nada importava.
+- **`kernel/`, `runtime/`, `scheduler/`, `service-loader/`, `failover/`** —
+  TypeScript sem `package.json` nem `tsconfig` em nenhum lugar do repositório,
+  portanto sem como compilar ou rodar; eram a especificação do que hoje está
+  implementado em `bees/`.
+- **Scripts de instalação por sistema operacional** (`install_debian.sh`,
+  `install_arch.sh`, `install_macos.sh`, `install_unix.sh`,
+  `install_windows.bat`, `install-bee.sh`, `install_enxame.py`) — caminhos
+  concorrentes que instalavam coisas diferentes.
 
 > ⚠️ Versões anteriores desta página documentavam cinco pontos de entrada
 > diferentes (`install-bee-smart.py`, `bees/install/universal_installer.py`,
@@ -264,12 +269,30 @@ Recursos computacionais são finitos. Cada linha de código deve justificar seu 
 
 ## 🔐 Segurança
 
-O módulo `guardian/` é responsável por:
-- Autenticação e autorização de usuários
-- Criptografia de dados sensíveis
-- Auditoria de todas as operações
-- Sandboxing de código executado pelos agentes
-- Validação de inputs contra injeção e ataques
+O módulo `guardian/` faz três coisas, e é importante que a lista corresponda ao
+código (`guardian/guardian.py` e `guardian/patrol.py`):
+
+- **Inspeção de prompt** — `inspect_prompt()` / `detect_injection()`: camadas de
+  padrão (tentativas de sobrescrever instruções, `system prompt`, `developer
+  mode`, caracteres de controle, injeção de código) e devolve texto sanitizado ou
+  uma mensagem de recusa amigável em pt-BR.
+- **Curadoria de resposta** — a mesma inspeção roda na saída antes de devolver ao
+  usuário. A Guarda atua em quem recebe o prompt **e** em quem faz a curadoria.
+- **Ronda de anomalias** — `GuardianPatrol` coleta métricas locais
+  (`collect_local_metrics()`) e gera alertas de latência crítica, CPU e memória
+  esgotadas; `quarantine_node()` isola um nó problemático.
+
+O estado é visível em `GET /api/guardian` (`ativo`, `ronda`, `standalone`,
+contadores e alertas).
+
+> ⚠️ Esta seção listava antes "autenticação e autorização de usuários",
+> "criptografia de dados sensíveis", "auditoria de todas as operações" e
+> "sandboxing de código executado pelos agentes". Nenhuma das quatro existe em
+> `guardian/`: não há autenticação de usuário (a interface usa token de sessão
+> efêmero, não contas), não há criptografia de dados em repouso, não há trilha de
+> auditoria, e o sandboxing viveria em `runtime/` — que era TypeScript sem
+> `package.json` e foi removido. A única criptografia real é a identidade Ed25519
+> da abelha (`bees/config.py`) e o HMAC do protocolo BEE.
 
 ---
 
@@ -290,35 +313,32 @@ cd bees && python -m pytest
 ```
 
 > ⚠️ Correções nesta seção: os testes ficam em `bees/tests/` e
-> `bees/install/test_installers.py` — rode `python -m pytest bees/`. O diretório
-> `test/` que existia na raiz continha apenas um arquivo de fixture vazio
-> (`test/test_files/image_gen/sd-empty.pt`) e foi removido; `test/kernel/` e
-> `test/runtime/` nunca existiram. `python -m juiz.validate --all` também não
-> existe — não há validador de conformidade EIP no repositório; a menção a
-> "conformidade EIP" em `enxame_evolved/sprint.py` é apenas texto descritivo
-> do planejador de sprints.
+> `bees/install/test_installers.py` — rode `python -m pytest bees/` (128 testes).
+> O diretório `test/` que existia na raiz continha apenas um arquivo de fixture
+> vazio e foi removido; `test/kernel/` e `test/runtime/` nunca existiram.
+> `python -m juiz.validate --all` também nunca existiu — não há validador de
+> conformidade EIP no repositório, e o `juiz/` que esta página citava era o
+> processo FastAPI da stack antiga, não um validador.
 
 ---
 
 ## 🔄 Migração do OpenWebUI
 
-Se você possui uma instalação anterior do OpenWebUI:
+Não há migrador automático. O `./api/install/migrate` que esta seção
+recomendava pertencia à stack antiga e foi removido junto com ela — ele migrava
+dados para a estrutura daquela stack, que não é a da abelha.
 
-> ⚠️ `migrate` pertence à stack antiga (`api/install/`) e migra dados para a
-> estrutura dela. A abelha instalada por `install-bee-smart.py` usa outro
-> layout (`--data-dir`), então rode isto apenas se você também usa a stack antiga.
+Para reaproveitar uma instalação OpenWebUI existente:
 
-```bash
-# O script de migração detecta automaticamente
-./api/install/migrate
-
-# Ele irá:
-# 1. Detectar instalação OpenWebUI existente
-# 2. Extrair dados do usuário (chats, configurações)
-# 3. Converter para formato Enxame
-# 4. Preservar modelos Ollama existentes
-# 5. Remover infraestrutura Docker antiga (opcional)
-```
+1. Os **modelos Ollama** já são compartilhados: o instalador detecta o Ollama em
+   execução e usa os modelos presentes (`GET /api/tags`). Não é preciso
+   reexportar nada.
+2. Os **documentos** que você quer que a abelha conheça vão em
+   `<data-dir>/documents/` (`.md`, `.txt`, `.pdf` — o leitor universal de
+   `bibliotecario/universal_reader.py` cuida do resto). O índice é reconstruído
+   na inicialização, então reinicie a abelha depois de copiá-los.
+3. **Histórico de conversas** do OpenWebUI não é importado: a abelha guarda o
+   próprio histórico em `<data-dir>/memory.db`.
 
 ---
 
@@ -327,7 +347,7 @@ Se você possui uma instalação anterior do OpenWebUI:
 1. Leia as especificações em `spec/en/`
 2. Crie uma EIP para mudanças arquiteturais
 3. Implemente seguindo EIP-0001 e EIP-0002
-4. Submeta para revisão no `juiz/`
+4. Rode `python -m pytest bees/` e abra o pull request
 
 ---
 
@@ -369,4 +389,4 @@ Desenvolvido pela comunidade, para a comunidade.
 **Documentação Completa:** [`spec/en/`](spec/en/)  
 **EIPs Ativas:** [`spec/en/eip/`](spec/en/eip/)  
 **Guia de Instalação:** a seção [🚀 Instalação](#-instalação) desta página (um comando só).  
-**Stack antiga (porta 7700):** [`api/install/README.md`](api/install/README.md)
+**Detalhes do instalador:** [`bees/install/README.md`](bees/install/README.md)

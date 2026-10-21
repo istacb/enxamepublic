@@ -1331,6 +1331,13 @@ Uma implementação da Abelha está completa quando:
 | `juiz/service.py` | Orquestração centralizada |
 | `api/install/node_role_setup.py` | Configuração de papéis fixos |
 
+> Nota posterior à escrita deste spec: os componentes listados acima
+> (`agentes/`, `juiz/`, `api/install/`) foram **removidos do repositório** quando
+> o instalador foi unificado. Eram a stack antiga de processos FastAPI separados
+> na porta 7700, um conjunto fechado que só importava a si mesmo. A tabela segue
+> válida como registro do motivo pelo qual a abelha não os usa — os papéis são
+> eleitos em tempo de execução por `bees/cluster/election.py`, não configurados.
+
 ---
 
 ## ANEXO B: GLOSSÁRIO

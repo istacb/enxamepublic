@@ -36,7 +36,7 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 
 async function init() {
-  // /api/session é @app.post no Juiz (juiz/app.py). O default de api() é GET,
+  // /api/session é POST (rota registrada em bees/service.py). O default de api() é GET,
   // então isto devolvia 404, o throw abortava init() antes de registrar os
   // setInterval/listeners, sessionToken ficava vazio e sendMessage() saía em
   // `if (!sessionToken) return` — a UI carregava mas NADA funcionava.

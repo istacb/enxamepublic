@@ -72,7 +72,9 @@ logging.basicConfig(
 logger = logging.getLogger("bee")
 
 
-# Tempo de vida do token de sessão do UI (mesma política do juiz/app.py).
+# Tempo de vida do token de sessão do UI (mesma política que o antigo
+# juiz/app.py usava; aquele módulo foi removido junto com a stack antiga,
+# e este contrato passou a ser o único).
 UI_SESSION_TTL = timedelta(minutes=30)
 
 
@@ -133,7 +135,7 @@ class BeeService:
         self._ui_paused: set[str] = set()
 
         # Guarda: a rotina de segurança precisa rodar em QUEM RECEBE O PROMPT e
-        # em QUEM FAZ A CURADORIA. Antes só o juiz inspecionava (juiz/app.py
+        # em QUEM FAZ A CURADORIA. Antes só o juiz inspecionava (o antigo juiz/app.py
         # chama detect_injection) e a abelha — que em modo standalone é justamente
         # quem recebe o prompt e quem cura a resposta — não aplicava nenhuma.
         self._guardian: Any = None
@@ -654,7 +656,7 @@ class BeeService:
             logger.info(f"Nova identidade: {self.node_id}")
 
     # =========================================================================
-    # Interface web (web/) — mesmo contrato do juiz/app.py
+    # Interface web (web/) — mesmo contrato que o antigo juiz/app.py expunha
     # =========================================================================
 
     def _ui_new_session(self) -> str:
@@ -1755,7 +1757,7 @@ class BeeService:
     async def _report_guardian_alert_to_juiz(self, alert: dict[str, Any]) -> None:
         """Em enxame, reporta a ronda ao juiz (POST assinado).
 
-        Mesmo contrato usado por bibliotecario/app.py: o juiz agrega o estado de
+        Mesmo contrato que o antigo bibliotecario/app.py usava: agrega o estado de
         segurança do cluster em /api/v1/guardian.
         """
         juiz_url = os.getenv("JUIZ_HTTP_URL", "http://localhost:7700")

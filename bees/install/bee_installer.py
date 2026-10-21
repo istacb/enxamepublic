@@ -8,7 +8,7 @@ Instala o BEE (ENXAME Bee) standalone com detecção automática:
 - Verifica Ollama: se já existir e tiver modelos, pula download
 - Instala tudo o que for necessário
 - Funciona em Windows, macOS, Debian, Arch Linux
-- Gera .env automaticamente
+- Gera a configuração da abelha (config.json) e um dashboard de diagnóstico
 - Cria dashboard HTML interativo
 - Possui desinstulador para cada SO
 """
@@ -68,7 +68,7 @@ def _find_repo_root() -> Path:
     então a raiz normalmente é SCRIPT_DIR.parents[1]. Mas ele também roda
     empacotado (AppImage, .app, .deb), onde não existe repositório algum; aí
     sobe a árvore procurando bees/service.py e, não achando, usa o diretório
-    de onde foi invocado. Assim os caminhos de .venv/.env/dashboard continuam
+    de onde foi invocado. Assim os caminhos de .venv/dashboard/config continuam
     resolvendo em vez de apontar para lugares inexistentes — que era o bug
     original deste bloco quando o arquivo vivia na raiz.
     """
@@ -649,7 +649,7 @@ def detect_ollama():
                     # /api/tags devolve OBJETOS ({"name": ..., "size": ...}),
                     # enquanto o ramo `ollama list` acima appendava STRINGS.
                     # A mistura quebrava "', '.join(models)" (TypeError) e fazia
-                    # recommend_model() devolver um dict, que ia parar no .env.
+                    # recommend_model() devolver um dict, que ia parar na configuração gerada.
                     result["models"] = [
                         str(m.get("name", ""))
                         for m in data.get("models", [])
@@ -1202,79 +1202,6 @@ def install_python_dependencies():
     return py
 
 
-def generate_env_file(hw_detection, ollama_url, recommended_model, existing_models,
-                      role="juiz", node_port=7700, bee_port=8765):
-    """Gera arquivo .env automaticamente."""
-    if DRY_RUN:
-        return _dry("gravar .env (stack antiga)", True)
-    cprint("Gerando configuração .env...", Colors.OKCYAN)
-
-    has_gpu = hw_detection["gpu_available"]
-
-    # Verificar se tem OCR
-    has_ocr = check_tesseract()
-
-    env_content = f"""# ENXAME - Configuração Automática (gerada pelo instalador BEE)
-# Esta arquivo foi gerado automaticamente - NÃO EDITE MANUALMENTE
-# Se precisar mudar, re-execute o instalador
-
-# === Sistema ===
-ENXAME_ENV=production
-ENXAME_HOST=0.0.0.0
-ENXAME_DATA_PATH={Path.home() / "enxame" / "data"}
-ENXAME_LOG_PATH={Path.home() / "enxame" / "logs"}
-
-# === Ollama ===
-OLLAMA_URL={ollama_url or "http://localhost:11434"}
-# Modelo ativo será o: {recommended_model}
-
-# === Node Role ===
-# Consumido por api/install/run_node.py.
-# "juiz" (porta 7700) é o papel que serve a interface web de web/ — é o único
-# que expõe /api/session, /api/status, /api/chat, /api/cluster/*.
-# Antes vinha "auto", que o run_node.py mapeia para o worker "agente": sem porta
-# HTTP, sem interface, aparentemente "nada funciona".
-# Options: juiz, bibliotecario, agente, auto
-ENXAME_NODE_ROLE={role}
-ENXAME_NODE_PORT={node_port}
-ENXAME_NODE_ID=enxame-{role}
-
-# === Bee standalone (aiohttp) ===
-# `python -m bees.service` usa esta porta e expõe /api/v1/query, /health etc.
-ENXAME_BEE_PORT={bee_port}
-
-# === Configurações de Hardware ===
-# Auto-detected by installer
-ENXAME_HAS_GPU={'true' if has_gpu else 'false'}
-ENXAME_GPU_VRAM_GB={hw_detection['gpu_vram_gb']}
-ENXAME_RAM_GB={hw_detection['ram_gb']}
-
-# === Recursos ===
-# O Bee vai usar o que estiver disponível
-ENXAME_ENABLE_LIBRARIAN=true
-ENXAME_ENABLE_CLUSTER=false
-ENXAME_ALLOW_WEB=false
-
-# === OCR ===
-# Verificado automaticamente
-ENXAME_OCR_AVAILABLE={'true' if has_ocr else 'false'}
-
-# === Modelos ===
-# Modelo recomendado: {recommended_model}
-# Se já tem modelos definidos, o Bee usará o primeiro disponível
-"""
-
-    env_path = REPO_ROOT / ".env"
-    try:
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(env_content)
-        print_success(f".env gerado em {env_path}")
-        return True
-    except Exception as e:
-        print_error(f"Não foi possível escrever .env: {e}")
-        return False
-
-
 def generate_html_dashboard(hw_detection, ollama_url, model_name, installed_models, bee_port=8765):
     """Gera dashboard HTML interativo.
 
@@ -1349,10 +1276,12 @@ def uninstall_bee():
     bee_dir = REPO_ROOT  # Diretório onde o Bee foi instalado
     env_path = bee_dir / ".env"
 
-    # Remover .env
+    # Remover .env deixado por versões antigas do instalador.
+    # O instalador atual não gera mais .env: a configuração da abelha vive em
+    # <data-dir>/config.json. Isto fica aqui só para limpar instalações antigas.
     if choice in ("1", "3") and env_path.exists():
         env_path.unlink()
-        print_success("Arquivo .env removido")
+        print_success("Arquivo .env de versão anterior removido")
 
     # Remover dashboard HTML
     dashboard_path = bee_dir / "bee-dashboard.html"
@@ -1473,16 +1402,7 @@ def parse_args():
     )
     parser.add_argument(
         "--uninstall", action="store_true",
-        help="Remove .env, dashboard e venv criados pelo instalador",
-    )
-    parser.add_argument(
-        "--role", default="juiz",
-        choices=["juiz", "bibliotecario", "agente", "auto"],
-        help="Papel deste nó no .env gerado (default: juiz, que serve a interface web em 7700)",
-    )
-    parser.add_argument(
-        "--node-port", type=int, default=None,
-        help="Porta do nó para run_node.py (default: 7700 juiz / 7701 bibliotecario)",
+        help="Remove dashboard, venv e arquivos deixados por versões anteriores",
     )
     parser.add_argument(
         "--bee-port", type=int, default=8765,
@@ -1531,11 +1451,6 @@ def parse_args():
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Detecta tudo e mostra o plano, sem instalar nem gravar nada",
-    )
-    parser.add_argument(
-        "--legacy-env", action="store_true",
-        help="Também gera .env para a stack antiga (api/install/run_node.py). "
-             "Não é necessário para usar a abelha.",
     )
     return parser.parse_args()
 
@@ -1693,16 +1608,6 @@ def main():
         bee_port=args.bee_port,
     )
 
-    if args.legacy_env:
-        # .env serve apenas à stack antiga (api/install/run_node.py, porta 7700).
-        # Não é necessário para usar a abelha; por isso deixou de ser o padrão.
-        node_port = args.node_port or (7701 if args.role == "bibliotecario" else 7700)
-        if not generate_env_file(
-            hw_detection, ollama_url, recommended_model, existing_models,
-            role=args.role, node_port=node_port, bee_port=args.bee_port,
-        ):
-            print_warning("Falha ao gerar o .env - continuando mesmo assim")
-
     # 7. Resumo final
     cprint("PASSO 7: Resumo Final", Colors.OKBLUE)
     if DRY_RUN:
@@ -1766,10 +1671,9 @@ def main():
     print(f"  3) abrir {REPO_ROOT / 'bee-dashboard.html'} no navegador: mostra o estado")
     print("     desta máquina mesmo com a abelha parada.")
     print()
-    print("Nota sobre api/install/run_node.py (porta 7700):")
-    print("  É a stack ANTIGA (FastAPI: juiz/bibliotecario/agentes separados).")
-    print("  Continua no repositório, mas não é mais o caminho de instalação e")
-    print("  só é configurada se você passar --legacy-env.")
+    print("Uma abelha por máquina: para rodar outra nesta mesma máquina, repita a")
+    print("instalação com --data-dir e --bee-port diferentes. Cada data-dir tem")
+    print("identity.json, config.json, documentos/ e o próprio índice RAG.")
 
 if __name__ == "__main__":
     main()

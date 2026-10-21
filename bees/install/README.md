@@ -63,7 +63,6 @@ o enxame usa (`/api/session`, `/api/chat`, `/api/status`, `/api/cluster/*`,
 | `--model NOME` / `--skip-model` | Força modelo / não baixa modelo |
 | `--ollama-url URL` | Usa Ollama remoto |
 | `--uninstall` | Remove o que o instalador criou |
-| `--legacy-env` | Também gera `.env` para a stack antiga |
 
 ## Enxame
 
@@ -114,6 +113,10 @@ que instalavam coisas diferentes. Havia 22 arquivos de instalação e 5 comandos
 documentados apontando para 3 stacks — era daí que vinha o "instalei e nada
 funciona".
 
-A stack antiga (`api/install/`, processos FastAPI separados na porta 7700) segue
-no repositório, mas não é caminho de instalação. Veja
-[`../../api/install/README.md`](../../api/install/README.md).
+A stack antiga (`api/install/`, `juiz/`, `agentes/`, `enxame_evolved/` —
+processos FastAPI separados na porta 7700) foi **removida** do repositório: era
+um conjunto fechado que só importava a si mesmo, e nada na abelha dependia dele.
+Junto saíram a flag `--legacy-env` e a função `generate_env_file()` do
+instalador, cujo único consumidor era `api/install/run_node.py`. Do pacote
+`bibliotecario/` ficaram apenas os 6 módulos de RAG que a abelha importa.
+Se precisar deles, estão no histórico do git.
