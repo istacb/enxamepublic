@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enxame — Hive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+  <header class="title-bar">
+    <div class="brand">ENXAME</div>
+    <div class="cluster" id="cluster-label">cluster: —</div>
+    <div class="controls">
+      <button id="discover-btn">DESCOBRIR REDE</button>
+      <div id="discovery-result" class="discovery"></div>
+      <button id="pause-all">PAUSAR TODOS</button>
+    </div>
+  </header>
+
+  <div class="floor">
+    <canvas id="hive" width="900" height="520"></canvas>
+
+    <aside class="sidebar">
+      <div class="panel">
+        <div class="panel-title">NÓS</div>
+        <div id="node-list" class="node-list"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">CONTADORES</div>
+        <div class="counter"><span id="c-tasks">0</span> tarefas</div>
+        <div class="counter"><span id="c-calls">0</span> chamadas ao modelo</div>
+        <div class="counter"><span id="c-nacks">0</span> NACKs</div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">MODELO (Juiz)</div>
+        <div id="model-list" class="model-list"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="chat">
+    <div id="transcript"></div>
+    <div class="input-row">
+      <input id="msg" placeholder="Pergunte ao enxame…">
+      <button id="send">Enviar</button>
+    </div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

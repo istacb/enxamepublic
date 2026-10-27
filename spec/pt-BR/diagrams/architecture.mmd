@@ -1,0 +1,94 @@
+graph TB
+    subgraph "Core Protocol"
+        EXP[Protocolo EXP]
+        SEC[Security HMAC]
+        ENV[Envelope System]
+        MSG[Message Types]
+    end
+
+    subgraph "Cluster Management"
+        BENCH[Hardware Benchmark]
+        ELEC[Cluster Election]
+        FAIL[Failover System]
+        SEARCH[Local Search]
+        SANDBOX[Sandbox]
+    end
+
+    subgraph "Node Roles"
+        JUIZ[Juiz<br/>Orquestrador]
+        BIB[Bibliotecário<br/>Knowledge]
+        AG[Agentes<br/>Workers]
+        GRD[Guardião<br/>Security]
+    end
+
+    subgraph "Backend Services"
+        CTRL[Controller]
+        SCHED[Scheduler]
+        SPEC[Specialists]
+        LIB[Librarian]
+        JUDGE[Judge]
+        GUARD[Guard]
+    end
+
+    subgraph "Frontend"
+        UI[SvelteKit UI]
+        STORES[State Stores]
+        APIS[API Clients]
+    end
+
+    subgraph "External"
+        OLLAMA[Ollama Models]
+        QDRANT[Vector DB]
+        REDIS[Cache]
+        WEB[Web Search]
+        ZIM[ZIM Files]
+    end
+
+    %% Core connections
+    EXP --> SEC
+    EXP --> ENV
+    EXP --> MSG
+    BENCH --> ELEC
+    ELEC --> FAIL
+    FAIL --> JUIZ
+    SEARCH --> BIB
+    SEARCH --> AG
+
+    %% Role connections
+    JUIZ --> CTRL
+    BIB --> LIB
+    AG --> SPEC
+    GRD --> GUARD
+
+    %% Backend flow
+    UI --> CTRL
+    CTRL --> GUARD
+    CTRL --> LIB
+    CTRL --> SCHED
+    SCHED --> SPEC
+    SPEC --> JUDGE
+    JUDGE --> UI
+
+    %% External integrations
+    AG --> OLLAMA
+    BIB --> QDRANT
+    BIB --> REDIS
+    BIB --> WEB
+    BIB --> ZIM
+    LIB --> QDRANT
+    SPEC --> OLLAMA
+
+    %% Discovery
+    DISC[Discovery Module] --> JUIZ
+    DISC --> AG
+    DISC --> BIB
+
+    %% Memory
+    MEM[User Memory] --> JUIZ
+    MEM --> AG
+
+    style JUIZ fill:#f9f,stroke:#333,stroke-width:2px
+    style BIB fill:#bbf,stroke:#333,stroke-width:2px
+    style AG fill:#bfb,stroke:#333,stroke-width:2px
+    style GRD fill:#fbb,stroke:#333,stroke-width:2px
+    style EXP fill:#ffd,stroke:#333,stroke-width:2px

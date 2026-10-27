@@ -1,0 +1,10 @@
+# ENXAME Bee - Temporary files and directories
+# Type Path                                    Mode UID    GID    Age Argument
+d    /var/lib/enxame                           0750 enxame enxame -
+d    /var/lib/enxame/.enxame                   0750 enxame enxame -
+d    /var/lib/enxame/.enxame/bee               0750 enxame enxame -
+d    /var/lib/enxame/.enxame/bee/documents     0750 enxame enxame -
+d    /var/lib/enxame/.enxame/bee/zim           0750 enxame enxame -
+d    /var/lib/enxame/.enxame/bee/lancedb       0750 enxame enxame -
+d    /var/lib/enxame/.enxame/bee/cache         0750 enxame enxame -
+d    /var/lib/enxame/.enxame/bee/logs          0750 enxame enxame -

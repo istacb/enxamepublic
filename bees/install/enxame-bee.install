@@ -1,0 +1,61 @@
+# ENXAME Bee - Install script for Arch Linux
+
+post_install() {
+    # Create system user and group
+    systemd-sysusers enxame-bee.conf >/dev/null 2>&1 || true
+    
+    # Create directories
+    systemd-tmpfiles --create enxame-bee.conf >/dev/null 2>&1 || true
+    
+    # Install Python dependencies
+    echo "Instalando dependencias Python..."
+    python -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1
+    python -m pip install httpx pydantic pydantic-settings psutil zeroconf cryptography rich pyyaml >/dev/null 2>&1
+    
+    # Reload systemd
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    
+    # Enable ollama if installed
+    if pacman -Q ollama >/dev/null 2>&1; then
+        systemctl enable ollama >/dev/null 2>&1 || true
+        systemctl start ollama >/dev/null 2>&1 || true
+    fi
+    
+    echo ""
+    echo "ENXAME Bee instalado com sucesso!"
+    echo ""
+    echo "Para iniciar a Abelha:"
+    echo "  bee start"
+    echo ""
+    echo "Para iniciar como servico (usuario atual):"
+    echo "  systemctl --user enable --now enxame-bee"
+    echo ""
+    echo "Para descobrir peers:"
+    echo "  bee discover"
+    echo ""
+    echo "Para fazer uma query:"
+    echo "  bee query \"Sua pergunta\""
+    echo ""
+    echo "Documentacao: https://github.com/enxame/enxamepublic"
+}
+
+post_upgrade() {
+    post_install
+}
+
+pre_remove() {
+    # Stop service if running
+    systemctl --user stop enxame-bee >/dev/null 2>&1 || true
+    systemctl --user disable enxame-bee >/dev/null 2>&1 || true
+}
+
+post_remove() {
+    # Reload systemd
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    
+    # Remove user data if purging
+    if [[ "$1" == "purge" ]]; then
+        rm -rf /var/lib/enxame 2>/dev/null || true
+        userdel enxame 2>/dev/null || true
+    fi
+}

@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httpx
+websockets
+zeroconf
+psutil
+pydantic
+typer
+rich

@@ -1,0 +1,106 @@
+graph TB
+    subgraph "Load Balancer / Router"
+        LB[Nginx / Traefik]
+    end
+
+    subgraph "Frontend Cluster"
+        FE1[Frontend Instance 1]
+        FE2[Frontend Instance 2]
+    end
+
+    subgraph "Backend Services"
+        API[Open WebUI API]
+        ENX[ENXAME Controller]
+    end
+
+    subgraph "Core Services"
+        JUIZ[Juiz Service<br/>Port 7700]
+        BIB[Bibliotecário<br/>Port 7701]
+        GRD[Guardião<br/>Port 7702]
+    end
+
+    subgraph "Agent Pool"
+        AG1[Agente 1<br/>Plugin: Engenheiro]
+        AG2[Agente 2<br/>Plugin: Jurista]
+        AG3[Agente 3<br/>Plugin: Médico]
+        AGN[Agente N<br/>Hot-load Plugins]
+    end
+
+    subgraph "Data Layer"
+        SQLITE[(SQLite<br/>User Data)]
+        PG[(PostgreSQL<br/>Main DB)]
+        QDRANT[(Qdrant<br/>Vectors)]
+        REDIS[(Redis<br/>Cache)]
+    end
+
+    subgraph "External Services"
+        OLLAMA[Ollama Server<br/>Port 11434]
+        WEB[Web Search APIs]
+        ZIM[ZIM Files Storage]
+        DOCS[Documents Storage]
+    end
+
+    subgraph "Infrastructure"
+        SYSLOG[Systemd Services]
+        DOCKER[Docker Compose]
+        MON[Monitoring<br/>OpenTelemetry]
+    end
+
+    %% Traffic flow
+    LB --> FE1
+    LB --> FE2
+    FE1 --> API
+    FE2 --> API
+    API --> ENX
+    ENX --> JUIZ
+
+    %% Core service connections
+    JUIZ --> BIB
+    JUIZ --> GRD
+    JUIZ --> AG1
+    JUIZ --> AG2
+    JUIZ --> AG3
+    JUIZ --> AGN
+
+    %% Data connections
+    API --> SQLITE
+    API --> PG
+    BIB --> QDRANT
+    BIB --> REDIS
+    BIB --> ZIM
+    BIB --> DOCS
+    JUIZ --> SQLITE
+    AG1 --> REDIS
+    AG2 --> REDIS
+
+    %% External connections
+    AG1 --> OLLAMA
+    AG2 --> OLLAMA
+    AG3 --> OLLAMA
+    AGN --> OLLAMA
+    BIB --> WEB
+    BIB --> OLLAMA
+
+    %% Infrastructure
+    SYSLOG --> JUIZ
+    SYSLOG --> BIB
+    SYSLOG --> GRD
+    SYSLOG --> AG1
+    DOCKER --> API
+    DOCKER --> BIB
+    MON --> API
+    MON --> JUIZ
+
+    %% Failover paths
+    JUIZ -.->|Failover| AG1
+    AG1 -.->|Assume Role| JUIZ
+
+    style JUIZ fill:#f9f,stroke:#333,stroke-width:2px
+    style BIB fill:#bbf,stroke:#333,stroke-width:2px
+    style GRD fill:#fbb,stroke:#333,stroke-width:2px
+    style AG1 fill:#bfb,stroke:#333
+    style AG2 fill:#bfb,stroke:#333
+    style AG3 fill:#bfb,stroke:#333
+    style OLLAMA fill:#ffd,stroke:#333
+    style QDRANT fill:#ddf,stroke:#333
+    style REDIS fill:#ddf,stroke:#333

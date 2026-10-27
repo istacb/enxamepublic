@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐝 Abelha - Interface Local</title>
+    <style>
+        :root {
+            --primary: #f5a623;
+            --primary-dark: #d48c00;
+            --bg: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f3460;
+            --text: #e8e8e8;
+            --text-muted: #a0a0a0;
+            --success: #4caf50;
+            --warning: #ff9800;
+            --error: #f44336;
+            --info: #2196f3;
+            --border: #2a2a4a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: var(--bg-card);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            border: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo h1 {
+            font-size: 1.8rem;
+            color: var(--primary);
+        }
+
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .status-ready {
+            background: rgba(76, 175, 80, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .status-offline {
+            background: rgba(244, 67, 54, 0.2);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .nav-tab {
+            padding: 12px 24px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        .nav-tab:hover {
+            background: var(--bg-input);
+            border-color: var(--primary);
+        }
+
+        .nav-tab.active {
+            background: var(--primary);
+            color: var(--bg);
+            border-color: var(--primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .card h2 {
+            margin-bottom: 15px;
+            color: var(--primary);
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .grid-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .info-item {
+            background: var(--bg-input);
+            padding: 15px;
+            border-radius: 8px;
+        }
+
+        .info-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 70vh;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: var(--bg-input);
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 85%;
+        }
+
+        .message.user {
+            background: var(--primary);
+            color: var(--bg);
+            margin-left: auto;
+            border-bottom-right-radius: 0;
+        }
+
+        .message.bee {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 0;
+        }
+
+        .message-routing {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+        }
+
+        .message-sources {
+            margin-top: 10px;
+            font-size: 0.85rem;
+        }
+
+        .source-tag {
+            display: inline-block;
+            padding: 4px 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            margin: 4px 4px 4px 0;
+            font-size: 0.75rem;
+            border: 1px solid var(--border);
+        }
+
+        .chat-input-container {
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 15px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+            resize: none;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .btn {
+            padding: 15px 30px;
+            background: var(--primary);
+            color: var(--bg);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-input);
+        }
+
+        .swarm-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .bee-card {
+            background: var(--bg-input);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .bee-card h3 {
+            color: var(--primary);
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+        }
+
+        .capability-tag {
+            display: inline-block;
+            padding: 4px 8px;
+            background: rgba(245, 166, 35, 0.2);
+            color: var(--primary);
+            border-radius: 4px;
+            margin: 4px 4px 4px 0;
+            font-size: 0.75rem;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: var(--primary);
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .offline-banner {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid var(--error);
+            color: var(--error);
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .library-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--bg-input);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 5px;
+        }
+
+        .config-form {
+            max-width: 600px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .form-input, .form-select {
+            width: 100%;
+            padding: 12px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+        }
+
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .nav-tabs {
+                width: 100%;
+                overflow-x: auto;
+            }
+
+            .chat-container {
+                height: 60vh;
+            }
+
+            .message {
+                max-width: 95%;
+            }
+
+            .grid-info {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span style="font-size: 2.5rem;">🐝</span>
+                <div>
+                    <h1>ABELHA</h1>
+                    <div id="bee-id" class="info-label">Carregando...</div>
+                </div>
+            </div>
+            <div id="status-badge" class="status-badge status-offline">
+                Verificando...
+            </div>
+        </header>
+
+        <div id="offline-banner" class="offline-banner" style="display: none;">
+            📴 Modo Offline - Internet não disponível. Funcionalidades locais ativas.
+        </div>
+
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-tab="chat">💬 Chat</button>
+            <button class="nav-tab" data-tab="status">📊 Status</button>
+            <button class="nav-tab" data-tab="library">📚 Biblioteca</button>
+            <button class="nav-tab" data-tab="swarm">🌐 Enxame</button>
+            <button class="nav-tab" data-tab="config">⚙️ Configuração</button>
+        </nav>
+
+        <!-- CHAT TAB -->
+        <div id="chat" class="tab-content active">
+            <div class="card chat-container">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="message bee">
+                        <div class="message-content">
+                            Olá! Sou sua Abelha local. Como posso ajudar hoje?
+                        </div>
+                        <div class="message-routing">Pronta para consultas locais, em rede ou web.</div>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <textarea 
+                        id="chat-input" 
+                        class="chat-input" 
+                        placeholder="Digite sua pergunta..."
+                        rows="3"
+                    ></textarea>
+                    <button id="send-btn" class="btn">Enviar</button>
+                    <button id="clear-btn" class="btn btn-secondary">Limpar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- STATUS TAB -->
+        <div id="status" class="tab-content">
+            <div class="card">
+                <h2>📊 Status da Abelha</h2>
+                <div class="grid-info" id="status-grid">
+                    <div class="info-item">
+                        <div class="info-label">Bee ID</div>
+                        <div class="info-value" id="status-bee-id">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Hostname</div>
+                        <div class="info-value" id="status-hostname">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Sistema Operacional</div>
+                        <div class="info-value" id="status-os">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">CPU</div>
+                        <div class="info-value" id="status-cpu">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">RAM</div>
+                        <div class="info-value" id="status-ram">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">GPU</div>
+                        <div class="info-value" id="status-gpu">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Ollama</div>
+                        <div class="info-value" id="status-ollama">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Modelo Principal</div>
+                        <div class="info-value" id="status-model">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">RAG</div>
+                        <div class="info-value" id="status-rag">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">OCR</div>
+                        <div class="info-value" id="status-ocr">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Bibliotecário</div>
+                        <div class="info-value" id="status-librarian">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Abelhas Descobertas</div>
+                        <div class="info-value" id="status-swarm-count">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Estado do Serviço</div>
+                        <div class="info-value" id="status-service">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LIBRARY TAB -->
+        <div id="library" class="tab-content">
+            <div class="card">
+                <h2>📚 Biblioteca Local</h2>
+                <div class="library-stats">
+                    <div class="stat-card">
+                        <div class="stat-number" id="lib-docs">0</div>
+                        <div class="stat-label">Documentos</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="lib-sources">0</div>
+                        <div class="stat-label">Fontes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="lib-indexed">0</div>
+                        <div class="stat-label">Indexados</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="lib-ocr">0</div>
+                        <div class="stat-label">Com OCR</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Última Indexação</label>
+                    <div class="info-value" id="lib-last-index">Nunca</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Estado do Índice</label>
+                    <div class="info-value" id="lib-index-status">Desconhecido</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Pesquisar na Biblioteca</label>
+                    <div class="chat-input-container">
+                        <input 
+                            type="text" 
+                            id="library-search" 
+                            class="chat-input" 
+                            placeholder="Buscar documentos..."
+                        >
+                        <button id="library-search-btn" class="btn">Pesquisar</button>
+                    </div>
+                </div>
+                <div id="library-results" style="margin-top: 20px;"></div>
+            </div>
+        </div>
+
+        <!-- SWARM TAB -->
+        <div id="swarm" class="tab-content">
+            <div class="card">
+                <h2>🌐 Abelhas no Enxame</h2>
+                <div id="swarm-grid" class="swarm-grid">
+                    <div class="info-item" style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">
+                        Nenhuma abelha descoberta ainda. Verifique se outras Abelhas estão na mesma rede.
+                    </div>
+                </div>
+                <button id="refresh-swarm-btn" class="btn btn-secondary" style="margin-top: 20px;">
+                    Atualizar Lista
+                </button>
+            </div>
+        </div>
+
+        <!-- CONFIG TAB -->
+        <div id="config" class="tab-content">
+            <div class="card">
+                <h2>⚙️ Configuração</h2>
+                <form class="config-form" id="config-form">
+                    <div class="form-group">
+                        <label class="form-label" for="config-port">Porta da API</label>
+                        <input type="number" id="config-port" class="form-input" value="8765" min="1024" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="config-name">Nome da Abelha</label>
+                        <input type="text" id="config-name" class="form-input" placeholder="Minha Abelha">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="config-model">Modelo Preferencial</label>
+                        <select id="config-model" class="form-select">
+                            <option value="auto">Automático (Recomendado)</option>
+                            <option value="qwen2.5:7b">Qwen 2.5 7B</option>
+                            <option value="llama3.2:3b">Llama 3.2 3B</option>
+                            <option value="gemma2:9b">Gemma 2 9B</option>
+                            <option value="mistral:7b">Mistral 7B</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="config-knowledge-dir">Diretório de Conhecimento</label>
+                        <input type="text" id="config-knowledge-dir" class="form-input" placeholder="/path/to/knowledge">
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="config-discovery" checked>
+                            <label for="config-discovery">Habilitar Discovery mDNS</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="config-web-access" checked>
+                            <label for="config-web-access">Permitir Acesso Web (Fallback)</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="config-external-access">
+                            <label for="config-external-access">Permitir Acesso Externo à UI (LAN)</label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn">Salvar Configurações</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Estado global
+        let currentConversation = [];
+        let isProcessing = false;
+        let swarmData = [];
+
+        // Elementos DOM
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const statusBadge = document.getElementById('status-badge');
+        const offlineBanner = document.getElementById('offline-banner');
+
+        // Tabs navigation
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab).classList.add('active');
+                
+                if (tab.dataset.tab === 'swarm') {
+                    loadSwarm();
+                } else if (tab.dataset.tab === 'status') {
+                    loadStatus();
+                } else if (tab.dataset.tab === 'library') {
+                    loadLibrary();
+                }
+            });
+        });
+
+        // Check status on load
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) throw new Error('Falha na conexão');
+                
+                const data = await response.json();
+                
+                document.getElementById('bee-id').textContent = data.bee_id || 'Desconhecido';
+                document.getElementById('status-bee-id').textContent = data.bee_id || '-';
+                
+                if (data.status === 'READY') {
+                    statusBadge.textContent = '🟢 READY';
+                    statusBadge.className = 'status-badge status-ready';
+                    offlineBanner.style.display = 'none';
+                } else {
+                    statusBadge.textContent = '🔴 OFFLINE';
+                    statusBadge.className = 'status-badge status-offline';
+                }
+                
+                if (!data.internet_available) {
+                    offlineBanner.style.display = 'block';
+                }
+                
+                return data;
+            } catch (error) {
+                statusBadge.textContent = '🔴 DESCONECTADO';
+                statusBadge.className = 'status-badge status-offline';
+                offlineBanner.style.display = 'block';
+                return null;
+            }
+        }
+
+        // Load status details
+        async function loadStatus() {
+            const data = await checkStatus();
+            if (!data) return;
+            
+            document.getElementById('status-hostname').textContent = data.hostname || '-';
+            document.getElementById('status-os').textContent = data.os || '-';
+            document.getElementById('status-cpu').textContent = data.cpu || '-';
+            document.getElementById('status-ram').textContent = formatBytes(data.ram_bytes) || '-';
+            document.getElementById('status-gpu').textContent = data.gpu || 'Não detectada';
+            document.getElementById('status-ollama').textContent = data.ollama_status || 'Desconhecido';
+            document.getElementById('status-model').textContent = data.model || '-';
+            document.getElementById('status-rag').textContent = data.rag_status ? '✅ ONLINE' : '❌ OFFLINE';
+            document.getElementById('status-ocr').textContent = data.ocr_status ? '✅ ONLINE' : '❌ OFFLINE';
+            document.getElementById('status-librarian').textContent = data.librarian_status ? '✅ ONLINE' : '❌ OFFLINE';
+            document.getElementById('status-swarm-count').textContent = data.swarm_count || '0';
+            document.getElementById('status-service').textContent = data.service_state || 'Desconhecido';
+        }
+
+        // Load library stats
+        async function loadLibrary() {
+            try {
+                const response = await fetch('/api/library/stats');
+                if (!response.ok) throw new Error('Falha');
+                
+                const data = await response.json();
+                document.getElementById('lib-docs').textContent = data.documents || 0;
+                document.getElementById('lib-sources').textContent = data.sources || 0;
+                document.getElementById('lib-indexed').textContent = data.indexed || 0;
+                document.getElementById('lib-ocr').textContent = data.ocr_docs || 0;
+                document.getElementById('lib-last-index').textContent = data.last_indexed || 'Nunca';
+                document.getElementById('lib-index-status').textContent = data.index_status || 'Desconhecido';
+            } catch (error) {
+                console.error('Erro ao carregar biblioteca:', error);
+            }
+        }
+
+        // Load swarm
+        async function loadSwarm() {
+            try {
+                const response = await fetch('/api/swarm');
+                if (!response.ok) throw new Error('Falha');
+                
+                const data = await response.json();
+                swarmData = data.bees || [];
+                
+                const swarmGrid = document.getElementById('swarm-grid');
+                
+                if (swarmData.length === 0) {
+                    swarmGrid.innerHTML = `
+                        <div class="info-item" style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">
+                            Nenhuma abelha descoberta ainda. Verifique se outras Abelhas estão na mesma rede.
+                        </div>
+                    `;
+                    return;
+                }
+                
+                swarmGrid.innerHTML = swarmData.map(bee => `
+                    <div class="bee-card">
+                        <h3>🐝 ${bee.name || bee.bee_id?.substring(0, 8)}</h3>
+                        <div class="info-item" style="margin-bottom: 10px;">
+                            <div class="info-label">ID</div>
+                            <div class="info-value" style="font-size: 0.8rem;">${bee.bee_id || 'Desconhecido'}</div>
+                        </div>
+                        <div class="info-item" style="margin-bottom: 10px;">
+                            <div class="info-label">Endereço</div>
+                            <div class="info-value" style="font-size: 0.8rem;">${bee.address || '-'}</div>
+                        </div>
+                        <div class="info-item" style="margin-bottom: 10px;">
+                            <div class="info-label">Estado</div>
+                            <div class="info-value" style="font-size: 0.8rem; color: ${bee.state === 'RUNNING' ? 'var(--success)' : 'var(--warning)'}">
+                                ${bee.state || 'Desconhecido'}
+                            </div>
+                        </div>
+                        <div class="info-item" style="margin-bottom: 10px;">
+                            <div class="info-label">Modelo</div>
+                            <div class="info-value" style="font-size: 0.8rem;">${bee.model || '-'}</div>
+                        </div>
+                        <div class="info-item" style="margin-bottom: 10px;">
+                            <div class="info-label">Hardware</div>
+                            <div class="info-value" style="font-size: 0.75rem;">
+                                ${bee.hardware?.cpu || '-'} | ${formatBytes(bee.hardware?.ram_bytes)}
+                            </div>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            ${(bee.capabilities || []).map(cap => 
+                                `<span class="capability-tag">${cap}</span>`
+                            ).join('')}
+                        </div>
+                        ${bee.knowledge_domains && bee.knowledge_domains.length > 0 ? `
+                        <div style="margin-top: 10px;">
+                            <div class="info-label">Domínios</div>
+                            ${(bee.knowledge_domains || []).map(domain => 
+                                `<span class="capability-tag" style="background: rgba(33, 150, 243, 0.2); color: var(--info);">${domain}</span>`
+                            ).join('')}
+                        </div>
+                        ` : ''}
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Erro ao carregar enxame:', error);
+            }
+        }
+
+        // Send message
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message || isProcessing) return;
+            
+            isProcessing = true;
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="loading"></span>';
+            
+            // Add user message
+            addMessage(message, 'user');
+            chatInput.value = '';
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message,
+                        conversation_id: currentConversation[currentConversation.length - 1]?.id || null
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Falha na comunicação');
+                
+                const data = await response.json();
+                
+                // Add bee response
+                let responseHtml = escapeHtml(data.response || 'Sem resposta');
+                
+                if (data.routing) {
+                    const routingIcon = data.routing === 'LOCAL' ? '📚' : data.routing === 'NETWORK' ? '🌐' : '🌍';
+                    const routingText = data.routing === 'LOCAL' ? 'Biblioteca Local' : data.routing === 'NETWORK' ? 'Enxame' : 'Internet';
+                    responseHtml += `<div class="message-routing">${routingIcon} Fonte: ${routingText}${data.sources_count ? ` • ${data.sources_count} fontes` : ''}</div>`;
+                }
+                
+                if (data.sources && data.sources.length > 0) {
+                    const sourcesHtml = data.sources.map(source => 
+                        `<span class="source-tag">${escapeHtml(source)}</span>`
+                    ).join('');
+                    responseHtml += `<div class="message-sources"><strong>Fontes:</strong><br>${sourcesHtml}</div>`;
+                }
+                
+                addMessage(responseHtml, 'bee', true);
+                
+                // Update conversation
+                if (data.conversation_id) {
+                    const lastConv = currentConversation[currentConversation.length - 1];
+                    if (!lastConv || lastConv.id !== data.conversation_id) {
+                        currentConversation.push({ id: data.conversation_id, messages: [] });
+                    }
+                }
+                
+            } catch (error) {
+                addMessage(`❌ Erro: ${error.message}`, 'bee');
+            } finally {
+                isProcessing = false;
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Enviar';
+            }
+        }
+
+        // Add message to chat
+        function addMessage(content, type, isHtml = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            if (isHtml) {
+                messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
+            } else {
+                messageDiv.textContent = content;
+            }
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Clear chat
+        function clearChat() {
+            chatMessages.innerHTML = `
+                <div class="message bee">
+                    <div class="message-content">
+                        Olá! Sou sua Abelha local. Como posso ajudar hoje?
+                    </div>
+                    <div class="message-routing">Pronta para consultas locais, em rede ou web.</div>
+                </div>
+            `;
+            currentConversation = [];
+        }
+
+        // Search library
+        async function searchLibrary() {
+            const query = document.getElementById('library-search').value.trim();
+            if (!query) return;
+            
+            const resultsDiv = document.getElementById('library-results');
+            resultsDiv.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="loading"></span> Pesquisando...</div>';
+            
+            try {
+                const response = await fetch('/api/library/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query })
+                });
+                
+                if (!response.ok) throw new Error('Falha na pesquisa');
+                
+                const data = await response.json();
+                
+                if (data.results && data.results.length > 0) {
+                    resultsDiv.innerHTML = data.results.map(result => `
+                        <div class="bee-card" style="margin-bottom: 10px;">
+                            <h3>${escapeHtml(result.title || 'Documento sem título')}</h3>
+                            <div class="info-label">Relevância: ${Math.round((result.score || 0) * 100)}%</div>
+                            <div class="info-label" style="margin-top: 5px;">${escapeHtml(result.snippet || '')}</div>
+                            <div class="info-label" style="margin-top: 5px; font-size: 0.75rem;">Fonte: ${escapeHtml(result.source || 'Desconhecida')}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    resultsDiv.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted);">Nenhum resultado encontrado.</div>';
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `<div style="text-align: center; padding: 20px; color: var(--error);">Erro: ${error.message}</div>`;
+            }
+        }
+
+        // Utility functions
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Event listeners
+        sendBtn.addEventListener('click', sendMessage);
+        clearBtn.addEventListener('click', clearChat);
+        
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        document.getElementById('library-search-btn').addEventListener('click', searchLibrary);
+        document.getElementById('library-search').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchLibrary();
+        });
+        
+        document.getElementById('refresh-swarm-btn').addEventListener('click', loadSwarm);
+        
+        document.getElementById('config-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const config = {
+                port: parseInt(document.getElementById('config-port').value),
+                name: document.getElementById('config-name').value,
+                model_preference: document.getElementById('config-model').value,
+                knowledge_dir: document.getElementById('config-knowledge-dir').value,
+                discovery_enabled: document.getElementById('config-discovery').checked,
+                web_access_enabled: document.getElementById('config-web-access').checked,
+                external_ui_access: document.getElementById('config-external-access').checked
+            };
+            
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                
+                if (response.ok) {
+                    alert('Configurações salvas com sucesso!');
+                } else {
+                    throw new Error('Falha ao salvar');
+                }
+            } catch (error) {
+                alert(`Erro: ${error.message}`);
+            }
+        });
+
+        // Initialize
+        window.addEventListener('DOMContentLoaded', () => {
+            checkStatus();
+            setInterval(checkStatus, 30000); // Check status every 30s
+        });
+    </script>
+</body>
+</html>
