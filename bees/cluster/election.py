@@ -2,54 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 
-from .state import ClusterRole, ClusterState
-
-
-class ClusterRole(Enum):
-    """Papéis no cluster Enxame."""
-    JUIZ = "juiz"
-    BIBLIOTECARIO = "bibliotecario"
-    GUARDA = "guarda"
-    WORKER = "worker"
-    WORKER_ARTIST = "worker_artist"
-
-
-# Capabilities requeridas para cada papel primário
-JUIZ_CAPS = frozenset([
-    "llm_inference",    # Para ponderação e decisão
-    "rag",              # Para consultar conhecimento local
-    "memory",           # Para contexto histórico
-    "query",            # Processamento de queries
-    "vector_search",    # Busca semântica
-])
-
-BIBLIOTECARIO_CAPS = frozenset([
-    "rag",              # RAG local
-    "embeddings",       # Geração de embeddings
-    "vector_search",    # Busca vetorial
-    "index",            # Indexação de documentos
-    "ocr",              # OCR para documentos
-    "zim",              # Leitura ZIM offline
-])
-
-GUARDA_CAPS = frozenset([
-    "security",         # Auditoria de segurança
-    "audit",            # Auditoria de ações
-    "monitoring",       # Monitoramento de anomalias
-])
-
-
-@dataclass(slots=True)
-class PeerScore:
-    """Score de um peer para eleição."""
-    peer: Any  # DiscoveredPeer
-    score: float
-    primary_role: ClusterRole | None = None
-    is_artist: bool = False
+from .types import (
+    ClusterRole, ClusterState, PeerBenchmark, ElectionResult,
+    JUIZ_CAPS, BIBLIOTECARIO_CAPS, GUARDA_CAPS
+)
 
 
 def has_capabilities(peer: Any, required: frozenset[str]) -> bool:

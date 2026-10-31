@@ -3,7 +3,7 @@
  * Initializes all controllers and manages lifecycle
  */
 import { store } from './store.js';
-import { api, initSession } from './api.js';
+import { initSession, fetchStatus, fetchModels, fetchDiscover, pauseNode, pauseAll, sendChat, streamChat } from './api.js';
 import { audio } from './audio.js';
 import { HiveCanvas } from './hive-canvas.js';
 import { ChatController } from './chat.js';
@@ -53,7 +53,7 @@ function bindGlobalEvents() {
     btn.disabled = true;
     btn.textContent = 'Descobrindo…';
     try {
-      const { peers } = await api.fetchDiscover();
+      const { peers } = await fetchDiscover();
       // Peers are added to store via status poll, just show toast
       chatController._addMessage(`Descoberta concluída: ${peers.length} peer(s) encontrado(s)`, 'system');
     } catch (err) {
@@ -69,7 +69,7 @@ function bindGlobalEvents() {
     const btn = document.getElementById('pause-all');
     const newState = !store.pausedAll;
     try {
-      await api.pauseAll(newState);
+      await pauseAll(newState);
       store.pausedAll = newState;
       btn.classList.toggle('active', newState);
       btn.setAttribute('aria-pressed', newState);
