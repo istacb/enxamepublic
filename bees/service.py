@@ -500,10 +500,19 @@ class BeeService:
         app.router.add_post("/api/v1/ingest", ingest)
 
         # Servir arquivos estáticos da Web UI
-        web_dir = Path(__file__).resolve().parents[2] / "web"
+        # __file__ = .../bees/service.py -> parents[1] = .../enxamepublic
+        web_dir = Path(__file__).resolve().parents[1] / "web"
         if web_dir.exists():
-            app.router.add_static('/', web_dir, show_index=True)
+            # Rota principal para index.html
+            async def index_html(request):
+                return web.FileResponse(web_dir / "index.html")
+            
+            app.router.add_get('/', index_html)
+            # Arquivos estáticos na raiz (css, js, etc.) - serve index.html para /
+            app.router.add_static('/', web_dir, show_index=False)
             logger.info(f"Servindo Web UI de {web_dir}")
+        else:
+            logger.warning(f"Pasta web não encontrada: {web_dir}")
 
         runner = web.AppRunner(app)
         await runner.setup()
