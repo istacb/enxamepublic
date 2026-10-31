@@ -63,7 +63,11 @@ class BeeMemory:
         self._conn: sqlite3.Connection | None = None
 
     async def initialize(self) -> None:
-        """Inicializa banco de dados e cria tabelas."""
+        """Inicializa banco de dados e cria tabelas. Idempotente - pode ser chamado múltiplas vezes."""
+        # Se já inicializado, não faz nada
+        if self._conn is not None:
+            return
+            
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
 
@@ -113,7 +117,7 @@ class BeeMemory:
         logger.info(f"Memória inicializada em {self.db_path}")
 
     async def close(self) -> None:
-        """Fecha conexão com banco."""
+        """Fecha conexão com banco. Idempotente."""
         if self._conn:
             self._conn.close()
             self._conn = None

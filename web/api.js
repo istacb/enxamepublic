@@ -2,7 +2,9 @@
  * API Client - Centralized fetch with session token
  */
 let _sessionToken = null;
+let _juizUrl = 'http://localhost:7700'; // Juiz for auth/session
 
+export function setJuizUrl(url) { _juizUrl = url; }
 export function setSessionToken(token) { _sessionToken = token; }
 export function getSessionToken() { return _sessionToken; }
 
@@ -18,7 +20,7 @@ export async function api(path, { method = 'GET', body } = {}) {
 
 // Specific endpoints
 export async function initSession() {
-  const { token } = await api('/api/session');
+  const { token } = await api(`${_juizUrl}/api/session`, { method: 'POST' });
   _sessionToken = token;
   return token;
 }
@@ -30,6 +32,6 @@ export function pauseNode(nodeId, paused) { return api(`/api/node/${nodeId}/paus
 export function pauseAll(paused) { return api('/api/cluster/pause-all', { method: 'POST', body: { paused } }); }
 export function sendChat(prompt) { return api('/api/chat', { method: 'POST', body: { prompt } }); }
 export function streamChat(taskId) {
-  const url = `/api/chat/stream/${taskId}?session=${_sessionToken}`;
+  const url = `${_juizUrl}/api/chat/stream/${taskId}?session=${_sessionToken}`;
   return new EventSource(url);
 }

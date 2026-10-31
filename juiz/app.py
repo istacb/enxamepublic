@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from core.exp.envelope import EXPEnvelope
 from core.exp.http import EXP_SIGNATURE_HEADER, EXP_TIMESTAMP_HEADER
@@ -38,6 +39,16 @@ service = JuizService(node_id=NODE_ID, ollama_url=OLLAMA_URL, security=security)
 server_adapter = EXPServerAdapter(security=security)
 
 app = FastAPI(title='ENXAME Juiz', version='1.2.0')
+
+# CORS para permitir UI no Bee (8765) acessar Juiz (7700)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765", "http://192.168.0.157:8765"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 installed_plugins: list[dict] = []
 
 # Sessões locais do UI (browser não tem o segredo EXP; o servidor assina para ele).

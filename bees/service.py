@@ -283,7 +283,7 @@ class BeeService:
         if len(peers) >= 3:
             # Eleger papéis
             self.cluster_state = elect_roles(peers, self.cluster_state)
-            self.cluster_role = self.cluster_state.get_role(self.node_id)
+            self.cluster_role = self.cluster_state.get_role(self.node_id) or ClusterRole.WORKER
             
             # Determinar se é Worker Artist
             if self.cluster_role == ClusterRole.WORKER and self.node_id in self.cluster_state.artist_workers:
