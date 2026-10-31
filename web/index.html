@@ -8,45 +8,120 @@
 </head>
 <body>
 <div class="shell">
-  <header class="title-bar">
-    <div class="brand">ENXAME</div>
-    <div class="cluster" id="cluster-label">cluster: —</div>
-    <div class="controls">
-      <button id="discover-btn">DESCOBRIR REDE</button>
-      <div id="discovery-result" class="discovery"></div>
-      <button id="pause-all">PAUSAR TODOS</button>
+  <header class="topbar" role="banner">
+    <div class="topbar-left">
+      <div class="brand" aria-label="Enxame">ENXAME</div>
+      <div class="cluster-status" id="cluster-label" aria-live="polite">cluster: —</div>
+    </div>
+    <div class="topbar-center">
+      <div class="search-wrap" role="search">
+        <label for="global-search" class="sr-only">Buscar na rede</label>
+        <input type="search" id="global-search" placeholder="Buscar peers, modelos, docs…" aria-label="Busca global">
+        <span class="search-icon" aria-hidden="true">🔍</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button id="discover-btn" class="btn btn-ghost" aria-label="Descobrir peers na rede">DESCOBRIR REDE</button>
+      <button id="pause-all" class="btn btn-danger" aria-label="Pausar todos os nós" aria-pressed="false">PAUSAR TODOS</button>
+      <button id="settings-btn" class="btn btn-ghost" aria-label="Configurações">⚙️</button>
     </div>
   </header>
 
-  <div class="floor">
-    <canvas id="hive" width="900" height="520"></canvas>
+  <main class="main-grid" role="main">
+    <aside class="sidebar" id="sidebar" role="complementary" aria-label="Painel de controle da colmeia">
+      <div class="sidebar-header">
+        <h2>COLMEIA</h2>
+        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Fechar painel lateral" aria-expanded="true" hidden>◀</button>
+      </div>
 
-    <aside class="sidebar">
-      <div class="panel">
-        <div class="panel-title">NÓS</div>
-        <div id="node-list" class="node-list"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-title">CONTADORES</div>
-        <div class="counter"><span id="c-tasks">0</span> tarefas</div>
-        <div class="counter"><span id="c-calls">0</span> chamadas ao modelo</div>
-        <div class="counter"><span id="c-nacks">0</span> NACKs</div>
-      </div>
-      <div class="panel">
-        <div class="panel-title">MODELO (Juiz)</div>
-        <div id="model-list" class="model-list"></div>
-      </div>
+      <section class="panel" aria-labelledby="health-title">
+        <h3 id="health-title" class="panel-title">SAÚDE DOS NÓS</h3>
+        <div class="node-list" id="node-list" role="list" aria-label="Lista de abelhas ativas"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="conn-title">
+        <h3 id="conn-title" class="panel-title">CONEXÃO</h3>
+        <div class="connection-grid" id="connection-grid" role="list" aria-label="Status de conexão por nó">
+          <!-- preenchido via JS -->
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="model-title">
+        <h3 id="model-title" class="panel-title">MODELOS</h3>
+        <div class="model-list" id="model-list" role="list" aria-label="Modelos Ollama disponíveis"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="stats-title">
+        <h3 id="stats-title" class="panel-title">ESTATÍSTICAS</h3>
+        <div class="stats-grid" id="stats-grid" role="list" aria-label="Contadores globais">
+          <div class="stat" role="listitem">
+            <span class="stat-value" id="c-tasks">0</span>
+            <span class="stat-label">tarefas</span>
+          </div>
+          <div class="stat" role="listitem">
+            <span class="stat-value" id="c-calls">0</span>
+            <span class="stat-label">chamadas</span>
+          </div>
+          <div class="stat" role="listitem">
+            <span class="stat-value" id="c-nacks">0</span>
+            <span class="stat-label">NACKs</span>
+          </div>
+          <div class="stat" role="listitem">
+            <span class="stat-value" id="c-peers">0</span>
+            <span class="stat-label">peers</span>
+          </div>
+        </div>
+      </section>
     </aside>
-  </div>
 
-  <div class="chat">
-    <div id="transcript"></div>
-    <div class="input-row">
-      <input id="msg" placeholder="Pergunte ao enxame…">
-      <button id="send">Enviar</button>
+    <div class="chat-area" role="region" aria-label="Chat com o enxame">
+      <div class="chat-header">
+        <div class="chat-status" id="chat-status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Conectado</span>
+        </div>
+        <div class="chat-actions">
+          <button id="clear-chat" class="btn btn-ghost btn-sm" aria-label="Limpar conversa">🗑️</button>
+          <button id="export-chat" class="btn btn-ghost btn-sm" aria-label="Exportar conversa">📥</button>
+        </div>
+      </div>
+
+      <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="Histórico de mensagens">
+        <div class="msg system welcome">
+          <span class="msg-icon" aria-hidden="true">🐝</span>
+          <span>Bem-vindo ao Enxame. Pergunte o que quiser.</span>
+        </div>
+      </div>
+
+      <form class="input-row" id="chat-form" role="form" aria-label="Enviar mensagem">
+        <label for="msg" class="sr-only">Sua pergunta</label>
+        <input type="text" id="msg" placeholder="Pergunte ao enxame…" autocomplete="off" aria-describedby="msg-hint">
+        <span id="msg-hint" class="sr-only">Pressione Enter para enviar</span>
+        <button type="submit" id="send" class="btn btn-primary" aria-label="Enviar">ENVIAR</button>
+      </form>
     </div>
-  </div>
+  </main>
+
+  <footer class="bottombar" role="contentinfo">
+    <div class="bottombar-left">
+      <span id="version-badge">v1.0.0</span>
+      <span id="ollama-status" class="status-badge" aria-label="Status do Ollama">Ollama: —</span>
+    </div>
+    <div class="bottombar-right">
+      <a href="https://github.com/istacb/enxamepublic" target="_blank" rel="noopener" class="github-link" aria-label="GitHub">⌘</a>
+    </div>
+  </footer>
 </div>
-<script src="app.js"></script>
+
+<!-- Canvas layers (background + foreground) -->
+<div class="canvas-layers" aria-hidden="true">
+  <canvas id="hive-bg" class="hive-canvas"></canvas>
+  <canvas id="hive-fg" class="hive-canvas"></canvas>
+</div>
+
+<!-- Audio context for bzz sounds -->
+<audio id="sfx-bzz" preload="auto" aria-hidden="true"></audio>
+
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -503,10 +503,11 @@ class JuizService:
                 return specialty
         return 'programador'
 
-    async def _ask_ollama(self, model: str, prompt: str, temperature: float = 0.2) -> str:
+    async def _ask_ollama(self, model: str, prompt: str, temperature: float = 0.2) -> tuple[str, str]:
         safe_prompt = self.sanitizer.sanitize_for_llm(prompt)
         req = OllamaGenerateRequest(model=model, prompt=safe_prompt, temperature=temperature, num_ctx=8192)
-        return await self.ollama.generate(req)
+        response = await self.ollama.generate(req)
+        return response, model
 
     async def _select_model(self) -> str:
         """Escolhe o melhor modelo instalado no nó Juiz. Não baixa nada."""
@@ -539,7 +540,7 @@ class JuizService:
             f'Tarefa: <<<USER_TASK_START>>>{prompt}<<<USER_TASK_END>>>'
         )
         try:
-            response = await self._ask_ollama(model, planner_prompt)
+            response, _ = await self._ask_ollama(model, planner_prompt)
             data = json.loads(response)
             subtasks = [str(s).strip() for s in data.get('subtasks', []) if str(s).strip()]
             return subtasks[:3] if subtasks else [prompt]
@@ -595,6 +596,16 @@ class JuizService:
                 answer = await asyncio.wait_for(fut, timeout=50)
                 conn.fail_count = max(0, conn.fail_count - 1)
                 self._breaker_record(conn.node.node_id, True)
+                # Emit dispatch event with agent info for UI streaming
+                task = self.tasks.get(task_id)
+                if task:
+                    await self._emit(task, 'dispatch', {
+                        'subtask': subtask,
+                        'specialty': specialty,
+                        'node_id': conn.node.node_id,
+                        'role': conn.cluster_role,
+                        'model': conn.models[0] if conn.models else None
+                    })
                 return [answer]
             except RuntimeError:
                 # NACK -> tenta outro agente
@@ -618,7 +629,7 @@ class JuizService:
             f'Tarefa: <<<USER_TASK_START>>>{safe_subtask}<<<USER_TASK_END>>>'
         )
         try:
-            fallback = await self._ask_ollama(model, fallback_prompt, temperature=0.3)
+            fallback, _ = await self._ask_ollama(model, fallback_prompt, temperature=0.3)
         except OllamaError:
             fallback = 'Não há modelo disponível neste nó para responder.'
         return [fallback]
@@ -639,7 +650,7 @@ class JuizService:
         parts.extend([f'{i + 1}) {txt}' for i, txt in enumerate(candidates)])
         judge_prompt = '\n'.join(parts)
         try:
-            pick = await self._ask_ollama(model, judge_prompt, temperature=0.1)
+            pick, _ = await self._ask_ollama(model, judge_prompt, temperature=0.1)
             idx = int(''.join(ch for ch in pick if ch.isdigit()) or '1') - 1
             idx = max(0, min(idx, len(candidates) - 1))
             return candidates[idx]
@@ -660,9 +671,10 @@ class JuizService:
             'Contribuições:\n' + '\n\n'.join(f'- {p}' for p in partials)
         )
         try:
-            return await self._ask_ollama(model, synthesis_prompt, temperature=0.2)
+            final, model_used = await self._ask_ollama(model, synthesis_prompt, temperature=0.2)
+            return final, model_used
         except Exception:
-            return '\n\n'.join(partials)
+            return '\n\n'.join(partials), model
 
     async def submit_task(self, prompt: str) -> TaskState:
         if not self.current_roles:
@@ -677,15 +689,14 @@ class JuizService:
             winners: list[str] = []
             for sub in subtasks:
                 specialty = self._infer_specialty(sub)
-                await self._emit(task, 'dispatch', {'subtask': sub, 'specialty': specialty})
                 candidates = await self.dispatch_subtask(task.task_id, sub)
                 winner = await self.resolve_conflicts(sub, candidates)
                 winners.append(winner)
                 await self._emit(task, 'judge', {'candidates': len(candidates), 'specialty': specialty})
-            final = await self.synthesize(prompt, winners)
+            final, model_used = await self.synthesize(prompt, winners)
             task.result = final
             task.status = 'completed'
-            await self._emit(task, 'final', {'content': final})
+            await self._emit(task, 'final', {'content': final, 'model': model_used})
         except Exception as exc:
             task.error = str(exc)
             task.status = 'failed'
