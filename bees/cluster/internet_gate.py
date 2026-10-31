@@ -6,7 +6,7 @@ import logging
 from enum import Enum
 from typing import Any
 
-from .state import ClusterRole, ClusterState
+from .types import ClusterRole, ClusterState
 
 logger = logging.getLogger("bee.cluster.internet_gate")
 

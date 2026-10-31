@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from .state import ClusterState, ClusterRole
+from .types import ClusterState, ClusterRole
 from .election import elect_juiz_failover, restore_juiz, elect_roles
 
 logger = logging.getLogger("bee.cluster.monitor")

@@ -8,6 +8,19 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
+def _has_avx2() -> bool:
+    """Verifica se CPU suporta AVX2."""
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            content = f.read()
+        return 'avx2' in content.lower()
+    except Exception:
+        return False
+
+
+_HAS_AVX2 = _has_avx2()
+
+
 _PT_HINTS = {
     'de',
     'para',
@@ -38,6 +51,13 @@ class PTBRTranslator:
     def _load(self) -> None:
         if self._ready or not self.enabled:
             return
+        
+        if not _HAS_AVX2:
+            logger.warning('CPU sem AVX2, pulando transformers, tradução desabilitada')
+            self._pipeline = None
+            self._ready = True
+            return
+        
         try:
             from transformers import pipeline  # type: ignore
 

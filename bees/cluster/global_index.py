@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .state import PeerKnowledge, ClusterState
+from .types import PeerKnowledge, ClusterState
 
 logger = logging.getLogger("bee.cluster.global_index")
 

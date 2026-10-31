@@ -10,6 +10,7 @@ Este é o ponto de entrada principal para executar uma Abelha standalone.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import logging
@@ -242,7 +243,7 @@ class BeeService:
             self._cluster_monitor = None
 
         # Parar servidor HTTP próprio (se iniciamos)
-        if self._own_http_server and self._http_runner:
+        if getattr(self, '_own_http_server', False) and getattr(self, '_http_runner', None):
             await self._http_runner.cleanup()
             self._http_runner = None
 
@@ -985,9 +986,9 @@ class BeeService:
 
     async def _query_local(self, query: str) -> dict[str, Any]:
         """Consulta fontes locais: memória + RAG."""
-        # 1. Memória semântica
+        # 1. Memória semântica (synchronous)
         if self._memory:
-            mem_result = await self._memory.search_semantic(query)
+            mem_result = self._memory.search_semantic(query)
             if mem_result and mem_result.get("confidence", 0) > 0.8:
                 return {"answer": mem_result["response"], "confidence": mem_result["confidence"], "source_type": "memory"}
 

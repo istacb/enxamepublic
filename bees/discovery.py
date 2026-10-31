@@ -87,20 +87,26 @@ class BeeDiscoveryService:
 
     async def start(self) -> None:
         """Inicia descoberta mDNS."""
-        self._zeroconf = Zeroconf(ip_version=IPVersion.V4Only)
+        try:
+            self._zeroconf = Zeroconf(ip_version=IPVersion.V4Only)
 
-        # Iniciar browser para descobrir peers
-        self._browser = ServiceBrowser(
-            self._zeroconf,
-            SERVICE_TYPE,
-            handlers=[self._on_service_state_change],
-        )
+            # Iniciar browser para descobrir peers
+            self._browser = ServiceBrowser(
+                self._zeroconf,
+                SERVICE_TYPE,
+                handlers=[self._on_service_state_change],
+            )
 
-        self._running = True
-        self._tasks = [
-            asyncio.create_task(self._cleanup_loop()),
-        ]
-        logger.info(f"Descoberta mDNS iniciada para {self.node_id}")
+            self._running = True
+            self._tasks = [
+                asyncio.create_task(self._cleanup_loop()),
+            ]
+            logger.info(f"Descoberta mDNS iniciada para {self.node_id}")
+        except Exception as exc:
+            logger.warning(f"Falha ao iniciar mDNS (continuando sem descoberta): {exc}")
+            self._zeroconf = None
+            self._browser = None
+            self._running = False
 
     async def stop(self) -> None:
         """Para descoberta mDNS."""
@@ -116,7 +122,10 @@ class BeeDiscoveryService:
             self._browser = None
 
         if self._zeroconf:
-            self._zeroconf.close()
+            try:
+                self._zeroconf.close()
+            except Exception as exc:
+                logger.warning(f"Erro ao fechar mDNS: {exc}")
             self._zeroconf = None
 
         logger.info("Descoberta mDNS parada")
@@ -311,13 +320,27 @@ class BeeDiscoveryService:
             },
             server=f"{self.node_id}.local.",
         )
-        self._zeroconf.register_service(self._info)
-        logger.info(f"Anúncio mDNS iniciado: {self.node_id}")
+        try:
+            # Use thread to avoid blocking event loop
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._zeroconf.register_service, self._info)
+                future.result(timeout=5.0)  # 5 second timeout
+            logger.info(f"Anúncio mDNS iniciado: {self.node_id}")
+        except Exception as exc:
+            logger.warning(f"Falha ao registrar mDNS (continuando sem anúncio): {exc}")
+            self._info = None
 
     def stop_announcement(self) -> None:
         """Para anúncio mDNS."""
         if self._zeroconf and self._info:
-            self._zeroconf.unregister_service(self._info)
+            try:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self._zeroconf.unregister_service, self._info)
+                    future.result(timeout=5.0)
+            except Exception as exc:
+                logger.warning(f"Falha ao remover mDNS: {exc}")
             self._info = None
 
     def update_announcement(self, load: float, state: BeeState = BeeState.RUNNING) -> None:

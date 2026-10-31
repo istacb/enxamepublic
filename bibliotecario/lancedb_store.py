@@ -1,4 +1,5 @@
 """Armazenamento vetorial embedded com LanceDB."""
+
 from __future__ import annotations
 
 import logging
@@ -9,6 +10,19 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _has_avx2() -> bool:
+    """Verifica se CPU suporta AVX2."""
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            content = f.read()
+        return 'avx2' in content.lower()
+    except Exception:
+        return False
+
+
+_HAS_AVX2 = _has_avx2()
 
 
 @dataclass(slots=True)
@@ -22,255 +36,264 @@ class LanceDBHit:
     metadata: dict[str, Any] | None = None
 
 
-class LanceDBStore:
-    """Armazenamento vetorial embedded usando LanceDB.
+if _HAS_AVX2:
+    class LanceDBStore:
+        """Armazenamento vetorial embedded usando LanceDB.
 
-    Configura o banco para gravar diretamente em diretório local
-    (./data/lancedb por padrão) sem necessidade de servidores externos.
-    """
-
-    def __init__(
-        self,
-        embeddings: Any,  # EmbeddingService
-        db_path: str | None = None,
-        table_name: str = "enxame_docs",
-    ) -> None:
-        self.embeddings = embeddings
-        self.db_path = Path(db_path or os.getenv("LANCEDB_PATH", "./data/lancedb"))
-        self.table_name = table_name
-        self._db: Any = None
-        self._table: Any = None
-        self._ready = False
-
-    def _load(self) -> None:
-        """Inicializa o banco LanceDB lazy."""
-        if self._ready:
-            return
-
-        try:
-            import lancedb  # type: ignore
-
-            # Cria diretório se não existir
-            self.db_path.mkdir(parents=True, exist_ok=True)
-
-            # Conecta ao banco embedded
-            self._db = lancedb.connect(str(self.db_path))
-
-            # Verifica se a tabela existe, senão cria
-            table_names = self._db.table_names()
-            if self.table_name not in table_names:
-                self._create_table()
-            else:
-                self._table = self._db.open_table(self.table_name)
-
-            logger.info("LanceDB pronto em %s (tabela: %s)", self.db_path, self.table_name)
-        except Exception as exc:
-            logger.warning("LanceDB indisponível: %s", exc)
-            self._db = None
-            self._table = None
-
-        self._ready = True
-
-    def _create_table(self) -> None:
-        """Cria a tabela de documentos vetoriais."""
-        import pyarrow as pa  # type: ignore
-
-        # Schema da tabela
-        schema = pa.schema([
-            pa.field("chunk_id", pa.string()),
-            pa.field("text", pa.string()),
-            pa.field("source_path", pa.string()),
-            pa.field("extension", pa.string()),
-            pa.field("vector", pa.list_(pa.float32(), self.embeddings.dimension)),
-            pa.field("metadata_json", pa.string()),
-        ])
-
-        # Cria tabela vazia
-        self._table = self._db.create_table(self.table_name, schema=schema)
-
-    @property
-    def ready(self) -> bool:
-        """Verifica se o banco está pronto."""
-        self._load()
-        return self._db is not None
-
-    async def index_document(
-        self,
-        text: str,
-        metadata: dict[str, Any],
-        chunk_id: str | None = None,
-    ) -> str | None:
-        """Indexa um documento/texto no LanceDB.
-
-        Args:
-            text: Texto do documento ou chunk
-            metadata: Metadados (source_path, extension, etc.)
-            chunk_id: ID único do chunk (gerado se None)
-
-        Returns:
-            chunk_id do documento indexado ou None se falhar
+        Configura o banco para gravar diretamente em diretório local
+        (./data/lancedb por padrão) sem necessidade de servidores externos.
+        Requer CPU com AVX2.
         """
-        self._load()
-        if self._table is None:
-            return None
 
-        try:
-            # Gera ID único se não fornecido
-            cid = chunk_id or f"chunk_{uuid.uuid4().hex[:12]}"
+        def __init__(
+            self,
+            embeddings: Any,  # EmbeddingService
+            db_path: str | None = None,
+            table_name: str = "enxame_docs",
+        ) -> None:
+            self.embeddings = embeddings
+            self.db_path = Path(db_path or os.getenv("LANCEDB_PATH", "./data/lancedb"))
+            self.table_name = table_name
+            self._db: Any = None
+            self._table: Any = None
+            self._ready = False
 
-            # Gera embedding
-            vector = self.embeddings.encode(text)
+        def _load(self) -> None:
+            """Inicializa o banco LanceDB lazy."""
+            if self._ready:
+                return
 
-            # Prepara dados para inserção
-            import pyarrow as pa
+            try:
+                import lancedb  # type: ignore
 
-            data = {
-                "chunk_id": [cid],
-                "text": [text],
-                "source_path": [metadata.get("source_path", "")],
-                "extension": [metadata.get("extension", "")],
-                "vector": [vector],
-                "metadata_json": [str(metadata)],
-            }
+                # Cria diretório se não existir
+                self.db_path.mkdir(parents=True, exist_ok=True)
 
-            table_data = pa.table(data)
-            self._table.add(table_data)
+                # Conecta ao banco embedded
+                self._db = lancedb.connect(str(self.db_path))
 
-            logger.debug("LanceDB indexou chunk %s", cid)
-            return cid
+                # Verifica se a tabela existe, senão cria
+                table_names = self._db.table_names()
+                if self.table_name not in table_names:
+                    self._create_table()
+                else:
+                    self._table = self._db.open_table(self.table_name)
 
-        except Exception as exc:
-            logger.warning("Falha no index_document LanceDB: %s", exc)
-            return None
+                logger.info("LanceDB pronto em %s (tabela: %s)", self.db_path, self.table_name)
+            except Exception as exc:
+                logger.warning("LanceDB indisponível: %s", exc)
+                self._db = None
+                self._table = None
 
-    async def index_documents_batch(
-        self,
-        documents: list[tuple[str, dict[str, Any]]],
-    ) -> int:
-        """Indexa múltiplos documentos em batch.
+            self._ready = True
 
-        Args:
-            documents: Lista de tuplas (text, metadata)
+        def _create_table(self) -> None:
+            """Cria a tabela de documentos vetoriais."""
+            import pyarrow as pa  # type: ignore
 
-        Returns:
-            Número de documentos indexados com sucesso
-        """
-        self._load()
-        if self._table is None or not documents:
-            return 0
+            # Schema da tabela
+            schema = pa.schema([
+                pa.field("chunk_id", pa.string()),
+                pa.field("text", pa.string()),
+                pa.field("source_path", pa.string()),
+                pa.field("extension", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), self.embeddings.dimension)),
+                pa.field("metadata_json", pa.string()),
+            ])
 
-        try:
-            import pyarrow as pa
+            # Cria tabela vazia
+            self._table = self._db.create_table(self.table_name, schema=schema)
 
-            chunk_ids = []
-            texts = []
-            source_paths = []
-            extensions = []
-            vectors = []
-            metadata_jsons = []
+        @property
+        def ready(self) -> bool:
+            """Verifica se o banco está pronto."""
+            self._load()
+            return self._db is not None
 
-            for text, metadata in documents:
-                cid = f"chunk_{uuid.uuid4().hex[:12]}"
+        async def index_document(
+            self,
+            text: str,
+            metadata: dict[str, Any],
+            chunk_id: str | None = None,
+        ) -> str | None:
+            """Indexa um documento/texto no LanceDB.
+
+            Args:
+                text: Texto do documento ou chunk
+                metadata: Metadados (source_path, extension, etc.)
+                chunk_id: ID único do chunk (gerado se None)
+
+            Returns:
+                chunk_id do documento indexado ou None se falhar
+            """
+            self._load()
+            if self._table is None:
+                return None
+
+            try:
+                # Gera ID único se não fornecido
+                cid = chunk_id or f"chunk_{uuid.uuid4().hex[:12]}"
+
+                # Gera embedding
                 vector = self.embeddings.encode(text)
 
-                chunk_ids.append(cid)
-                texts.append(text)
-                source_paths.append(metadata.get("source_path", ""))
-                extensions.append(metadata.get("extension", ""))
-                vectors.append(vector)
-                metadata_jsons.append(str(metadata))
+                # Prepara metadados
+                meta = metadata.copy()
+                meta_json = __import__('json').dumps(meta, ensure_ascii=False)
 
-            data = {
-                "chunk_id": chunk_ids,
-                "text": texts,
-                "source_path": source_paths,
-                "extension": extensions,
-                "vector": vectors,
-                "metadata_json": metadata_jsons,
-            }
+                # Insere na tabela
+                self._table.add([{
+                    "chunk_id": cid,
+                    "text": text,
+                    "source_path": metadata.get("source_path", ""),
+                    "extension": metadata.get("extension", ""),
+                    "vector": vector,
+                    "metadata_json": meta_json,
+                }])
 
-            table_data = pa.table(data)
-            self._table.add(table_data)
+                return cid
+            except Exception as exc:
+                logger.warning("Falha ao indexar no LanceDB: %s", exc)
+                return None
 
-            logger.info("LanceDB indexou %d documentos em batch", len(documents))
-            return len(documents)
+        async def index_documents_batch(
+            self,
+            documents: list[dict[str, Any]],
+        ) -> int:
+            """Indexa múltiplos documentos em lote.
 
-        except Exception as exc:
-            logger.warning("Falha no index_documents_batch LanceDB: %s", exc)
+            Args:
+                documents: Lista de dicts com text, metadata, chunk_id opcional
+
+            Returns:
+                Número de documentos indexados com sucesso
+            """
+            self._load()
+            if self._table is None:
+                return 0
+
+            try:
+                rows = []
+                for doc in documents:
+                    text = doc.get("text", "")
+                    metadata = doc.get("metadata", {})
+                    cid = doc.get("chunk_id") or f"chunk_{uuid.uuid4().hex[:12]}"
+                    vector = self.embeddings.encode(text)
+                    meta_json = __import__('json').dumps(metadata, ensure_ascii=False)
+
+                    rows.append({
+                        "chunk_id": cid,
+                        "text": text,
+                        "source_path": metadata.get("source_path", ""),
+                        "extension": metadata.get("extension", ""),
+                        "vector": vector,
+                        "metadata_json": meta_json,
+                    })
+
+                if rows:
+                    self._table.add(rows)
+                return len(rows)
+            except Exception as exc:
+                logger.warning("Falha ao indexar lote no LanceDB: %s", exc)
+                return 0
+
+        async def search_similar(
+            self,
+            query: str,
+            top_k: int = 10,
+        ) -> list["LanceDBHit"]:
+            """Busca vetorial por similaridade.
+
+            Args:
+                query: Texto da query
+                top_k: Número máximo de resultados
+
+            Returns:
+                Lista de hits ordenados por score
+            """
+            self._load()
+            if self._table is None:
+                return []
+
+            try:
+                query_vector = self.embeddings.encode(query)
+                results = self._table.search(query_vector).limit(top_k).to_list()
+
+                hits = []
+                for r in results:
+                    hits.append(LanceDBHit(
+                        score=r.get("score", 0.0),
+                        text=r.get("text", ""),
+                        source_path=r.get("source_path", ""),
+                        chunk_id=r.get("chunk_id", ""),
+                        metadata=r.get("metadata_json"),
+                    ))
+                return hits
+            except Exception as exc:
+                logger.warning("Falha na busca LanceDB: %s", exc)
+                return []
+
+        async def upsert_chunks(self, chunks: list[Any]) -> int:
+            """Faz upsert de chunks no LanceDB.
+
+            Args:
+                chunks: Lista de objetos IndexedChunk
+
+            Returns:
+                Número de chunks inseridos/atualizados
+            """
+            self._load()
+            if self._table is None:
+                return 0
+
+            try:
+                rows = []
+                for chunk in chunks:
+                    cid = chunk.chunk_id or f"chunk_{uuid.uuid4().hex[:12]}"
+                    vector = self.embeddings.encode(chunk.text)
+                    meta_json = __import__('json').dumps(chunk.metadata or {}, ensure_ascii=False)
+
+                    rows.append({
+                        "chunk_id": cid,
+                        "text": chunk.text,
+                        "source_path": chunk.source_path,
+                        "extension": chunk.extension or "",
+                        "vector": vector,
+                        "metadata_json": meta_json,
+                    })
+
+                if rows:
+                    self._table.add(rows)
+                return len(rows)
+            except Exception as exc:
+                logger.warning("Falha no upsert LanceDB: %s", exc)
+                return 0
+
+else:
+    # CPU sem AVX2 - classe dummy que falha graciosamente
+    class LanceDBStore:
+        """Placeholder para quando LanceDB não está disponível (CPU sem AVX2)."""
+
+        def __init__(self, embeddings: Any, db_path: str | None = None, table_name: str = "enxame_docs") -> None:
+            self.embeddings = embeddings
+            self._ready = False
+            logger.warning("LanceDB não disponível (CPU sem AVX2)")
+
+        def _load(self) -> None:
+            self._ready = True
+
+        @property
+        def ready(self) -> bool:
+            return False
+
+        async def index_document(self, text: str, metadata: dict[str, Any], chunk_id: str | None = None) -> str | None:
+            return None
+
+        async def index_documents_batch(self, documents: list[dict[str, Any]]) -> int:
             return 0
 
-    async def search_similar(
-        self,
-        query: str,
-        top_k: int = 5,
-    ) -> list[LanceDBHit]:
-        """Busca documentos similares à query.
-
-        Args:
-            query: Texto da query de busca
-            top_k: Número de resultados a retornar
-
-        Returns:
-            Lista de LanceDBHit ordenados por relevância
-        """
-        self._load()
-        if self._table is None:
+        async def search_similar(self, query: str, top_k: int = 10) -> list[Any]:
             return []
 
-        try:
-            # Gera embedding da query
-            query_vector = self.embeddings.encode(query)
-
-            # Busca vetorial
-            results = self._table.search(query_vector).limit(top_k).to_pandas()
-
-            hits: list[LanceDBHit] = []
-            for _, row in results.iterrows():
-                import json
-
-                try:
-                    meta = json.loads(row["metadata_json"])
-                except Exception:
-                    meta = {}
-
-                hits.append(
-                    LanceDBHit(
-                        score=float(row.get("_distance", 0.0)),
-                        text=str(row["text"]),
-                        source_path=str(row["source_path"]),
-                        chunk_id=str(row["chunk_id"]),
-                        metadata=meta,
-                    )
-                )
-
-            return hits
-
-        except Exception as exc:
-            logger.warning("Falha na busca LanceDB: %s", exc)
-            return []
-
-    async def upsert_chunks(self, chunks: list[Any]) -> int:
-        """Compatibilidade com interface QdrantStore.
-
-        Args:
-            chunks: Lista de IndexedChunk
-
-        Returns:
-            Número de chunks indexados
-        """
-        if not chunks:
+        async def upsert_chunks(self, chunks: list[Any]) -> int:
             return 0
-
-        documents = []
-        for chunk in chunks:
-            metadata = {
-                "source_path": getattr(chunk, "source_path", ""),
-                "extension": getattr(chunk, "extension", ""),
-                "chunk_id": getattr(chunk, "chunk_id", ""),
-            }
-            if hasattr(chunk, "metadata") and chunk.metadata:
-                metadata.update(chunk.metadata)
-
-            documents.append((chunk.text, metadata))
-
-        return await self.index_documents_batch(documents)

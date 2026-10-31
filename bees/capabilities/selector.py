@@ -51,6 +51,12 @@ def recommend_model(
         if model.is_embedding:
             continue
         
+        # Pular modelos de visão (não servem para geração de texto)
+        vision_keywords = ["vision", "vl", "llava", "bakllava", "moondream", "minicpm-v", "qwen2-vl"]
+        model_name_lower = model.name.lower()
+        if any(kw in model_name_lower for kw in vision_keywords):
+            continue
+        
         # Extrair tamanho em bilhões de parâmetros
         param_str = model.parameter_size.upper()
         

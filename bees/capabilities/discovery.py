@@ -6,6 +6,7 @@ Implementa BEE-0003 — Seções 3, 4, 5 e 7.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import shutil
@@ -19,6 +20,22 @@ try:
     import psutil
 except Exception:
     psutil = None
+
+
+logger = logging.getLogger(__name__)
+
+
+def _has_avx2() -> bool:
+    """Verifica se CPU suporta AVX2."""
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            content = f.read()
+        return 'avx2' in content.lower()
+    except Exception:
+        return False
+
+
+_HAS_AVX2 = _has_avx2()
 
 
 @dataclass
@@ -410,13 +427,16 @@ def scan_local_capabilities(enxame_data_path: str) -> LocalCapabilities:
     embeddings_available = False
     embeddings_model = None
     
-    try:
-        from sentence_transformers import SentenceTransformer
-        # Teste rápido - não carregar modelo, apenas verificar disponibilidade
-        embeddings_available = True
-        embeddings_model = "sentence-transformers:all-MiniLM-L6-v2"
-    except Exception:
-        pass
+    if _HAS_AVX2:
+        try:
+            from sentence_transformers import SentenceTransformer
+            # Teste rápido - não carregar modelo, apenas verificar disponibilidade
+            embeddings_available = True
+            embeddings_model = "sentence-transformers:all-MiniLM-L6-v2"
+        except Exception:
+            pass
+    else:
+        logger.warning('CPU sem AVX2, pulando verificação de sentence-transformers')
     
     # OCR (Tesseract)
     ocr_available = False

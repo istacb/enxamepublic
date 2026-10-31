@@ -86,12 +86,31 @@ class LocalBeeLibrarian:
         self._cache_ttl = 3600
 
         # Componentes RAG
-        self.embeddings = EmbeddingService(model_name=embedding_model)
+        # Embeddings - optional (sentence-transformers requires AVX2)
+        try:
+            self.embeddings = EmbeddingService(model_name=embedding_model)
+            self._has_embeddings = True
+        except ImportError:
+            self.embeddings = None
+            self._has_embeddings = False
+            logger.warning("Embeddings não disponíveis (provavelmente CPU sem AVX2), operando sem busca semântica")
+        
         self.indexer = LocalDocumentIndexer(
             docs_dir=str(self.data_dir / "documents"),
             embeddings=self.embeddings,
         )
-        self.lancedb = LanceDBStore(embeddings=self.embeddings)
+        # LanceDB - optional, may not be available on all platforms (e.g., no AVX2)
+        if self._has_embeddings:
+            try:
+                self.lancedb = LanceDBStore(embeddings=self.embeddings)
+                self._has_lancedb = True
+            except ImportError:
+                self.lancedb = None
+                self._has_lancedb = False
+                logger.warning("LanceDB não disponível (provavelmente CPU sem AVX2), operando sem busca vetorial")
+        else:
+            self.lancedb = None
+            self._has_lancedb = False
         self.zim = ZimSearchClient(zim_dir=str(self.data_dir / "zim"))
         self.web = WebSearchClient()
         self.ollama = OllamaClient(ollama_url)
@@ -101,16 +120,19 @@ class LocalBeeLibrarian:
 
     async def initialize(self) -> None:
         """Inicializa todos os componentes."""
-        # LanceDB
-        lancedb_path = self.data_dir / "lancedb"
-        lancedb_path.mkdir(parents=True, exist_ok=True)
-        await self.lancedb.initialize(str(lancedb_path))
+        # LanceDB - optional
+        if self._has_lancedb:
+            lancedb_path = self.data_dir / "lancedb"
+            lancedb_path.mkdir(parents=True, exist_ok=True)
+            _ = self.lancedb.ready
 
-        # Indexar documentos existentes
-        chunks = self.indexer.rebuild()
-        if chunks:
-            await self.lancedb.upsert_chunks(chunks)
-            logger.info(f"Indexados {len(chunks)} chunks do diretório local")
+            # Indexar documentos existentes
+            chunks = self.indexer.rebuild()
+            if chunks:
+                await self.lancedb.upsert_chunks(chunks)
+                logger.info(f"Indexados {len(chunks)} chunks do diretório local")
+        else:
+            logger.info("LanceDB indisponível, pulando indexação vetorial")
 
         # Verificar ZIM
         zim_count = len(list((self.data_dir / "zim").glob("*.zim"))) if (self.data_dir / "zim").exists() else 0
@@ -121,7 +143,6 @@ class LocalBeeLibrarian:
 
     async def close(self) -> None:
         """Fecha conexões."""
-        await self.lancedb.close()
         await self.ollama.close()
 
     def has_ocr(self) -> bool:
@@ -267,7 +288,7 @@ class LocalBeeLibrarian:
 
         # 2. MEMÓRIA SEMÂNTICA (via BeeMemory)
         if self.memory:
-            mem_result = await self.memory.search_semantic(query_clean)
+            mem_result = self.memory.search_semantic(query_clean)
             if mem_result and mem_result.get("confidence", 0) > 0.75:
                 result = SearchResult(
                     answer=mem_result["response"],
@@ -281,24 +302,27 @@ class LocalBeeLibrarian:
 
         trace.append({"stage": "memory", "hit": False})
 
-        # 3. LANCEDB (Busca Vetorial)
-        lancedb_hits = await self.lancedb.search_similar(query_clean, top_k=max_results)
-        trace.append({"stage": "lancedb", "hit": bool(lancedb_hits), "count": len(lancedb_hits)})
-        if lancedb_hits:
-            context = "\n\n".join(
-                f"[score={h.score:.3f}] {h.text}\n(origem: {h.source_path})" for h in lancedb_hits
-            )
-            answer = await self._synthesize(query_clean, context, "lancedb")
-            result = SearchResult(
-                answer=answer,
-                confidence=min(lancedb_hits[0].score * 1.1, 1.0),
-                source="lancedb",
-                metadata={"source_type": "vector_search", "sources": [h.source_path for h in lancedb_hits]},
-                sources=[h.source_path for h in lancedb_hits],
-            )
-            await self._cache_set(cache_key, result)
-            self._record_stage("lancedb", True, latency_ms=int((time.perf_counter() - started) * 1000))
-            return self._result_to_dict(result)
+        # 3. LANCEDB (Busca Vetorial) - optional
+        if self._has_lancedb and self.lancedb:
+            lancedb_hits = await self.lancedb.search_similar(query_clean, top_k=max_results)
+            trace.append({"stage": "lancedb", "hit": bool(lancedb_hits), "count": len(lancedb_hits)})
+            if lancedb_hits:
+                context = "\n\n".join(
+                    f"[score={h.score:.3f}] {h.text}\n(origem: {h.source_path})" for h in lancedb_hits
+                )
+                answer = await self._synthesize(query_clean, context, "lancedb")
+                result = SearchResult(
+                    answer=answer,
+                    confidence=min(lancedb_hits[0].score * 1.1, 1.0),
+                    source="lancedb",
+                    metadata={"source_type": "vector_search", "sources": [h.source_path for h in lancedb_hits]},
+                    sources=[h.source_path for h in lancedb_hits],
+                )
+                await self._cache_set(cache_key, result)
+                self._record_stage("lancedb", True, latency_ms=int((time.perf_counter() - started) * 1000))
+                return self._result_to_dict(result)
+        else:
+            trace.append({"stage": "lancedb", "skipped": True, "reason": "not_available"})
 
         # 4. ARQUIVOS LOCAIS (Busca Textual)
         local_hits = await self._local_file_search(query_clean, limit=max_results)

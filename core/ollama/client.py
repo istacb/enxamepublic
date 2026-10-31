@@ -162,3 +162,7 @@ class OllamaClient:
             if resp.status_code != 200:
                 raise OllamaError(f'Falha ao baixar modelo {model}: {resp.text}')
             return resp.json()
+
+    async def close(self) -> None:
+        """Fecha conexões (no-op para compatibilidade)."""
+        pass
