@@ -126,7 +126,7 @@ async def query_peer_knowledge(
     """
     try:
         from ..protocol.handler import BeeProtocolHandler
-        from ..protocol.messages import BeeKnowledgeQuery, BeeMessageType
+        from ..protocol.messages import BeeKnowledgeResponse, BeeMessageType
         from ..protocol.envelope import BeeEnvelope
         
         # Criar handler temporário para enviar query
@@ -151,7 +151,9 @@ async def query_peer_knowledge(
                     data = await resp.json()
                     response = BeeEnvelope.from_dict(data)
                     if response.msg_type == BeeMessageType.KNOWLEDGE_RESPONSE:
-                        kq_resp = BeeKnowledgeQuery.from_dict(response.payload)  # type: ignore
+                        kq_resp = BeeKnowledgeResponse.from_dict(response.payload)
+                        if not kq_resp.has_knowledge:
+                            return peer.node_id, None
                         knowledge = PeerKnowledge(
                             peer_id=peer.node_id,
                             confidence=kq_resp.confidence,
