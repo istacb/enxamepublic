@@ -429,6 +429,25 @@ class BeeService:
                 for p in peers
             ]})
 
+        # Cluster discover endpoint - returns current mDNS-discovered peers
+        async def discover(request: Request) -> Response:
+            if not self._discovery:
+                return web.json_response({"peers": []})
+            peers = self._discovery.get_active_peers()
+            return web.json_response({"peers": [
+                {
+                    "node_id": p.node_id,
+                    "role": p.role,
+                    "host": p.host,
+                    "port": p.port,
+                    "capabilities": p.capabilities,
+                    "models": p.models,
+                    "load": p.load,
+                    "state": p.state.value,
+                }
+                for p in peers
+            ]})
+
         # Status endpoint (para UI)
         async def status(request: Request) -> Response:
             peer_count = len(self._discovery.get_active_peers()) if self._discovery else 0
@@ -497,6 +516,7 @@ class BeeService:
         app.router.add_post("/api/v1/query", query)
         app.router.add_get("/api/v1/capabilities", capabilities)
         app.router.add_get("/api/v1/peers", peers)
+        app.router.add_get("/api/cluster/discover", discover)
         app.router.add_post("/api/v1/ingest", ingest)
 
         # Servir arquivos estáticos da Web UI
@@ -614,6 +634,7 @@ class BeeService:
         app.router.add_get("/api/v1/capabilities", capabilities)
         app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
+        app.router.add_get("/api/cluster/discover", discover)
         
         logger.info("Rotas da Abelha registradas na aplicação externa")
 
