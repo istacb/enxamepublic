@@ -141,7 +141,10 @@ class ClusterState:
     
     def should_trigger_new_election(self) -> bool:
         """Verifica se deve disparar nova eleição (failover > 72h)."""
-        return self.is_juiz_failover_active() and self.get_juiz_failover_elapsed_hours() >= 72
+        return (
+            self.juiz_failover_started is not None
+            and self.get_juiz_failover_elapsed_hours() >= 72
+        )
     
     def get_role(self, node_id: str) -> ClusterRole | None:
         """Retorna papel primário de um node."""

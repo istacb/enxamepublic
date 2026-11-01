@@ -128,7 +128,7 @@ def elect_roles(peers: list[Any], current_state: ClusterState | None = None) -> 
     
     # 6. Se algum papel não foi preenchido, tentar preencher com melhor disponível
     if juiz is None and scored:
-        juiz = scored[0].peer.node_id
+        juiz = scored[0][1].node_id
     if bibliotecario is None:
         for s, p in scored:
             if p.node_id != juiz:
@@ -139,6 +139,13 @@ def elect_roles(peers: list[Any], current_state: ClusterState | None = None) -> 
             if p.node_id not in {juiz, bibliotecario}:
                 guarda = p.node_id
                 break
+
+    # Reconcile fallback roles with the worker and secondary-role lists.
+    primary_ids = {node_id for node_id in (juiz, bibliotecario, guarda) if node_id}
+    workers = [peer.node_id for _, peer in scored if peer.node_id not in primary_ids]
+    if len(peers) in (3, 4):
+        for node_id in primary_ids:
+            secondary_roles.setdefault(node_id, [ClusterRole.WORKER])
     
     # 7. Construir estado
     epoch = (current_state.epoch + 1) if current_state else 1
@@ -179,7 +186,7 @@ def elect_juiz_failover(peers: list[Any], failed_juiz_id: str, current_state: Cl
     
     if new_juiz is None:
         # Fallback: melhor disponível
-        new_juiz = scored[0].peer.node_id
+        new_juiz = scored[0][1].node_id
     
     # Criar novo estado com failover
     new_state = ClusterState(
