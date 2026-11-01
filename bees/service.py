@@ -13,9 +13,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import json
 import logging
 import signal
 import sys
+import uuid
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -77,6 +79,9 @@ class BeeService:
         self._tasks: list[asyncio.Task] = []
         self._http_session: aiohttp.ClientSession | None = None
 
+        # Chat streaming task store
+        self._chat_tasks: dict[str, asyncio.Queue] = {}
+
         self._register_protocol_handlers()
 
         # Capacidades descobertas (BEE-0003)
@@ -118,6 +123,46 @@ class BeeService:
         self._handler.register_handler(BeeMessageType.CAPABILITY_QUERY, self._handle_capability_query)
         self._handler.register_handler(BeeMessageType.STATE_CHANGE, self._handle_state_change)
         self._handler.register_handler(BeeMessageType.PEER_LOST, self._handle_peer_lost)
+
+    async def _process_chat_task(self, task_id: str, prompt: str, queue: asyncio.Queue) -> None:
+        """Processa query e envia tokens via queue para SSE."""
+        try:
+            # Enviar evento start
+            await queue.put({"event": "start", "task_id": task_id, "node_id": self.node_id, "role": "worker"})
+
+            # Processar query com streaming
+            result = await self.process_query(prompt)
+            answer = result.get("answer", "")
+            source = result.get("source", "local")
+            confidence = result.get("confidence", 0.0)
+
+            # Simular streaming token por token (ou palavra por palavra)
+            # Em produção, isso viria do modelo com streaming real
+            words = answer.split()
+            for i, word in enumerate(words):
+                token = word + (" " if i < len(words) - 1 else "")
+                await queue.put({"event": "token", "task_id": task_id, "content": token})
+                # Pequeno delay para simular streaming
+                await asyncio.sleep(0.03)
+
+            # Enviar evento final
+            await queue.put({
+                "event": "final",
+                "task_id": task_id,
+                "content": answer,
+                "source": source,
+                "confidence": confidence,
+                "model": self.config.model,
+            })
+        except Exception as e:
+            logger.error(f"Erro no processamento de chat task {task_id}: {e}")
+            await queue.put({"event": "error", "task_id": task_id, "message": str(e)})
+        finally:
+            # Marcar fim da task
+            await queue.put({"event": "end", "task_id": task_id})
+            # Limpar task após um tempo
+            await asyncio.sleep(60)
+            self._chat_tasks.pop(task_id, None)
 
     async def start(self, *, start_http: bool = True, http_app: "web.Application | None" = None) -> None:
         """
@@ -610,7 +655,7 @@ class BeeService:
             token = secrets.token_urlsafe(32)
             return web.json_response({"token": token})
 
-        # /api/chat - endpoint de chat usando pipeline LOCAL -> ENXAME -> WEB
+        # /api/chat - cria task de chat e retorna task_id
         async def api_chat(request: Request) -> Response:
             try:
                 data = await request.json()
@@ -618,30 +663,52 @@ class BeeService:
                 if not prompt:
                     return web.json_response({"error": "prompt required"}, status=400)
 
-                result = await self.process_query(prompt)
-                # Formato esperado pelo chat.js
+                # Criar task_id e fila para streaming
+                task_id = str(uuid.uuid4())
+                queue: asyncio.Queue = asyncio.Queue()
+                self._chat_tasks[task_id] = queue
+
+                # Iniciar processamento em background
+                asyncio.create_task(self._process_chat_task(task_id, prompt, queue))
+
                 return web.json_response({
-                    "task_id": f"task-{id(prompt)}",
-                    "answer": result.get("answer", ""),
-                    "source": result.get("source", "local"),
-                    "confidence": result.get("confidence", 0.0),
+                    "task_id": task_id,
                 })
             except Exception as e:
                 logger.error(f"Erro no chat: {e}")
                 return web.json_response({"error": str(e)}, status=500)
 
-        # /api/chat/stream/{taskId} - SSE streaming simplificado
+        # /api/chat/stream/{taskId} - SSE streaming real
         async def api_chat_stream(request: Request) -> Response:
             task_id = request.match_info.get("task_id", "")
-            # Para standalone, retorna resposta completa via SSE
+            queue = self._chat_tasks.get(task_id)
+
+            if not queue:
+                return web.json_response({"error": "task not found"}, status=404)
+
             async def stream_response():
-                yield b'data: {"type": "start", "task_id": "' + task_id.encode() + b'"}\n\n'
-                yield b'data: {"type": "end", "task_id": "' + task_id.encode() + b'"}\n\n'
-            
+                try:
+                    while True:
+                        event = await queue.get()
+                        data = f"data: {json.dumps(event)}\n\n".encode('utf-8')
+                        if event.get("event") == "end":
+                            yield data
+                            break
+                        yield data
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error(f"Erro no SSE stream: {e}")
+                    yield f"data: {json.dumps({'event': 'error', 'task_id': task_id, 'message': str(e)})}\n\n".encode('utf-8')
+
             return web.Response(
                 body=stream_response(),
                 content_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",  # Disable nginx buffering
+                }
             )
 
         app.router.add_get("/api/status", api_status)

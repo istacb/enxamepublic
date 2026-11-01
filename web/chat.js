@@ -84,12 +84,19 @@ export class ChatController {
           responseText += data.content;
           this._updateMessageText(this._currentMsgEl, responseText);
         } else if (data.event === 'final') {
+          // Use final content from server if available
+          const finalContent = data.content || responseText || '(sem resposta)';
           if (!done) {
             this._removeTyping();
             done = true;
-            this._currentMsgEl = this._addMessage(data.content || '(sem resposta)', 'assistant', nodeId, role, model);
+            this._currentMsgEl = this._addMessage(finalContent, 'assistant', nodeId, role, data.model || model);
           } else {
-            this._updateMessageText(this._currentMsgEl, data.content || responseText);
+            this._updateMessageText(this._currentMsgEl, finalContent);
+          }
+          // Update model display if provided in final event
+          if (data.model && this._currentMsgEl) {
+            const modelEl = this._currentMsgEl.querySelector('.msg-model');
+            if (modelEl) modelEl.textContent = data.model;
           }
           store.incrementStat('calls');
           audio.play('done');

@@ -141,17 +141,31 @@ export class SidebarController {
       return;
     }
 
+    // Parse size_mb (can be string like "1B", "3.2B" or number)
+    const parseSize = (s) => {
+      if (typeof s === 'number') return s;
+      const str = String(s).toUpperCase().trim();
+      if (str.endsWith('GB')) return parseFloat(str) * 1024;
+      if (str.endsWith('MB')) return parseFloat(str);
+      if (str.endsWith('B')) return parseFloat(str) * 1024;
+      return parseFloat(str) || 0;
+    };
+
     // Find best (largest non-embedding)
     const nonEmbed = models.filter(m => !m.is_embedding);
-    const best = nonEmbed.length ? nonEmbed.reduce((a, b) => a.size_mb > b.size_mb ? a : b) : null;
+    const best = nonEmbed.length 
+      ? nonEmbed.reduce((a, b) => parseSize(a.size_mb) > parseSize(b.size_mb) ? a : b) 
+      : null;
 
     this.modelList.innerHTML = models.map(m => {
       const isBest = best && m.name === best.name;
+      const sizeMb = parseSize(m.size_mb);
+      const sizeDisplay = sizeMb >= 1024 ? `${(sizeMb / 1024).toFixed(1)} GB` : `${sizeMb} MB`;
       return `
         <div class="model-item ${isBest ? 'primary' : ''}" role="listitem">
           <span class="model-dot"></span>
           <span class="model-name">${m.name}</span>
-          <span class="model-size">${(m.size_mb / 1024).toFixed(1)} GB</span>
+          <span class="model-size">${sizeDisplay}</span>
         </div>
       `;
     }).join('');
