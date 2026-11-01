@@ -85,20 +85,19 @@ class ClusterMonitor:
         
         juiz_online = juiz_peer is not None
         
-        # 2. Se Juiz caiu e não estávamos em failover
-        if not juiz_online and not self.cluster_state.is_juiz_failover_active():
+        # 2. Verificar o prazo antes para não reiniciar um failover expirado.
+        if self.cluster_state.should_trigger_new_election():
+            logger.warning("Failover de Juiz excedeu 72h! Disparando nova eleição...")
+            await self._trigger_new_election()
+        # 3. Se Juiz caiu e não estávamos em failover
+        elif not juiz_online and not self.cluster_state.is_juiz_failover_active():
             logger.warning(f"Juiz {juiz_id} está offline! Iniciando failover...")
             await self._handle_juiz_failure(juiz_id)
         
-        # 3. Se estávamos em failover e Juiz voltou
+        # 4. Se estávamos em failover e Juiz voltou
         elif juiz_online and self.cluster_state.is_juiz_failover_active():
             logger.info(f"Juiz original {juiz_id} retornou! Restaurando...")
             await self._handle_juiz_restored(juiz_id)
-        
-        # 4. Verificar timeout de 72h para nova eleição
-        elif self.cluster_state.should_trigger_new_election():
-            logger.warning("Failover de Juiz excedeu 72h! Disparando nova eleição...")
-            await self._trigger_new_election()
         
         # 5. Verificar re-eleição periódica se configuração mudou (peers entraram/sairam)
         await self._check_re_election_needed()
