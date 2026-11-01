@@ -29,9 +29,6 @@ dependencies = [
     "pydantic>=2.6.0",
     "PyYAML>=6.0.0",
     "lancedb>=0.8.0",
-    "sentence-transformers>=3.0.0",
-    "torch>=2.2.0",
-    "numpy>=1.26.0",
     "ollama>=0.2.0",
     "pytesseract>=0.3.10",
     "cryptography>=42.0.0",
@@ -47,6 +44,11 @@ dev = [
     "pytest-cov>=4.1.0",
     "mypy>=1.8.0",
     "ruff>=0.3.0",
+]
+embeddings = [
+    "sentence-transformers>=3.0.0",
+    "torch>=2.2.0",
+    "numpy>=1.26.0",
 ]
 zim = ["zimply>=0.1.0"]
 

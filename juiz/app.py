@@ -41,9 +41,14 @@ server_adapter = EXPServerAdapter(security=security)
 app = FastAPI(title='ENXAME Juiz', version='1.2.0')
 
 # CORS para permitir UI no Bee (8765) acessar Juiz (7700)
+# Origins configuráveis via env ALLOWED_ORIGINS (comma-separated)
+import os as _os
+_allowed_origins = _os.getenv('ALLOWED_ORIGINS', 'http://localhost:8765,http://127.0.0.1:8765')
+_allowed_origins_list = [o.strip() for o in _allowed_origins.split(',') if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8765", "http://127.0.0.1:8765", "http://192.168.0.157:8765"],
+    allow_origins=_allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,6 +60,7 @@ installed_plugins: list[dict] = []
 # ponytail: sessões em memória, ceiling = reiniciar invalida tokens; upgrade = cookie seguro + store durável.
 SESSION_TTL = timedelta(minutes=30)
 sessions: dict[str, datetime] = {}
+_sessions_lock = asyncio.Lock()
 
 
 def _new_session() -> str:
@@ -63,14 +69,17 @@ def _new_session() -> str:
     return token
 
 
-def _require_session(request: Request) -> None:
+async def _require_session(request: Request) -> None:
     token = request.headers.get('x-session-token') or request.query_params.get('session')
-    if not token or token not in sessions:
+    if not token:
         raise HTTPException(status_code=401, detail='Sessão inválida ou expirada')
-    sessions[token] = datetime.now(UTC)
-    now = datetime.now(UTC)
-    for t in [k for k, v in sessions.items() if now - v > SESSION_TTL]:
-        sessions.pop(t, None)
+    async with _sessions_lock:
+        now = datetime.now(UTC)
+        expires_at = sessions.get(token)
+        if not expires_at or now - expires_at > SESSION_TTL:
+            sessions.pop(token, None)
+            raise HTTPException(status_code=401, detail='Sessão inválida ou expirada')
+        sessions[token] = now
 
 # Configurar diretório de arquivos estáticos
 static_path = Path(__file__).parent / 'static'
@@ -225,7 +234,7 @@ async def cancel_task(task_id: str, request: Request) -> dict:
 
 @app.post('/api/node/{node_id}/pause')
 async def pause_node(node_id: str, request: Request) -> dict:
-    _require_session(request)
+    await _require_session(request)
     body = await request.json()
     paused = bool(body.get('paused', True))
     ok = service.pause_node(node_id, paused)
@@ -236,7 +245,7 @@ async def pause_node(node_id: str, request: Request) -> dict:
 
 @app.get('/api/cluster/discover')
 async def cluster_discover(request: Request) -> dict:
-    _require_session(request)
+    await _require_session(request)
     # Descoberta one-shot via beacon UDP.
     import asyncio
 
@@ -259,7 +268,7 @@ async def cluster_discover(request: Request) -> dict:
 
 @app.get('/api/cluster/models')
 async def cluster_models(request: Request) -> dict:
-    _require_session(request)
+    await _require_session(request)
     try:
         models = await service.ollama.list_models()
         best = await service.ollama.select_best_model()
@@ -381,7 +390,7 @@ async def create_session() -> dict:
 
 @app.get('/api/status')
 async def ui_status(request: Request) -> dict:
-    _require_session(request)
+    await _require_session(request)
     service._prune_stale_agents()
     nodes = []
     for conn in service.agents.values():
@@ -408,7 +417,7 @@ async def ui_status(request: Request) -> dict:
 
 @app.post('/api/chat')
 async def ui_chat(request: Request) -> dict:
-    _require_session(request)
+    await _require_session(request)
     body = await request.json()
     prompt = str(body.get('prompt', '')).strip()
     if not prompt:
@@ -419,7 +428,7 @@ async def ui_chat(request: Request) -> dict:
 
 @app.get('/api/chat/stream/{task_id}')
 async def ui_stream(task_id: str, request: Request) -> StreamingResponse:
-    _require_session(request)
+    await _require_session(request)
     task = service.tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail='Tarefa não encontrada')

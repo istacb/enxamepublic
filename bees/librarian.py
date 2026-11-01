@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -82,7 +83,8 @@ class LocalBeeLibrarian:
         self.memory = memory
         self.offline_mode = offline_mode
 
-        self._cache: dict[str, SearchResult] = {}
+        self._cache: OrderedDict[str, SearchResult] = OrderedDict()
+        self._cache_maxsize = 1000
         self._cache_ttl = 3600
 
         # Componentes RAG
@@ -213,17 +215,18 @@ class LocalBeeLibrarian:
 
     async def _cache_get(self, key: str) -> SearchResult | None:
         if key in self._cache:
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
             self._stats["cache_hits"] += 1
             return self._cache[key]
         return None
 
     async def _cache_set(self, key: str, result: SearchResult) -> None:
         self._cache[key] = result
-        if len(self._cache) > 1000:
-            # Limpar cache antigo (simplificado)
-            keys = list(self._cache.keys())[:500]
-            for k in keys:
-                self._cache.pop(k, None)
+        self._cache.move_to_end(key)
+        if len(self._cache) > self._cache_maxsize:
+            # Remove oldest (least recently used)
+            self._cache.popitem(last=False)
 
     async def quick_knowledge_check(self, subject: str, keywords: list[str] | None = None) -> dict[str, Any]:
         """

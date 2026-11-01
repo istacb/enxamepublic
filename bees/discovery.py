@@ -66,7 +66,9 @@ class BeeDiscoveryService:
         on_peer_found: Callable[[DiscoveredPeer], None] | None = None,
         on_peer_lost: Callable[[str], None] | None = None,
         heartbeat_interval: float = 5.0,
-        heartbeat_timeout: float = 15.0,
+        heartbeat_timeout: float = 300.0,  # 5 minutes - mDNS handles presence via Added/Removed
+        get_capabilities: Callable[[], list[str]] | None = None,
+        get_models: Callable[[], list[str]] | None = None,
     ) -> None:
         self.node_id = node_id
         self.host = host
@@ -77,6 +79,8 @@ class BeeDiscoveryService:
         self.on_peer_lost = on_peer_lost
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
+        self._get_capabilities = get_capabilities
+        self._get_models = get_models
 
         self._peers: dict[str, DiscoveredPeer] = {}
         self._zeroconf: Zeroconf | None = None
@@ -84,6 +88,9 @@ class BeeDiscoveryService:
         self._info: ServiceInfo | None = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
+
+        # Track service names to detect mDNS updates (re-announcements)
+        self._service_names: dict[str, str] = {}  # node_id -> service_name
 
     async def start(self) -> None:
         """Inicia descoberta mDNS."""
@@ -149,7 +156,7 @@ class BeeDiscoveryService:
                 self._process_service_info(info)
 
     def _process_service_info(self, info: ServiceInfo) -> None:
-        """Processa informações de um serviço descoberto."""
+        """Processa informações de um serviço descoberto (inclui re-anúncios mDNS)."""
         if not info.addresses:
             return
 
@@ -189,32 +196,46 @@ class BeeDiscoveryService:
         except Exception:
             state = BeeState.RUNNING
 
-        peer = DiscoveredPeer(
-            node_id=node_id,
-            role=props.get("role", "bee"),
-            host=host,
-            port=port,
-            capabilities=caps,
-            models=models,
-            load=load,
-            state=state,
-            last_seen=datetime.now(UTC),
-        )
-
+        now = datetime.now(UTC)
         is_new = node_id not in self._peers
-        self._peers[node_id] = peer
-
+        
         if is_new:
+            peer = DiscoveredPeer(
+                node_id=node_id,
+                role=props.get("role", "bee"),
+                host=host,
+                port=port,
+                capabilities=caps,
+                models=models,
+                load=load,
+                state=state,
+                last_seen=now,
+            )
+            self._peers[node_id] = peer
             logger.info(f"Peer descoberto: {node_id} ({peer.role}) em {host}:{port}")
             if self.on_peer_found:
                 self.on_peer_found(peer)
+        else:
+            # Re-anúncio mDNS - atualizar último visto e propriedades
+            peer = self._peers[node_id]
+            peer.last_seen = now
+            peer.load = load
+            peer.state = state
+            # Atualizar capabilities/models se mudaram
+            if caps:
+                peer.capabilities = caps
+            if models:
+                peer.models = models
+
+        # Rastrear nome do serviço para detectar remoções corretas
+        self._service_names[node_id] = info.name
 
     def _remove_peer_by_name(self, name: str) -> None:
         """Remove peer pelo nome do serviço mDNS."""
-        for node_id, peer in list(self._peers.items()):
-            expected_name = f"{node_id}.{SERVICE_TYPE}"
-            if name == expected_name or name.startswith(node_id):
+        for node_id, service_name in list(self._service_names.items()):
+            if name == service_name or name.startswith(node_id):
                 self._remove_peer(node_id)
+                del self._service_names[node_id]
                 break
 
     def _remove_peer(self, node_id: str) -> None:
@@ -224,6 +245,8 @@ class BeeDiscoveryService:
             logger.warning(f"Peer removido: {node_id}")
             if self.on_peer_lost:
                 self.on_peer_lost(node_id)
+        # Limpar rastreamento de nome
+        self._service_names.pop(node_id, None)
 
     def get_active_peers(self) -> list[DiscoveredPeer]:
         """Retorna lista de peers ativos (visto recentemente)."""
@@ -287,13 +310,13 @@ class BeeDiscoveryService:
             self._remove_peer(node_id)
 
     async def _cleanup_loop(self) -> None:
-        """Loop periódico de limpeza de peers stale."""
+        """Loop periódico de limpeza de peers stale + refresh mDNS."""
         while self._running:
             try:
                 await self.cleanup_stale_peers()
             except Exception as e:
                 logger.error(f"Erro no cleanup loop: {e}")
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)  # Menos agressivo - 1 minuto
 
     # =========================================================================
     # Anúncio via mDNS
@@ -346,11 +369,15 @@ class BeeDiscoveryService:
     def update_announcement(self, load: float, state: BeeState = BeeState.RUNNING) -> None:
         """Atualiza anúncio com nova carga/estado."""
         if self._zeroconf and self._info:
+            # Use callbacks to get fresh capabilities/models if provided
+            caps = self._get_capabilities() if self._get_capabilities else self.capabilities
+            models = self._get_models() if self._get_models else self.models
+            
             self._info.properties = {
                 "node_id": self.node_id,
                 "role": "bee",
-                "capabilities": json.dumps(self.capabilities),
-                "models": json.dumps(self.models),
+                "capabilities": json.dumps(caps),
+                "models": json.dumps(models),
                 "load": str(load),
                 "state": state.value,
                 "protocol_version": "1.0",

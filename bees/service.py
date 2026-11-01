@@ -20,6 +20,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+import aiohttp
+
 from core.exp.security import EXPSecurity
 
 from .protocol.envelope import BeeEnvelope
@@ -73,6 +75,7 @@ class BeeService:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._http_session: aiohttp.ClientSession | None = None
 
         self._register_protocol_handlers()
 
@@ -127,6 +130,9 @@ class BeeService:
         """
         logger.info(f"Iniciando Abelha {self.node_id}...")
 
+        # Shared HTTP session for peer communication
+        self._http_session = aiohttp.ClientSession()
+
         # 1. Carregar identidade persistente
         await self._load_identity()
 
@@ -179,6 +185,9 @@ class BeeService:
             models=self._get_models_list(),
             on_peer_found=self._on_peer_discovered,
             on_peer_lost=self._on_peer_lost,
+            heartbeat_timeout=300.0,  # 5 min - mDNS handles presence via Added/Removed events
+            get_capabilities=self._get_capabilities_list,
+            get_models=self._get_models_list,
         )
         await self._discovery.start()
         logger.info("Descoberta mDNS iniciada")
@@ -262,6 +271,11 @@ class BeeService:
         # Fechar memória
         if self._memory:
             await self._memory.close()
+
+        # Fechar sessão HTTP compartilhada
+        if self._http_session:
+            await self._http_session.close()
+            self._http_session = None
 
         self.state = BeeState.STOPPED
         logger.info(f"Abelha {self.node_id} OFFLINE")
@@ -376,6 +390,10 @@ class BeeService:
         from pathlib import Path
 
         app = web.Application()
+
+        # =========================================================================
+        # Registrar todas as rotas ANTES de iniciar o servidor
+        # =========================================================================
 
         # Health check
         async def health(request: Request) -> Response:
@@ -519,6 +537,119 @@ class BeeService:
         app.router.add_get("/api/cluster/discover", discover)
         app.router.add_post("/api/v1/ingest", ingest)
 
+        # =========================================================================
+        # Compatibilidade com Web UI do Enxame (espera endpoints do Kernel completo)
+        # =========================================================================
+
+        # /api/status - formato esperado pela sidebar (agents array)
+        async def api_status(request: Request) -> Response:
+            peer_count = len(self._discovery.get_active_peers()) if self._discovery else 0
+            agents = []
+            if self._discovery:
+                for p in self._discovery.get_active_peers():
+                    agents.append({
+                        "node_id": p.node_id,
+                        "cluster_role": p.role,
+                        "cpu_pct": p.load * 100 if p.load else 0,
+                        "free_ram_gb": 8.0,  # placeholder
+                        "active_tasks": 0,
+                        "max_concurrency": 4,
+                    })
+            return web.json_response({
+                "agents": agents,
+                "tasks_total": 0,
+                "node": self.node_id,
+            })
+
+        # /api/cluster/models - formato esperado pela sidebar
+        async def api_cluster_models(request: Request) -> Response:
+            models_list = self._get_models_list()
+            models_data = []
+            for model_name in models_list:
+                # Tentar obter info do modelo via Ollama
+                size_mb = 0
+                is_embedding = "embed" in model_name.lower()
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        resp = await client.post(
+                            f"{self.config.ollama_base_url}/api/show",
+                            json={"name": model_name}
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            size_mb = data.get("details", {}).get("parameter_size", 0)
+                            if size_mb == 0:
+                                size_mb = data.get("details", {}).get("size", 0) // (1024 * 1024)
+                except Exception:
+                    # Estimar tamanho pelo nome
+                    if ":3b" in model_name: size_mb = 3000
+                    elif ":7b" in model_name: size_mb = 7000
+                    elif ":1.8b" in model_name: size_mb = 1800
+                    elif ":2b" in model_name: size_mb = 2000
+                    else: size_mb = 4000
+                
+                models_data.append({
+                    "name": model_name,
+                    "size_mb": size_mb,
+                    "is_embedding": is_embedding,
+                })
+            
+            # Encontrar o melhor (maior não-embedding)
+            non_embed = [m for m in models_data if not m["is_embedding"]]
+            best = max(non_embed, key=lambda m: m["size_mb"]) if non_embed else None
+            
+            return web.json_response({
+                "models": models_data,
+                "best": best,
+            })
+
+        # /api/session - sessão simples sem auth (standalone)
+        async def api_session(request: Request) -> Response:
+            import secrets
+            token = secrets.token_urlsafe(32)
+            return web.json_response({"token": token})
+
+        # /api/chat - endpoint de chat usando pipeline LOCAL -> ENXAME -> WEB
+        async def api_chat(request: Request) -> Response:
+            try:
+                data = await request.json()
+                prompt = data.get("prompt", "").strip()
+                if not prompt:
+                    return web.json_response({"error": "prompt required"}, status=400)
+
+                result = await self.process_query(prompt)
+                # Formato esperado pelo chat.js
+                return web.json_response({
+                    "task_id": f"task-{id(prompt)}",
+                    "answer": result.get("answer", ""),
+                    "source": result.get("source", "local"),
+                    "confidence": result.get("confidence", 0.0),
+                })
+            except Exception as e:
+                logger.error(f"Erro no chat: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+
+        # /api/chat/stream/{taskId} - SSE streaming simplificado
+        async def api_chat_stream(request: Request) -> Response:
+            task_id = request.match_info.get("task_id", "")
+            # Para standalone, retorna resposta completa via SSE
+            async def stream_response():
+                yield b'data: {"type": "start", "task_id": "' + task_id.encode() + b'"}\n\n'
+                yield b'data: {"type": "end", "task_id": "' + task_id.encode() + b'"}\n\n'
+            
+            return web.Response(
+                body=stream_response(),
+                content_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+            )
+
+        app.router.add_get("/api/status", api_status)
+        app.router.add_get("/api/cluster/models", api_cluster_models)
+        app.router.add_post("/api/session", api_session)
+        app.router.add_post("/api/chat", api_chat)
+        app.router.add_get("/api/chat/stream/{task_id}", api_chat_stream)
+
         # Servir arquivos estáticos da Web UI
         # __file__ = .../bees/service.py -> parents[1] = .../enxamepublic
         web_dir = Path(__file__).resolve().parents[1] / "web"
@@ -534,10 +665,37 @@ class BeeService:
         else:
             logger.warning(f"Pasta web não encontrada: {web_dir}")
 
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.config.host, self.config.port)
-        await site.start()
+        # =========================================================================
+        # Iniciar servidor com retry de porta
+        # =========================================================================
+        # Try to bind to the configured port, with fallback to alternative ports
+        max_port_attempts = 10
+        base_port = self.config.port
+        runner = None
+        site = None
+        
+        for attempt in range(max_port_attempts):
+            port = base_port + attempt
+            try:
+                runner = web.AppRunner(app)
+                await runner.setup()
+                site = web.TCPSite(runner, self.config.host, port)
+                await site.start()
+                # Update config with the actual port used
+                if port != base_port:
+                    logger.warning(f"Porta {base_port} ocupada, usando porta {port}")
+                    self.config.port = port
+                break
+            except OSError as e:
+                if runner:
+                    await runner.cleanup()
+                    runner = None
+                if attempt == max_port_attempts - 1:
+                    logger.error(f"Falha ao iniciar servidor HTTP após {max_port_attempts} tentativas: {e}")
+                    raise
+                logger.warning(f"Porta {port} ocupada, tentando próxima...")
+                continue
+
         logger.info(f"Servidor HTTP iniciado em {self.config.host}:{self.config.port}")
 
         self._http_runner = runner
@@ -635,7 +793,112 @@ class BeeService:
         app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
         app.router.add_get("/api/cluster/discover", discover)
-        
+
+        # Compatibilidade com Web UI
+        # /api/status - formato esperado pela sidebar
+        async def api_status(request: Request) -> Response:
+            peer_count = len(self._discovery.get_active_peers()) if self._discovery else 0
+            agents = []
+            if self._discovery:
+                for p in self._discovery.get_active_peers():
+                    agents.append({
+                        "node_id": p.node_id,
+                        "cluster_role": p.role,
+                        "cpu_pct": p.load * 100 if p.load else 0,
+                        "free_ram_gb": 8.0,
+                        "active_tasks": 0,
+                        "max_concurrency": 4,
+                    })
+            return web.json_response({
+                "agents": agents,
+                "tasks_total": 0,
+                "node": self.node_id,
+            })
+
+        # /api/cluster/models - formato esperado pela sidebar
+        async def api_cluster_models(request: Request) -> Response:
+            models_list = self._get_models_list()
+            models_data = []
+            for model_name in models_list:
+                size_mb = 0
+                is_embedding = "embed" in model_name.lower()
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        resp = await client.post(
+                            f"{self.config.ollama_base_url}/api/show",
+                            json={"name": model_name}
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            size_mb = data.get("details", {}).get("parameter_size", 0)
+                            if size_mb == 0:
+                                size_mb = data.get("details", {}).get("size", 0) // (1024 * 1024)
+                except Exception:
+                    if ":3b" in model_name: size_mb = 3000
+                    elif ":7b" in model_name: size_mb = 7000
+                    elif ":1.8b" in model_name: size_mb = 1800
+                    elif ":2b" in model_name: size_mb = 2000
+                    else: size_mb = 4000
+                
+                models_data.append({
+                    "name": model_name,
+                    "size_mb": size_mb,
+                    "is_embedding": is_embedding,
+                })
+            
+            non_embed = [m for m in models_data if not m["is_embedding"]]
+            best = max(non_embed, key=lambda m: m["size_mb"]) if non_embed else None
+            
+            return web.json_response({
+                "models": models_data,
+                "best": best,
+            })
+
+        # /api/session - sessão simples sem auth (standalone)
+        async def api_session(request: Request) -> Response:
+            import secrets
+            token = secrets.token_urlsafe(32)
+            return web.json_response({"token": token})
+
+        # /api/chat - endpoint de chat usando pipeline LOCAL -> ENXAME -> WEB
+        async def api_chat(request: Request) -> Response:
+            try:
+                data = await request.json()
+                prompt = data.get("prompt", "").strip()
+                if not prompt:
+                    return web.json_response({"error": "prompt required"}, status=400)
+
+                result = await self.process_query(prompt)
+                return web.json_response({
+                    "task_id": f"task-{id(prompt)}",
+                    "answer": result.get("answer", ""),
+                    "source": result.get("source", "local"),
+                    "confidence": result.get("confidence", 0.0),
+                })
+            except Exception as e:
+                logger.error(f"Erro no chat: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+
+        # /api/chat/stream/{taskId} - SSE streaming simplificado
+        async def api_chat_stream(request: Request) -> Response:
+            task_id = request.match_info.get("task_id", "")
+            async def stream_response():
+                yield b'data: {"type": "start", "task_id": "' + task_id.encode() + b'"}\n\n'
+                yield b'data: {"type": "end", "task_id": "' + task_id.encode() + b'"}\n\n'
+            
+            return web.Response(
+                body=stream_response(),
+                content_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+            )
+
+        app.router.add_get("/api/status", api_status)
+        app.router.add_get("/api/cluster/models", api_cluster_models)
+        app.router.add_post("/api/session", api_session)
+        app.router.add_post("/api/chat", api_chat)
+        app.router.add_get("/api/chat/stream/{task_id}", api_chat_stream)
+
         logger.info("Rotas da Abelha registradas na aplicação externa")
 
     def _calculate_load(self) -> float:
@@ -939,15 +1202,15 @@ class BeeService:
 
     async def _send_to_peer(self, peer: "DiscoveredPeer", envelope: BeeEnvelope) -> None:
         """Envia envelope para peer via HTTP."""
+        if not self._http_session:
+            return
         try:
-            import aiohttp
             url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=envelope.to_dict(), timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        response_envelope = BeeEnvelope.from_dict(data)
-                        self._handler.complete_pending_request(envelope.correlation_id or envelope.msg_id, response_envelope)
+            async with self._http_session.post(url, json=envelope.to_dict(), timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    response_envelope = BeeEnvelope.from_dict(data)
+                    self._handler.complete_pending_request(envelope.correlation_id or envelope.msg_id, response_envelope)
         except Exception as e:
             logger.debug(f"Falha ao enviar para {peer.node_id}: {e}")
 
@@ -1117,18 +1380,18 @@ class BeeService:
 
     async def _send_with_response(self, envelope: BeeEnvelope, peer: "DiscoveredPeer", timeout_ms: int = 5000) -> BeeEnvelope | None:
         """Envia envelope para peer e aguarda resposta via HTTP/WebSocket."""
+        if not self._http_session:
+            return None
         try:
-            import aiohttp
             url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, 
-                    json=envelope.to_dict(), 
-                    timeout=aiohttp.ClientTimeout(total=timeout_ms / 1000)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return BeeEnvelope.from_dict(data)
+            async with self._http_session.post(
+                url, 
+                json=envelope.to_dict(), 
+                timeout=aiohttp.ClientTimeout(total=timeout_ms / 1000)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return BeeEnvelope.from_dict(data)
         except Exception as e:
             logger.debug(f"Falha ao enviar para {peer.node_id}: {e}")
         return None
