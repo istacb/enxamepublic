@@ -37,26 +37,42 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     bee = BeeService(config)
 
-    loop = asyncio.get_event_loop()
+    # Cross-platform shutdown handling
+    shutdown_event = asyncio.Event()
+    
+    def _signal_handler():
+        shutdown_event.set()
+    
+    # Create and set event loop for Python 3.14+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
     for sig in ("SIGTERM", "SIGINT"):
         try:
-            loop.add_signal_handler(getattr(__import__("signal"), sig), lambda: asyncio.create_task(bee.stop()))
+            loop.add_signal_handler(getattr(__import__("signal"), sig), _signal_handler)
         except NotImplementedError:
             pass  # Windows
 
-    try:
-        loop.run_until_complete(bee.start())
-        use_emoji = sys.stdout.encoding and 'utf' in sys.stdout.encoding.lower()
-        ok = "✅" if use_emoji else "[OK]"
-        print(f"\n{ok} Abelha {config.node_id} ONLINE")
-        print("Pressione Ctrl+C para parar\n")
-        loop.run_forever()
-    except KeyboardInterrupt:
-        print("\nParando...")
-    finally:
-        loop.run_until_complete(bee.stop())
-        print("Abelha parada.")
+    async def _run():
+        try:
+            await bee.start()
+            use_emoji = sys.stdout.encoding and 'utf' in sys.stdout.encoding.lower()
+            ok = "✅" if use_emoji else "[OK]"
+            print(f"\n{ok} Abelha {config.node_id} ONLINE")
+            print("Pressione Ctrl+C para parar\n")
+            
+            # Wait for shutdown signal or KeyboardInterrupt
+            await shutdown_event.wait()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            await bee.stop()
+            print("Abelha parada.")
 
+    loop.run_until_complete(_run())
     return 0
 
 

@@ -225,7 +225,7 @@ HexGrid.prototype.screenToCube = function(sx, sy) {
   const { hexSize } = this;
   const q = (sx - this.width / 2) / (hexSize * 1.5);
   const r = (sy - this.height / 2) / (hexSize * Math.sqrt(3)) - q / 2;
-  return this.axialToCube(q, r);
+  return Hex.axialToCube(q, r);
 };
 
 // Default workstation positions (relative to canvas center)

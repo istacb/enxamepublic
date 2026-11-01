@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
+import sys
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -627,11 +629,18 @@ async def main() -> int:
     config = load_config(args)
     kernel = EnxameKernel(config)
 
+    # Cross-platform shutdown handling
+    shutdown_event = asyncio.Event()
+    
+    def _signal_handler():
+        shutdown_event.set()
+    
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(getattr(__import__("signal"), sig), lambda: asyncio.create_task(kernel.stop()))
+            loop.add_signal_handler(sig, _signal_handler)
         except (NotImplementedError, AttributeError):
+            # Windows: signal handlers not supported, rely on KeyboardInterrupt
             pass
 
     try:
@@ -644,7 +653,9 @@ async def main() -> int:
         print(f"   Health: http://{config.host}:{config.port}/health")
         print(f"   Status: http://{config.host}:{config.port}/api/v1/status")
         print("Pressione Ctrl+C para parar\n")
-        loop.run_forever()
+        
+        # Wait for shutdown signal or KeyboardInterrupt
+        await shutdown_event.wait()
     except KeyboardInterrupt:
         pass
     finally:

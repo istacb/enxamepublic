@@ -98,7 +98,7 @@ class LocalBeeLibrarian:
             logger.warning("Embeddings não disponíveis (provavelmente CPU sem AVX2), operando sem busca semântica")
         
         self.indexer = LocalDocumentIndexer(
-            docs_dir=str(self.data_dir / "documents"),
+            roots=[str(self.data_dir / "documents")],
             embeddings=self.embeddings,
         )
         # LanceDB - optional, may not be available on all platforms (e.g., no AVX2)

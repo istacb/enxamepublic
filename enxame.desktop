@@ -1,0 +1,17 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ENXAME
+Comment=Decentralized AI Architecture - Local-first RAG with P2P Discovery
+Exec=python3 %k/run_enxame.py
+Icon=%k/web/favicon.ico
+Terminal=false
+Categories=Development;Science;ArtificialIntelligence;
+Keywords=enxame;ai;rag;llm;p2p;decentralized;
+StartupNotify=true
+StartupWMClass=enxame
+Actions=NoBrowser;
+
+[Desktop Action NoBrowser]
+Name=Iniciar sem abrir navegador
+Exec=python3 %k/run_enxame.py --no-browser

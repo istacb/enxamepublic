@@ -5,6 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .embeddings import EmbeddingService
 from .universal_reader import UniversalDocumentReader
@@ -55,6 +56,36 @@ SUPPORTED_EXTENSIONS = {
     '.aac',
 }
 
+# Diretórios do sistema que nunca são indexados (arquivos do SO, não do usuário).
+SYSTEM_DIRS = {
+    'system32', 'syswow64', 'windows', 'program files', 'program files (x86)',
+    'usr', 'lib', 'lib64', 'bin', 'sbin', 'etc', 'var', 'proc', 'sys',
+    'dev', 'run', 'tmp', 'boot', 'root', 'home', 'opt', 'srv', 'mnt', 'media',
+    'venv', '.venv', 'env', '__pycache__', '.git', '.github', '.opencode',
+}
+# Arquivos/temporários ocultos que nunca são indexados.
+SYSTEM_PREFIXES = ('~', '.')
+MAX_FILE_BYTES = 2_000_000  # 2 MB por arquivo
+
+
+def _default_user_roots() -> list[str]:
+    """Diretórios-raiz padrão com arquivos do usuário (não do sistema)."""
+    home = Path.home()
+    roots = []
+    for name in ('Documents', 'Documentos', 'Desktop', 'Área de Trabalho', 'enxame'):
+        p = home / name
+        if p.exists() and p.is_dir():
+            roots.append(str(p))
+    # Sempre inclui o diretório configurável via env, se existir.
+    env_dir = os.getenv('BIB_DOCS_DIR')
+    if env_dir:
+        p = Path(env_dir)
+        if p.exists() and p.is_dir() and str(p) not in roots:
+            roots.append(str(p))
+    if not roots:
+        roots.append(str(home / 'enxame' / 'docs'))
+    return roots
+
 
 @dataclass(slots=True)
 class IndexedChunk:
@@ -68,13 +99,20 @@ class IndexedChunk:
 class LocalDocumentIndexer:
     def __init__(
         self,
-        docs_dir: str,
-        embeddings: EmbeddingService,
+        docs_dir: str | None = None,
+        embeddings: EmbeddingService | None = None,
         chunk_size: int = 1200,
         overlap: int = 150,
         enable_ocr: bool = False,
+        roots: list[str] | None = None,
     ) -> None:
-        self.docs_dir = Path(docs_dir)
+        # Aceita roots (lista de diretórios do usuário) ou docs_dir único (compatibilidade).
+        if roots is not None:
+            self.roots = [Path(r) for r in roots if Path(r).exists()]
+        elif docs_dir is not None:
+            self.roots = [Path(docs_dir)] if Path(docs_dir).exists() else []
+        else:
+            self.roots = [Path(r) for r in _default_user_roots()]
         self.embeddings = embeddings
         self.chunk_size = chunk_size
         self.overlap = overlap
@@ -88,6 +126,32 @@ class LocalDocumentIndexer:
             enable_ocr=enable_ocr,
             enable_transcription=False,  # Pode ser habilitado no futuro
         )
+
+    def _should_index(self, path: Path, root: Path | None = None) -> bool:
+        """Retorna True se o arquivo é do usuário (não do sistema) e deve ser indexado."""
+        parts = [p.lower() for p in path.parts]
+        # Se o caminho está dentro de um root configurado, ignora as partes do root
+        # na verificação de diretórios do sistema (evita falso-positivo com 'home', 'tmp', etc.).
+        if root is not None:
+            try:
+                relative = path.relative_to(root)
+                parts = [p.lower() for p in relative.parts]
+            except ValueError:
+                pass
+        for part in parts:
+            if part in SYSTEM_DIRS:
+                return False
+        name = path.name.lower()
+        if name.startswith(SYSTEM_PREFIXES):
+            return False
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            return False
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                return False
+        except OSError:
+            return False
+        return True
 
     def _extract_text(self, path: Path) -> tuple[str, dict]:
         """
@@ -120,13 +184,25 @@ class LocalDocumentIndexer:
             start = max(0, end - self.overlap)
         return out
 
+    def _iter_files(self) -> list[Path]:
+        """Lista arquivos do usuário em todos os roots, ignorando arquivos do sistema."""
+        files: list[Path] = []
+        for root in self.roots:
+            try:
+                for path in root.rglob('*'):
+                    if path.is_file() and self._should_index(path, root):
+                        files.append(path)
+            except Exception:
+                continue
+        return sorted(files)
+
     def _compute_snapshot(self) -> dict[str, float]:
         snap: dict[str, float] = {}
-        if not self.docs_dir.exists():
-            return snap
-        for path in self.docs_dir.rglob('*'):
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+        for path in self._iter_files():
+            try:
                 snap[str(path)] = path.stat().st_mtime
+            except OSError:
+                continue
         return snap
 
     def has_changes(self) -> bool:
@@ -135,7 +211,7 @@ class LocalDocumentIndexer:
     def rebuild(self) -> list[IndexedChunk]:
         """
         Reconstrói o índice de documentos usando o leitor universal.
-        Agora suporta múltiplos formatos de arquivo automaticamente.
+        Varredura em diretórios do usuário, ignorando arquivos do sistema.
         """
         chunks: list[IndexedChunk] = []
         snapshot = self._compute_snapshot()
@@ -164,7 +240,7 @@ class LocalDocumentIndexer:
 
         self._snapshot = snapshot
         self.chunks = chunks
-        logger.info('Indexador local reconstruído: %s chunks (de %s arquivos)', len(chunks), len(snapshot))
+        logger.info('Indexador local reconstruído: %s chunks (de %s arquivos, %s roots)', len(chunks), len(snapshot), len(self.roots))
         return chunks
 
     def index_file(self, file_path: str) -> dict[str, Any]:
@@ -180,6 +256,9 @@ class LocalDocumentIndexer:
         path = Path(file_path)
         if not path.exists():
             return {"error": "File not found", "chunks": 0}
+        
+        if not self._should_index(path):
+            return {"error": "File is a system or unsupported file", "chunks": 0}
         
         text, metadata = self._extract_text(path)
         

@@ -2,7 +2,7 @@
  * BeeAnimator - State machine for bee animations
  * Handles: idle, walking, working, paused, responding
  */
-import { HexGrid, DEFAULT_WORKSTATIONS } from './pathfinding.js';
+import { HexGrid, DEFAULT_WORKSTATIONS, Hex } from './pathfinding.js';
 
 export const BEE_STATES = {
   IDLE: 'idle',
@@ -125,7 +125,7 @@ export class BeeAnimator {
   _planPathToWorkstation(bee) {
     const ws = DEFAULT_WORKSTATIONS[bee.role] || DEFAULT_WORKSTATIONS.idle;
     const startCube = this.grid.screenToCube(bee.x, bee.y);
-    const goalCube = this.grid.axialToCube(ws.q, ws.r);
+    const goalCube = Hex.axialToCube(ws.q, ws.r);
     const path = this.grid.getScreenPath(startCube, goalCube);
 
     if (path.length > 1) {

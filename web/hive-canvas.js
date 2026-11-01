@@ -31,11 +31,14 @@ export class HiveCanvas {
 
   /** Initialize canvases, grid, renderer, animator */
   init() {
+    // Ensure canvas has dimensions before creating grid
     this._resize();
     window.addEventListener('resize', this._resizeHandler);
 
-    // Create grid
-    this.grid = new HexGrid(this.bgCanvas.width, this.bgCanvas.height, 28);
+    // Create grid with CSS dimensions (not buffer dimensions)
+    const cssWidth = this.bgCanvas.clientWidth || window.innerWidth;
+    const cssHeight = this.bgCanvas.clientHeight || window.innerHeight;
+    this.grid = new HexGrid(cssWidth, cssHeight, 28);
 
     // Register workstations
     for (const [role, ws] of Object.entries(DEFAULT_WORKSTATIONS)) {
@@ -56,7 +59,7 @@ export class HiveCanvas {
     this.fgCanvas.addEventListener('click', this._handleClick.bind(this));
     this.fgCanvas.addEventListener('mousemove', this._handleMouseMove.bind(this));
 
-    console.log('[HiveCanvas] Initialized');
+    console.log('[HiveCanvas] Initialized', cssWidth, 'x', cssHeight, 'DPR:', window.devicePixelRatio || 1);
   }
 
   /** Cleanup */
@@ -81,9 +84,11 @@ export class HiveCanvas {
   _handleResize() {
     this._resize();
     this._bgDirty = true;
-    // Recreate grid with new dimensions
+    // Recreate grid with new CSS dimensions
     if (this.grid) {
-      this.grid = new HexGrid(this.bgCanvas.width, this.bgCanvas.height, 28);
+      const cssWidth = this.bgCanvas.clientWidth || window.innerWidth;
+      const cssHeight = this.bgCanvas.clientHeight || window.innerHeight;
+      this.grid = new HexGrid(cssWidth, cssHeight, 28);
       for (const [role, ws] of Object.entries(DEFAULT_WORKSTATIONS)) {
         this.grid.setWorkstation(role, ws.q, ws.r);
       }
@@ -93,9 +98,9 @@ export class HiveCanvas {
 
   _resize() {
     const dpr = window.devicePixelRatio || 1;
-    const rect = this.bgCanvas.parentElement.getBoundingClientRect();
-    const w = Math.max(400, rect.width);
-    const h = Math.max(300, rect.height - 56 - 40); // minus topbar + bottombar
+    // Canvas is fixed full viewport, use window dimensions
+    const w = Math.max(400, window.innerWidth);
+    const h = Math.max(300, window.innerHeight);
 
     for (const canvas of [this.bgCanvas, this.fgCanvas]) {
       canvas.width = w * dpr;

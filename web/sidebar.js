@@ -19,6 +19,7 @@ export class SidebarController {
     this.clusterLabel = document.getElementById('cluster-label');
     this.sidebar = document.getElementById('sidebar');
     this.toggleBtn = document.getElementById('sidebar-toggle');
+    this.mainGrid = document.querySelector('.main-grid');
     this.overlay = this._createOverlay();
 
     this._bindEvents();
@@ -45,6 +46,7 @@ export class SidebarController {
 
   setCollapsed(collapsed) {
     this.sidebar.classList.toggle('collapsed', collapsed);
+    this.mainGrid?.classList.toggle('sidebar-collapsed', collapsed);
     this.overlay.classList.toggle('open', collapsed);
     this.toggleBtn.setAttribute('aria-expanded', !collapsed);
     this.toggleBtn.innerHTML = collapsed ? '▶' : '◀';

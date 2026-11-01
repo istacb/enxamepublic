@@ -33,14 +33,14 @@ class SearchResult:
 
 class SearchPipelineService:
     def __init__(self) -> None:
-        docs_dir = os.getenv('BIB_DOCS_DIR', '/data/docs')
         zim_dir = os.getenv('BIB_ZIM_DIR', '/data/zim')
         ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
         self.model = os.getenv('BIB_MODEL', 'gemma2:9b')
 
         self.translator = PTBRTranslator(enabled=os.getenv('TRANSLATION_ENABLED', '1') == '1')
         self.embeddings = EmbeddingService()
-        self.indexer = LocalDocumentIndexer(docs_dir=docs_dir, embeddings=self.embeddings)
+        # Indexa diretórios do usuário (Documents, Desktop, enxame, BIB_DOCS_DIR), ignorando arquivos do sistema.
+        self.indexer = LocalDocumentIndexer(embeddings=self.embeddings)
         self.lancedb = LanceDBStore(embeddings=self.embeddings)
         self.zim = ZimSearchClient(zim_dir=zim_dir)
         self.web = WebSearchClient()
@@ -99,7 +99,26 @@ class SearchPipelineService:
         response = await self.ollama.generate(
             OllamaGenerateRequest(model=self.model, prompt=prompt, temperature=0.2, num_ctx=8192)
         )
-        return self.translator.to_pt_br(response)
+        answer = self.translator.to_pt_br(response)
+        
+        # Salva no Cofre Semântico (LanceDB) para agilizar futuras queries similares
+        try:
+            import json
+            await self.lancedb.index_document(
+                text=query, 
+                metadata={
+                    "answer": answer, 
+                    "source_type": "synthesized", 
+                    "original_source": source,
+                    "timestamp": time.time()
+                },
+                # Usamos o hash da query como ID para evitar duplicatas exatas
+                chunk_id=f"cache_{hash(query)}"
+            )
+        except Exception as exc:
+            logger.debug('Falha ao salvar resposta no cofre semântico: %s', exc)
+            
+        return answer
 
     async def reindex_callback(self, chunks: list[IndexedChunk]) -> None:
         await self.lancedb.upsert_chunks(chunks)
@@ -109,25 +128,36 @@ class SearchPipelineService:
 
     async def search(self, query: str, allow_internet: bool = True) -> SearchResult:
         """
-        Pipeline de busca com logging seguro e controle de acesso à internet.
-
-        Args:
-            query: Query de busca do usuário
-            allow_internet: Se True e apenas Bibliotecário/Juiz podem acessar internet
-
-        Returns:
-            SearchResult com resposta e metadados
+        Pipeline de busca com logging seguro, controle de acesso à internet e Cache Semântico (Cofre).
         """
         started = time.perf_counter()
 
-        # Log seguro da query (não loga conteúdo completo)
+        # Log seguro da query
         log_safe_query(logger, query, context='search_start')
         log_safe_user_action(logger, action='search_query', details={'allow_internet': allow_internet})
 
         query_pt = self.translator.to_pt_br(query)
         trace: list[dict[str, Any]] = []
 
+        # 0) Cache Semântico (Cofre de Respostas)
+        # Busca respostas já sintetizadas para perguntas similares
+        logger.info('[pipeline] etapa=0 semantic_cache')
+        semantic_hits = await self.lancedb.search_similar(query_pt, top_k=1)
+        # Threshold rigoroso para evitar respostas imprecisas (ex: 0.97)
+        if semantic_hits and semantic_hits[0].score >= 0.97:
+            try:
+                import json
+                payload = json.loads(semantic_hits[0].metadata)
+                payload.setdefault('metadata', {}).setdefault('pipeline', trace)
+                payload['metadata']['latency_ms'] = int((time.perf_counter() - started) * 1000)
+                payload['metadata']['source'] = 'semantic_cache'
+                logger.info('[pipeline] semantic_cache_hit=true latency_ms=%d', payload['metadata']['latency_ms'])
+                return SearchResult(answer=str(payload.get('answer', '')), metadata=payload.get('metadata', {}))
+            except Exception:
+                logger.debug('Falha ao decodificar hit do cache semântico')
+
         logger.info('[pipeline] etapa=1 redis_cache')
+
         # 1) Cache Redis
         cache_key = f'bibliotecario:query:{hash(query_pt.strip().lower())}'
         cached = await self._cache_get(cache_key)
@@ -196,6 +226,8 @@ class SearchPipelineService:
         if allow_internet:
             logger.warning('[pipeline] etapa=5 internet (último recurso) - permitido apenas para Bibliotecário/Juiz')
             # 5) Internet (último recurso) - apenas Bibliotecário e Juiz têm permissão
+            # Notifica o usuário que a pesquisa na internet será realizada
+            logger.info('[pipeline] Notificando usuário: Iniciando pesquisa na internet...')
             web_hits = await self.web.search(query_pt)
             trace.append({'stage': 'internet', 'hit': bool(web_hits), 'count': len(web_hits), 'last_resort': True})
             if web_hits:
@@ -208,12 +240,14 @@ class SearchPipelineService:
                     'translated': True,
                     'latency_ms': int((time.perf_counter() - started) * 1000),
                     'internet_used': True,
+                    'user_notification': 'Pesquisa na internet realizada para completar a resposta'
                 }
                 await self._cache_set(
                     cache_key, json.dumps({'answer': answer, 'metadata': metadata}, ensure_ascii=False)
                 )
                 logger.info('[pipeline] internet_success=true latency_ms=%d', metadata['latency_ms'])
                 return SearchResult(answer=answer, metadata=metadata)
+
         else:
             trace.append({'stage': 'internet', 'skipped': True, 'reason': 'disabled_by_cluster_policy'})
             logger.debug('[pipeline] internet bloqueado por política do cluster')

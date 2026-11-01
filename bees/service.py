@@ -582,6 +582,37 @@ class BeeService:
         app.router.add_get("/api/cluster/discover", discover)
         app.router.add_post("/api/v1/ingest", ingest)
 
+        # Config endpoints for Web UI Settings modal
+        async def get_config(request: Request) -> Response:
+            return web.json_response({
+                "offline_mode": self.config.offline_mode,
+                "allow_web": self.config.allow_web,
+                "confidence_threshold": self.config.confidence_threshold_enxame,
+                "preferred_model": self.config.model,
+            })
+
+        async def set_config(request: Request) -> Response:
+            try:
+                data = await request.json()
+                if "offline_mode" in data:
+                    self.config.offline_mode = bool(data["offline_mode"])
+                if "allow_web" in data:
+                    self.config.allow_web = bool(data["allow_web"])
+                if "confidence_threshold" in data:
+                    self.config.confidence_threshold_enxame = float(data["confidence_threshold"])
+                    self.config.confidence_threshold_web = max(0.8, float(data["confidence_threshold"]) + 0.1)
+                if "preferred_model" in data:
+                    self.config.model = data["preferred_model"]
+                # Persist to config file
+                self.config.save()
+                return web.json_response({"success": True})
+            except Exception as e:
+                logger.error(f"Erro ao salvar config: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+
+        app.router.add_get("/api/v1/config", get_config)
+        app.router.add_post("/api/v1/config", set_config)
+
         # =========================================================================
         # Compatibilidade com Web UI do Enxame (espera endpoints do Kernel completo)
         # =========================================================================
@@ -850,6 +881,25 @@ class BeeService:
                     "port": p.port,
                     "capabilities": p.capabilities,
                     "models": p.models,
+                }
+                for p in peers
+            ]})
+
+        # Cluster discover endpoint - returns current mDNS-discovered peers
+        async def discover(request: Request) -> Response:
+            if not self._discovery:
+                return web.json_response({"peers": []})
+            peers = self._discovery.get_active_peers()
+            return web.json_response({"peers": [
+                {
+                    "node_id": p.node_id,
+                    "role": p.role,
+                    "host": p.host,
+                    "port": p.port,
+                    "capabilities": p.capabilities,
+                    "models": p.models,
+                    "load": p.load,
+                    "state": p.state.value,
                 }
                 for p in peers
             ]})
@@ -1485,20 +1535,32 @@ async def main() -> int:
     # Criar e iniciar serviço
     bee = BeeService(config)
 
-    # Setup signal handlers
+    # Cross-platform shutdown handling
+    shutdown_event = asyncio.Event()
+    
+    def _signal_handler():
+        shutdown_event.set()
+    
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(bee.stop()))
+        try:
+            loop.add_signal_handler(sig, _signal_handler)
+        except (NotImplementedError, AttributeError):
+            # Windows: signal handlers not supported, rely on KeyboardInterrupt
+            pass
 
     try:
         await bee.start()
-        # Manter rodando
-        while bee._running:
-            await asyncio.sleep(1)
+        print(f"\nAbelha {config.node_id} ONLINE em http://{config.host}:{config.port}")
+        print("Pressione Ctrl+C para parar\n")
+        
+        # Wait for shutdown signal or KeyboardInterrupt
+        await shutdown_event.wait()
     except KeyboardInterrupt:
         pass
     finally:
         await bee.stop()
+        print("Abelha parada.")
 
     return 0
 
