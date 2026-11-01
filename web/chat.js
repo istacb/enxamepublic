@@ -2,7 +2,7 @@
  * ChatController - Manages transcript, streaming, input
  */
 import { store } from './store.js';
-import { api, streamChat } from './api.js';
+import { api, sendChat, streamChat } from './api.js';
 import { audio } from './audio.js';
 import { BeeRenderer } from './bee-renderer.js';
 import { getRole, getRoleEmoji, getRoleColor } from './bee-roles.js';
@@ -50,7 +50,7 @@ export class ChatController {
     this._setStreaming(true);
 
     try {
-      const { task_id } = await api.sendChat(text);
+      const { task_id } = await sendChat(text);
       await this._streamResponse(task_id);
     } catch (err) {
       this._addMessage(`Erro ao enviar: ${err.message}`, 'system err');
