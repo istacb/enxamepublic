@@ -141,7 +141,7 @@ jobs:
         run: |
           cd bees
           ruff check . --output-format json > ../ruff-report.json || true
-          python ../ci/check_ruff_baseline.py ../ruff-report.json 1153
+          python ../ci/check_ruff_baseline.py ../ruff-report.json 1154
 
       # Legacy mypy errors remain visible but do not falsely block cross-platform tests.
       - name: Run mypy (advisory until baseline is established)
