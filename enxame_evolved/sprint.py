@@ -521,9 +521,23 @@ Retorne JSON:
             )
             
             import json
-            return json.loads(resp.strip())
-        except Exception:
-            return {"passed": True, "details": []}
+            verdict = json.loads(resp.strip())
+            if (not isinstance(verdict, dict)
+                    or not isinstance(verdict.get("passed"), bool)
+                    or not isinstance(verdict.get("details"), list)):
+                return {
+                    "passed": False,
+                    "details": [],
+                    "error": "Invalid acceptance validation response",
+                }
+            return verdict
+        except Exception as exc:
+            logger.warning("Acceptance validation unavailable: %s", exc)
+            return {
+                "passed": False,
+                "details": [],
+                "error": "Acceptance criteria could not be validated",
+            }
 
     # =========================================================================
     # Persistência
