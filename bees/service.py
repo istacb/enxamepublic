@@ -359,7 +359,7 @@ class BeeService:
             
             # Se sou Bibliotecário, construir índice global
             if self.cluster_role == ClusterRole.BIBLIOTECARIO:
-                self._global_index = await build_global_index(self, peers)
+                self._global_index = await build_global_index(self, peers, shared_secret=self.config.shared_secret)
                 self.cluster_state.global_index = self._global_index.data
                 save_cluster_state(self.config.data_dir, self.cluster_state)
             
@@ -427,6 +427,29 @@ class BeeService:
         else:
             # Identidade já foi gerada no config
             logger.info(f"Nova identidade: {self.node_id}")
+
+    async def _handle_bee_http_message(self, request: "web.Request") -> "web.Response":
+        """Receive a BEE envelope over HTTP (standalone and unified kernel)."""
+        from aiohttp import web
+
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("BEE envelope must be a JSON object")
+            envelope = BeeEnvelope.from_dict(data)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return web.json_response({"error": "invalid BEE envelope"}, status=400)
+
+        if envelope.target_node_id not in (None, self.node_id):
+            return web.json_response({"error": "wrong target node"}, status=400)
+        if not self._handler.verify_envelope(envelope):
+            return web.json_response({"error": "invalid BEE signature"}, status=401)
+
+        response = await self._handler.handle_message(envelope)
+        if response is None:
+            return web.Response(status=204)
+        self._handler.sign_envelope(response)
+        return web.json_response(response.to_dict())
 
     async def _start_http_server(self) -> None:
         """Inicia servidor HTTP para API, WebSocket e UI estática."""
@@ -580,6 +603,7 @@ class BeeService:
         app.router.add_get("/api/v1/capabilities", capabilities)
         app.router.add_get("/api/v1/peers", peers)
         app.router.add_get("/api/cluster/discover", discover)
+        app.router.add_post("/api/v1/bee/message", self._handle_bee_http_message)
         app.router.add_post("/api/v1/ingest", ingest)
 
         # Config endpoints for Web UI Settings modal
@@ -910,6 +934,7 @@ class BeeService:
         app.router.add_get("/api/v1/cluster", cluster_status)
         app.router.add_get("/api/v1/peers", peers)
         app.router.add_get("/api/cluster/discover", discover)
+        app.router.add_post("/api/v1/bee/message", self._handle_bee_http_message)
 
         # Compatibilidade com Web UI
         # /api/status - formato esperado pela sidebar
@@ -1323,11 +1348,14 @@ class BeeService:
             return
         try:
             url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
+            self._handler.sign_envelope(envelope)
             async with self._http_session.post(url, json=envelope.to_dict(), timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     response_envelope = BeeEnvelope.from_dict(data)
-                    self._handler.complete_pending_request(envelope.correlation_id or envelope.msg_id, response_envelope)
+                    if (response_envelope.source_node_id == peer.node_id
+                            and self._handler.verify_envelope(response_envelope)):
+                        self._handler.complete_pending_request(envelope.correlation_id or envelope.msg_id, response_envelope)
         except Exception as e:
             logger.debug(f"Falha ao enviar para {peer.node_id}: {e}")
 
@@ -1436,7 +1464,7 @@ class BeeService:
             bib_peer = next((p for p in peers if p.node_id == self.cluster_state.bibliotecario_id), None)
             if bib_peer:
                 from .cluster.global_index import query_bibliotecario_where
-                target_ids = await query_bibliotecario_where(bib_peer, query, self._global_index)
+                target_ids = await query_bibliotecario_where(bib_peer, query, self._global_index, shared_secret=self.config.shared_secret)
                 target_peers = [p for p in peers if p.node_id in target_ids]
                 logger.debug(f"Roteando via Bibliotecário: {len(target_peers)} peers alvo para '{query}'")
         
@@ -1501,6 +1529,7 @@ class BeeService:
             return None
         try:
             url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
+            self._handler.sign_envelope(envelope)
             async with self._http_session.post(
                 url, 
                 json=envelope.to_dict(), 
@@ -1508,7 +1537,11 @@ class BeeService:
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return BeeEnvelope.from_dict(data)
+                    reply = BeeEnvelope.from_dict(data)
+                    if (reply.source_node_id == peer.node_id
+                            and reply.target_node_id in (None, self.node_id)
+                            and self._handler.verify_envelope(reply)):
+                        return reply
         except Exception as e:
             logger.debug(f"Falha ao enviar para {peer.node_id}: {e}")
         return None
