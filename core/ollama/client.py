@@ -15,6 +15,7 @@ class OllamaGenerateRequest:
     temperature: float = 0.2
     num_ctx: int = 4096
     stream: bool = False
+    images: list[str] | None = None
 
 
 @dataclass(slots=True)
@@ -120,12 +121,14 @@ class OllamaClient:
         if not recommended:
             return None
 
-        # Se algum instalado for >= recomendado (mesma família maior ou igual),
-        # não baixa nada.
+        # Compare model variants by catalog order, not disk MB versus minimum RAM GB.
+        # A 0.5b model must never satisfy a recommendation for a 7b model.
         rec_family = self._model_family(recommended)
-        rec_size = next((m[1] for m in LIGHT_MODELS if m[0] == recommended), 0.0)
+        order = {name: i for i, (name, _, _) in enumerate(LIGHT_MODELS)}
+        rec_rank = order[recommended]
         for m in installed:
-            if self._model_family(m.name) == rec_family and m.size_mb >= rec_size * 0.9:
+            if (self._model_family(m.name) == rec_family
+                    and order.get(m.name, -1) >= rec_rank):
                 return m.name
 
         # Baixa o recomendado.
@@ -147,6 +150,8 @@ class OllamaClient:
                 'num_ctx': req.num_ctx,
             },
         }
+        if req.images is not None:
+            payload['images'] = req.images
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(f'{self.base_url}/api/generate', json=payload)
             if resp.status_code != 200:
@@ -158,7 +163,7 @@ class OllamaClient:
         import httpx
 
         async with httpx.AsyncClient(timeout=None) as client:
-            resp = await client.post(f'{self.base_url}/api/pull', json={'model': model})
+            resp = await client.post(f'{self.base_url}/api/pull', json={'model': model, 'stream': False})
             if resp.status_code != 200:
                 raise OllamaError(f'Falha ao baixar modelo {model}: {resp.text}')
             return resp.json()
