@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 from core.cluster import HardwareBenchmark, LocalSearchEngine
 from core.exp.client import EXPWebSocketClient
@@ -21,13 +22,16 @@ class BibliotecarioEXPAgent:
         self.role = os.getenv('ROLE', 'bibliotecario')
         self.cluster_role = os.getenv('CLUSTER_ROLE', 'bibliotecaria')
         self.juiz_url = os.getenv('JUIZ_URL', 'ws://juiz:7700/exp')
+        # LIMITAÇÃO CONHECIDA (segurança): WebSocket em texto plano (ws://).
+        # HMAC assina o payload, mas o transporte não é criptografado.
         secret = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
         self.security = EXPSecurity(secret)
         self.client = EXPWebSocketClient(url=self.juiz_url, security=self.security)
         self.node = EXPNode(node_id=self.node_id, role=self.role, address=None)
         self.pipeline = pipeline
-        docs_dir = os.getenv('BIB_DOCS_DIR', '/data/docs')
-        zim_dir = os.getenv('BIB_ZIM_DIR', '/data/zim')
+        _data_dir = os.getenv('ENXAME_DATA_DIR', str(Path.home() / 'enxame'))
+        docs_dir = os.getenv('BIB_DOCS_DIR', str(Path(_data_dir) / 'docs'))
+        zim_dir = os.getenv('BIB_ZIM_DIR', str(Path(_data_dir) / 'zim'))
         self.search_engine = LocalSearchEngine(docs_dir=docs_dir, zim_dir=zim_dir)
         self.benchmark_profile = HardwareBenchmark().run()
         self.assigned_zim_files: list[str] = []
@@ -185,6 +189,9 @@ class BibliotecarioEXPAgent:
                 await self._send_hello()
                 hb_task = asyncio.create_task(self._heartbeat_loop())
                 async for envelope in self.client.receive_loop():
+                    # Backpressure: se o cliente interno não consegue acompanhar,
+                    # o receive_loop continua lendo. Aqui não há fila local, então
+                    # o processamento é direto; mantemos apenas o loop de reconexão.
                     if envelope.type == EXPMessageType.TASK_DISPATCH:
                         await self._handle_task_dispatch(envelope)
                     elif envelope.type == EXPMessageType.QUERY:

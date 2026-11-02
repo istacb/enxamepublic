@@ -10,14 +10,30 @@ import type { IAgent, IExecutionContext } from '../interfaces';
 import type { AgentState, ExecutionResult, ExecutionContext } from '../types';
 
 /**
- * Gera um UUID v4 simples sem dependências externas
+ * Gera um UUID v4 criptograficamente seguro.
+ * Usa a API nativa crypto.randomUUID() quando disponível (Node 14.17+,
+ * navegadores modernos), com fallback para crypto.getRandomValues.
  */
 function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback para ambientes antigos sem crypto.randomUUID.
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = (Math.random() * 256) | 0;
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // versão 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variante RFC 4122
+  const hex = (b: number) => b.toString(16).padStart(2, '0');
+  return `${hex(bytes[0])}${hex(bytes[1])}${hex(bytes[2])}${hex(bytes[3])}-` +
+    `${hex(bytes[4])}${hex(bytes[5])}-${hex(bytes[6])}${hex(bytes[7])}-` +
+    `${hex(bytes[8])}${hex(bytes[9])}-${hex(bytes[10])}${hex(bytes[11])}` +
+    `${hex(bytes[12])}${hex(bytes[13])}${hex(bytes[14])}${hex(bytes[15])}`;
 }
 
 export class Agent implements IAgent {

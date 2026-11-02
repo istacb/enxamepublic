@@ -65,7 +65,16 @@ class ClusterElection:
         quorum = positive_votes >= max(1, (total_votes // 2) + 1)
 
         juiz = ranking[0].node_id
-        bibliotecaria = ranking[-1].node_id if len(ranking) > 1 else juiz
+        # Bibliotecária deve ser um nó DISTINTO do Juiz (evita um nó acumular
+        # ambos os papéis em clusters de 1-2 nós).
+        if len(ranking) > 1:
+            bibliotecaria = ranking[-1].node_id
+            if bibliotecaria == juiz:
+                # Tenta o próximo nó mais fraco que não seja o juiz.
+                alternativos = [n.node_id for n in reversed(ranking) if n.node_id != juiz]
+                bibliotecaria = alternativos[0] if alternativos else juiz
+        else:
+            bibliotecaria = juiz
         agents = [n.node_id for n in ranking[1:-1]] if len(ranking) > 2 else []
 
         result = ElectionResult(

@@ -259,6 +259,9 @@ def notificar_nos_sobre_failover(nos_ativos: list[NodeInfo], papel_vacante: str,
 
     for no in nos_ativos:
         try:
+            # LIMITAÇÃO CONHECIDA (segurança): notificação de failover via
+            # http:// texto plano. HMAC não se aplica aqui (sem assinatura).
+            # Em redes não confiáveis, use túnel TLS externo.
             httpx.post(f'http://{no.ip}:{no.porta}/api/v1/notificacao', json=payload, timeout=5)
         except Exception as e:
             log_failover(f'Falha ao notificar {no.node_id}: {e}')

@@ -1,63 +1,195 @@
 #!/bin/bash
-# Enxame - Script de desinstalação
-# Remove completamente o Enxame do sistema
-
+# =============================================================================
+# ENXAME - Desinstalador Oficial (Multi-Plataforma)
+# =============================================================================
+# Remove completamente o Enxame do sistema:
+#   - Serviço em segundo plano (systemd / LaunchAgent / tarefa agendada)
+#   - Atalho da área de trabalho
+#   - Diretórios de dados, logs e configuração
+#   - Código (opcional — preserva o repositório por padrão)
+#
+# Pergunta a pasta de instalação (detectada automaticamente via .env quando
+# possível).
+# =============================================================================
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENXAME_ROOT="$(dirname "$SCRIPT_DIR")"
 
-echo "=== Enxame - Desinstalação ==="
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_GREEN='\033[32m'
+C_YELLOW='\033[33m'
+C_BLUE='\033[34m'
+C_RED='\033[31m'
+
+echo ""
+echo -e "${C_BOLD}╔═══════════════════════════════════════════════════════════════╗${C_RESET}"
+echo -e "${C_BOLD}║           ENXAME - Desinstalador Oficial                     ║${C_RESET}"
+echo -e "${C_BOLD}╚═══════════════════════════════════════════════════════════════╝${C_RESET}"
 echo ""
 
-# Verifica se está rodando como root ou com sudo
-if [ "$EUID" -ne 0 ]; then 
-    echo "Por favor, execute como root (use sudo)"
+# Detecta sistema operacional
+detect_os() {
+    case "$(uname -s 2>/dev/null)" in
+        Linux*)   echo "linux" ;;
+        Darwin*)  echo "macos" ;;
+        CYGWIN*|MINGW*|MSYS*) echo "windows" ;;
+        *)        echo "unknown" ;;
+    esac
+}
+OS_TYPE=$(detect_os)
+
+# Verifica root (não obrigatório no Windows)
+if [[ "$OS_TYPE" != "windows" ]] && [ "$EUID" -ne 0 ]; then
+    echo -e "${C_RED}Erro: execute como root/administrador (sudo).${C_RESET}"
     exit 1
 fi
 
-echo "ATENÇÃO: Isso removerá COMPLETAMENTE o Enxame do sistema."
-echo "Todos os dados, logs e configurações serão perdidos."
-echo "Fluxo Next > Next > Finish: removendo automaticamente, sem confirmação manual."
-echo ""
-echo "Removendo Enxame..."
+# ---------------------------------------------------------------------------
+# Detectar / perguntar a pasta de instalação
+# ---------------------------------------------------------------------------
+CONFIG_DIR="/etc/enxame"
+if [ "$OS_TYPE" = "macos" ]; then
+    CONFIG_DIR="$HOME/Library/Preferences/Enxame"
+fi
 
-# Para serviços (se systemd estiver disponível)
-if command -v systemctl &> /dev/null; then
-    if [ -f "/etc/systemd/system/enxame.service" ]; then
-        echo "Parando serviço Enxame..."
-        systemctl stop enxame || true
-        systemctl disable enxame || true
-        rm -f /etc/systemd/system/enxame.service
-        systemctl daemon-reload
-        echo "Serviço Enxame removido."
+ENV_FILE=""
+INSTALL_DIR=""
+
+# Tenta detectar a pasta via .env existente
+if [ -f "$CONFIG_DIR/.env" ]; then
+    ENV_FILE="$CONFIG_DIR/.env"
+    INSTALL_DIR=$(grep '^ENXAME_INSTALL_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+fi
+
+if [ -z "$INSTALL_DIR" ]; then
+    echo -e "${C_BLUE}Pasta de instalação${C_RESET}"
+    echo ""
+    read -r -p "Informe a pasta onde o Enxame foi instalado (deixe vazio para usar a detecção automática): " INSTALL_DIR
+    INSTALL_DIR="${INSTALL_DIR%/}"
+fi
+
+# Padrões por sistema
+if [ -z "$INSTALL_DIR" ]; then
+    case "$OS_TYPE" in
+        linux)    INSTALL_DIR="/opt/enxame" ;;
+        macos)    INSTALL_DIR="/Applications/Enxame" ;;
+        windows)  INSTALL_DIR="C:\Program Files\Enxame" ;;
+    esac
+fi
+
+# Diretórios de sistema (padrões, usados como fallback)
+DATA_DIR="/var/lib/enxame/data"
+LOG_DIR="/var/log/enxame"
+CONFIG_DIR="/etc/enxame"
+if [ -f "$ENV_FILE" ]; then
+    DATA_DIR=$(grep '^ENXAME_DATA_PATH=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "$DATA_DIR")
+    LOG_DIR=$(grep '^ENXAME_LOG_PATH=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || echo "$LOG_DIR")
+    CONFIG_DIR=$(dirname "$ENV_FILE")
+fi
+
+echo ""
+echo -e "${C_YELLOW}ATENÇÃO: Isso removerá o Enxame do sistema.${C_RESET}"
+echo "  • Serviço em segundo plano (systemd/LaunchAgent/tarefa agendada)"
+echo "  • Atalho da área de trabalho"
+echo "  • Dados: $DATA_DIR"
+echo "  • Logs:  $LOG_DIR"
+echo "  • Config: $CONFIG_DIR"
+echo "  • Código em: $INSTALL_DIR (preservado por padrão)"
+echo ""
+read -r -p "Confirmar desinstalação? (s/N): " CONFIRM
+CONFIRM_LOWER="$(echo "$CONFIRM" | tr '[:upper:]' '[:lower:]')"
+if [ "$CONFIRM_LOWER" != "s" ] && [ "$CONFIRM_LOWER" != "sim" ] && [ "$CONFIRM_LOWER" != "y" ] && [ "$CONFIRM_LOWER" != "yes" ]; then
+    echo "Desinstalação cancelada."
+    exit 0
+fi
+
+echo ""
+echo -e "${C_BLUE}>>> Removendo Enxame...${C_RESET}"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1. Parar e remover serviço em segundo plano
+# ---------------------------------------------------------------------------
+echo "Parando serviço em segundo plano..."
+
+if command -v systemctl &>/dev/null && [ -f /etc/systemd/system/enxame.service ]; then
+    systemctl stop enxame.service >/dev/null 2>&1 || true
+    systemctl disable enxame.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/enxame.service
+    systemctl daemon-reload
+    echo "  ✓ Serviço systemd removido."
+fi
+
+if [ "$OS_TYPE" = "macos" ] && command -v launchctl &>/dev/null; then
+    REAL_USER="${SUDO_USER:-$USER}"
+    PLIST="$HOME/Library/LaunchAgents/com.enxame.app.plist"
+    if [ -f "$PLIST" ]; then
+        su - "$REAL_USER" -c "launchctl unload '$PLIST' 2>/dev/null || true" || true
+        rm -f "$PLIST"
+        echo "  ✓ LaunchAgent removido."
     fi
 fi
 
-# Remove diretórios de dados
-echo "Removendo dados em /var/lib/enxame..."
-rm -rf /var/lib/enxame
-echo "Dados removidos."
+# Windows: remover tarefa agendada (se houver schtasks)
+if command -v schtasks &>/dev/null 2>&1; then
+    schtasks /Delete /TN "Enxame" /F >nul 2>&1 && echo "  ✓ Tarefa agendada do Windows removida." || true
+fi
 
-# Remove logs
-echo "Removendo logs em /var/log/enxame..."
-rm -rf /var/log/enxame
-echo "Logs removidos."
+# ---------------------------------------------------------------------------
+# 2. Remover atalho da área de trabalho
+# ---------------------------------------------------------------------------
+echo "Removendo atalho da área de trabalho..."
+DESKTOP_DIR=""
+if [ -n "$SUDO_USER" ]; then
+    DESKTOP_DIR=$(getent passwd "$SUDO_USER" | cut -d: -f6)/Desktop
+elif [ -n "$REAL_USER" ]; then
+    DESKTOP_DIR=$(getent passwd "$REAL_USER" | cut -d: -f6)/Desktop
+else
+    DESKTOP_DIR="$HOME/Desktop"
+fi
 
-# Remove configuração
-echo "Removendo configuração em /etc/enxame..."
-rm -rf /etc/enxame
-echo "Configuração removida."
+rm -f "$DESKTOP_DIR/Enxame.desktop" 2>/dev/null && echo "  ✓ Atalho Linux removido." || true
+rm -f "$DESKTOP_DIR/Enxame.lnk" 2>/dev/null && echo "  ✓ Atalho Windows removido." || true
+rm -rf "$DESKTOP_DIR/Enxame.app" 2>/dev/null && echo "  ✓ Atalho macOS removido." || true
 
-# Remove sockets e arquivos temporários
+# ---------------------------------------------------------------------------
+# 3. Remover diretórios de dados, logs e configuração
+# ---------------------------------------------------------------------------
+echo "Removendo dados e configuração..."
+[ -d "$DATA_DIR" ] && rm -rf "$DATA_DIR" && echo "  ✓ Dados removidos: $DATA_DIR" || true
+[ -d "$LOG_DIR" ] && rm -rf "$LOG_DIR" && echo "  ✓ Logs removidos: $LOG_DIR" || true
+[ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR" && echo "  ✓ Configuração removida: $CONFIG_DIR" || true
+
+# ---------------------------------------------------------------------------
+# 4. Limpar arquivos temporários e sockets
+# ---------------------------------------------------------------------------
 echo "Limpando arquivos temporários..."
-rm -rf /tmp/enxame*
-rm -f /run/enxame.sock
+rm -rf /tmp/enxame* 2>/dev/null || true
+rm -f /run/enxame.sock 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 5. Perguntar se quer remover o código
+# ---------------------------------------------------------------------------
+echo ""
+if [ -d "$INSTALL_DIR" ]; then
+    read -r -p "Remover também o código em $INSTALL_DIR? (s/N): " REMOVE_CODE
+    REMOVE_CODE_LOWER="$(echo "$REMOVE_CODE" | tr '[:upper:]' '[:lower:]')"
+    if [ "$REMOVE_CODE_LOWER" = "s" ] || [ "$REMOVE_CODE_LOWER" = "sim" ] || [ "$REMOVE_CODE_LOWER" = "y" ] || [ "$REMOVE_CODE_LOWER" = "yes" ]; then
+        rm -rf "$INSTALL_DIR"
+        echo "  ✓ Código removido: $INSTALL_DIR"
+    else
+        echo "  ! Código preservado em: $INSTALL_DIR"
+    fi
+fi
 
 echo ""
-echo "=== Desinstalação concluída ==="
+echo -e "${C_GREEN}=== Desinstalação concluída ===${C_RESET}"
 echo ""
-echo "O Enxame foi completamente removido do sistema."
-echo "Os arquivos de código em $ENXAME_ROOT foram preservados."
-echo "Para reinstalar, execute o script 'install' novamente."
+echo "O Enxame foi removido do sistema."
+[ -d "$INSTALL_DIR" ] && echo "O código foi preservado em: $INSTALL_DIR"
+echo ""
+echo "Para reinstalar, execute o instalador novamente:"
+echo "  sudo bash api/install/install.sh"
 echo ""

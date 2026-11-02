@@ -462,6 +462,9 @@ async def install_plugin(request: Request) -> dict:
 
 @app.websocket('/exp')
 async def exp_socket(websocket: WebSocket) -> None:
+    # LIMITAÇÃO CONHECIDA (segurança): WebSocket em texto plano (ws://).
+    # HMAC assina o payload, mas o transporte não é criptografado.
+    # Use túnel externo (TLS/WireGuard) em redes não confiáveis.
     async def handler(envelope: EXPEnvelope, ws: WebSocket) -> None:
         if envelope.type == EXPMessageType.HELLO:
             ack = await service.register_agent(envelope, ws)

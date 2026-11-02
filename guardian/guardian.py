@@ -261,9 +261,9 @@ class Guardian:
         return True
 
     def sentinel_mode(self):
-        """Loop principal que nunca dorme"""
-        while True:
-            # Monitoramento contínuo
-            time.sleep(5)
-            # Lógica de monitoramento de rede e recursos
-            pass
+        """Loop principal que nunca dorme (REMOVIDO: bloqueava a thread).
+        Use GuardianPatrol.run_forever() (asyncio) em vez disso."""
+        raise RuntimeError(
+            'sentinel_mode() foi removido porque bloqueia a thread com time.sleep(). '
+            'Use GuardianPatrol.run_forever() (asyncio.sleep) em vez disso.'
+        )

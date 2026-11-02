@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .types import EXP_VERSION, EXPMessageType
 
@@ -16,6 +16,7 @@ class EXPNode(BaseModel):
 
 
 class EXPEnvelope(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     exp_version: str = Field(default=EXP_VERSION)
     msg_id: str = Field(default_factory=lambda: str(uuid4()))
     correlation_id: str | None = None

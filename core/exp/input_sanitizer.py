@@ -51,6 +51,7 @@ class InputSanitizer:
         self.compiled_patterns = [
             re.compile(pattern, re.IGNORECASE | re.MULTILINE) for pattern in self.PROMPT_INJECTION_PATTERNS
         ]
+        self._pattern_texts = list(self.PROMPT_INJECTION_PATTERNS)
 
     def sanitize_text(self, text: str, max_length: int | None = None) -> str:
         """
@@ -93,9 +94,9 @@ class InputSanitizer:
 
         detected_patterns = []
 
-        for i, pattern in enumerate(self.compiled_patterns):
-            if pattern.search(text):
-                detected_patterns.append(f'pattern_{i}')
+        for pattern_obj, pattern_text in zip(self.compiled_patterns, self._pattern_texts):
+            if pattern_obj.search(text):
+                detected_patterns.append(pattern_text)
 
         # Detecção adicional: tentativas de escapar de contexto
         if text.count('"""') >= 4 or text.count("'''") >= 4:

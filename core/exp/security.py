@@ -15,7 +15,9 @@ class EXPAuthError(Exception):
 @dataclass(slots=True)
 class EXPSecurity:
     shared_secret: str
-    allowed_skew_seconds: int = 60
+    allowed_skew_seconds: int = int(
+        __import__('os').getenv('EXP_TIMESTAMP_SKEW', '120')
+    )
 
     def _canonical_json(self, payload: dict) -> bytes:
         return json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')

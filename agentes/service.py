@@ -35,6 +35,11 @@ from .worker_pool import WorkerPool, WorkItem, now_utc
 
 logger = logging.getLogger(__name__)
 
+def _default_data_dir_agente() -> str:
+    """Diretório de dados padrão para o agente, overridível por ENXAME_DATA_DIR."""
+    return os.getenv('ENXAME_DATA_DIR', str(Path.home() / 'enxame'))
+
+
 DEFAULT_DONATION = {
     'enabled': True,
     'max_cpu_pct': 70,
@@ -84,6 +89,11 @@ class DynamicAgentService:
         self.cluster_role = os.getenv('CLUSTER_ROLE', 'agente')
         self.juiz_url = os.getenv('JUIZ_URL', 'ws://localhost:7700/exp')
         self.juiz_http_url = os.getenv('JUIZ_HTTP_URL', 'http://localhost:7700')
+        # LIMITAÇÃO CONHECIDA (segurança): o transporte EXP/WebSocket é texto
+        # plano (ws://). A assinatura HMAC impede adulteração, mas NÃO
+        # criptografa o conteúdo. Em redes não confiáveis, ative o túnel/TLS
+        # externo (ex.: stunnel, WireGuard, ou reverse proxy com wss://).
+        # Não há certificados embarcados por design "zero deps" (EIP-0002).
         self.secret = os.getenv('EXP_SHARED_SECRET', 'enxame-dev-secret')
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
         self.model = os.getenv('AGENT_MODEL', None)  # None = seleciona o melhor instalado
@@ -101,12 +111,12 @@ class DynamicAgentService:
         self.metrics = MetricsCollector()
         self.pool = WorkerPool(workers=1, max_queue=4)  # 1 slot por padrão (poltrona de idoso)
 
-        docs_dir = os.getenv('NODE_DOCS_DIR', os.getenv('BIB_DOCS_DIR', str(Path.home() / 'enxame' / 'docs')))
-        zim_dir = os.getenv('NODE_ZIM_DIR', os.getenv('BIB_ZIM_DIR', str(Path.home() / 'enxame' / 'zim')))
+        docs_dir = os.getenv('NODE_DOCS_DIR', os.getenv('BIB_DOCS_DIR', str(Path(_default_data_dir_agente()) / 'docs')))
+        zim_dir = os.getenv('NODE_ZIM_DIR', os.getenv('BIB_ZIM_DIR', str(Path(_default_data_dir_agente()) / 'zim')))
         self.search_engine = LocalSearchEngine(docs_dir=docs_dir, zim_dir=zim_dir)
         # RAG local: este nó indexa seus próprios arquivos (não-sistema).
         self.rag = LocalRagIndex(
-            db_path=str(Path.home() / 'enxame' / f'rag_{self.node_id}.db'),
+            db_path=str(Path(_default_data_dir_agente()) / f'rag_{self.node_id}.db'),
             roots=[docs_dir],
         )
         self.benchmark_profile = HardwareBenchmark().run()
@@ -114,6 +124,11 @@ class DynamicAgentService:
 
         # Política de doação (o nó se autoregula; o Juiz não pode sobrescrever).
         self.donation = _load_donation_policy()
+        # Paralelismo: respeita max_concurrent da doação, limitado pelos núcleos
+        # de CPU disponíveis (evita 1 worker fixo que desperdiça hardware).
+        import os as _os
+        _default_workers = max(1, min(self.donation.max_concurrent, _os.cpu_count() or 1))
+        self.pool = WorkerPool(workers=_default_workers, max_queue=4)
         self._paused = False
 
         self._task_specialty_override: dict[str, str] = {}
@@ -200,6 +215,29 @@ class DynamicAgentService:
                         async for raw in ws:
                             envelope = self._decode_envelope(raw)
                             if envelope is None:
+                                continue
+                            # Backpressure: se a fila de trabalho está quase cheia,
+                            # não submete mais tarefas ao pool. Para TASK_DISPATCH
+                            # responde TASK_RETRY para o Juiz re-filar; outros tipos
+                            # são ignorados até a fila esvaziar.
+                            if (self.pool.queue.qsize()
+                                    >= self.pool.queue.maxsize * 0.8):
+                                if envelope.type == EXPMessageType.TASK_DISPATCH:
+                                    await self._send(
+                                        ws,
+                                        EXPEnvelope(
+                                            source=self.node,
+                                            target=envelope.source,
+                                            correlation_id=envelope.correlation_id or envelope.msg_id,
+                                            type=EXPMessageType.TASK_RETRY,
+                                            payload={
+                                                'task_id': str(envelope.payload.get('task_id', '')).strip()
+                                                or f't-{uuid4().hex[:10]}',
+                                                'reason': 'overloaded',
+                                                'load': self.pool.load_snapshot(),
+                                            },
+                                        ),
+                                    )
                                 continue
                             await self._handle_message(ws, envelope)
                     finally:

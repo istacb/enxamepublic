@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import sqlite3
-import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,7 +22,12 @@ from core.exp.types import EXPMessageType
 from core.ollama.client import OllamaClient, OllamaError, OllamaGenerateRequest
 
 
-DB_PATH = str(Path.home() / 'enxame' / 'tasks.db')
+def _default_data_dir() -> str:
+    """Diretório de dados padrão, overridível por ENXAME_DATA_DIR."""
+    return os.getenv('ENXAME_DATA_DIR', str(Path.home() / 'enxame'))
+
+
+DB_PATH = str(Path(_default_data_dir()) / 'tasks.db')
 
 
 def _now() -> datetime:
@@ -91,31 +95,16 @@ class JuizService:
         # Round-robin para empates no placement score.
         self._rr_index = 0
 
-        # Persistência SQLite (ceiling: apenas tarefas; upgrade: estado completo do cluster).
+        # Caminho do banco SQLite (aberto por operação, nunca compartilhado entre threads).
         self._db_path = DB_PATH
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
-        self._db_lock = threading.Lock()
-        self._db = sqlite3.connect(self._db_path, check_same_thread=False)
-        self._db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                task_id TEXT PRIMARY KEY,
-                prompt TEXT NOT NULL,
-                status TEXT NOT NULL,
-                result TEXT,
-                error TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        self._db.commit()
+        self._init_db()
 
         # RAG local do nó Juiz (cada nó indexa seus próprios arquivos).
         docs_dir = os.getenv('NODE_DOCS_DIR', os.getenv('BIB_DOCS_DIR', str(Path.home() / 'enxame' / 'docs')))
         zim_dir = os.getenv('NODE_ZIM_DIR', os.getenv('BIB_ZIM_DIR', str(Path.home() / 'enxame' / 'zim')))
         self.rag = LocalRagIndex(
-            db_path=str(Path.home() / 'enxame' / 'rag.db'),
+            db_path=str(Path(_default_data_dir()) / 'rag.db'),
             roots=[docs_dir, zim_dir],
         )
 
@@ -123,9 +112,37 @@ class JuizService:
         self._breakers: dict[str, dict[str, Any]] = {}
 
     # ---------- persistência ----------
+    def _init_db(self) -> None:
+        """Cria a tabela de tarefas (executado uma vez no __init__)."""
+        import sqlite3
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    prompt TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def _db_connect(self):
+        """Abre uma nova conexão SQLite por operação (never shared between threads)."""
+        import sqlite3
+        conn = sqlite3.connect(self._db_path)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        return conn
+
     def _save_task(self, task: TaskState) -> None:
-        with self._db_lock:
-            self._db.execute(
+        import sqlite3
+        with self._db_connect() as conn:
+            conn.execute(
                 'INSERT OR REPLACE INTO tasks (task_id, prompt, status, result, error, created_at, updated_at) '
                 'VALUES (?, ?, ?, ?, ?, ?, ?)',
                 (
@@ -133,12 +150,19 @@ class JuizService:
                     task.created_at.isoformat(), task.updated_at.isoformat(),
                 ),
             )
-            self._db.commit()
+            conn.commit()
 
     def _load_tasks(self) -> None:
-        rows = self._db.execute(
-            'SELECT task_id, prompt, status, result, error, created_at, updated_at FROM tasks'
-        ).fetchall()
+        import sqlite3
+        # Carrega apenas tarefas recentes ou incompletas (evita crescimento
+        # ilimitado de memória em nodes longevos).
+        cutoff = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+        with self._db_connect() as conn:
+            rows = conn.execute(
+                'SELECT task_id, prompt, status, result, error, created_at, updated_at FROM tasks '
+                "WHERE status IN ('queued','running') OR updated_at > ?",
+                (cutoff,),
+            ).fetchall()
         for row in rows:
             task = TaskState(
                 task_id=row[0], prompt=row[1], status=row[2], result=row[3], error=row[4],
@@ -387,12 +411,18 @@ class JuizService:
         }
 
     async def _broadcast_role_changes(self, roles: dict[str, str]) -> None:
+        """Envia ROLE_CHANGE e aguarda ROLE_ACK (com timeout) para evitar
+        split-brain de papéis quando um nó perde a mensagem."""
+        ack_futures: dict[str, asyncio.Future[bool]] = {}
         for node_id, role in roles.items():
             conn = self.agents.get(node_id)
             if conn is None:
                 continue
             conn.cluster_role = role
             corr = str(uuid4())
+            fut: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            self.pending_role_acks[corr] = fut
+            ack_futures[node_id] = fut
             env = EXPEnvelope(
                 source=self.node,
                 target=conn.node,
@@ -408,7 +438,26 @@ class JuizService:
             try:
                 await conn.websocket.send_text(env.model_dump_json())
             except Exception:
-                continue
+                fut.set_result(False)
+
+        # Aguarda acks com timeout curto; não trava o cluster se um nó não
+        # responder, mas marca para retry posterior.
+        if ack_futures:
+            results = await asyncio.gather(
+                *[asyncio.wait_for(fut, timeout=4) for fut in ack_futures.values()],
+                return_exceptions=True,
+            )
+            for node_id, ok in zip(ack_futures.keys(), results):
+                if ok is not True:
+                    logger.warning(
+                        'Node %s não confirmou ROLE_ACK (marcado stale para retry)',
+                        node_id,
+                    )
+        # Limpa futuros pendentes não resolvidos.
+        for corr, fut in list(self.pending_role_acks.items()):
+            if not fut.done():
+                fut.set_result(False)
+                self.pending_role_acks.pop(corr, None)
 
     async def _query_zim_inventory_all_nodes(self) -> None:
         self.agent_query_cache = {}
@@ -608,12 +657,24 @@ class JuizService:
                     })
                 return [answer]
             except RuntimeError:
-                # NACK -> tenta outro agente
+                # NACK -> tenta outro agente (registra para debug do cluster).
+                logger.warning(
+                    'NACK de %s para tarefa %s (especialidade=%s)',
+                    conn.node.node_id, task_id, specialty,
+                )
                 pass
             except TimeoutError:
+                logger.warning(
+                    'Timeout de %s para tarefa %s (especialidade=%s)',
+                    conn.node.node_id, task_id, specialty,
+                )
                 conn.fail_count += 1
                 self._breaker_record(conn.node.node_id, False)
             except Exception:
+                logger.warning(
+                    'Erro inesperado de %s para tarefa %s (especialidade=%s)',
+                    conn.node.node_id, task_id, specialty,
+                )
                 conn.fail_count += 1
                 self._breaker_record(conn.node.node_id, False)
             finally:

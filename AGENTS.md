@@ -27,10 +27,17 @@ Role/port from `.env` (`ENXAME_NODE_ROLE`, `ENXAME_NODE_PORT`). Roles: `juiz` (p
 
 ### Install / Update / Migrate / Uninstall
 ```bash
-./api/install/install      # Install infra + deps
+# Instalador principal (detecta o SO automaticamente)
+sudo bash api/install/install.sh
+
+# Instaladores por plataforma (equivalentes)
+sudo bash api/install/install-linux.sh   # Ubuntu/Debian
+sudo bash api/install/install-macos.sh   # macOS
+# Windows: clique direito em api/install/install-windows.bat > Executar como Administrador
+
 ./api/install/update       # Update preserving data
 ./api/install/migrate      # Migrate from OpenWebUI
-./api/install/uninstall    # Full removal
+./api/install/uninstall    # Full removal (remove serviço, atalho, dados, config)
 ```
 
 ### Universal Installer (Cross-Platform)
