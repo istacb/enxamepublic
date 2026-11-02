@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import signal
 import sys
 import uuid
@@ -24,6 +25,7 @@ from typing import Any
 
 import aiohttp
 
+from core.exp.admin_access import admin_access_allowed
 from core.exp.security import EXPSecurity
 
 from .protocol.envelope import BeeEnvelope
@@ -592,6 +594,11 @@ class BeeService:
             })
 
         async def set_config(request: Request) -> Response:
+            if not admin_access_allowed(
+                request.remote, request.headers.get("X-Enxame-Admin-Token"),
+                os.getenv("ENXAME_ADMIN_TOKEN"),
+            ):
+                return web.json_response({"error": "admin access denied"}, status=403)
             try:
                 data = await request.json()
                 if "offline_mode" in data:
