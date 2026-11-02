@@ -26,7 +26,7 @@ from bees.protocol.messages import BeeState
 
 from .discovery import AutoDiscoveryService
 from .profiles import AgentProfileManager
-from .multimodal import MultimodalProcessor
+from .multimodal import MultimodalProcessor, ProcessedFile
 from .orchestrator import TaskOrchestrator
 from .sprint import SprintPlanner
 
@@ -484,18 +484,36 @@ class EnxameKernel:
         # 2. Seleção de perfil
         profile = await self._profiles.select_or_create_profile(analysis)
         
-        # 3. Processamento multimodal (se houver anexos)
+        # 3. Process multimodal data once, then pass only JSON-safe metadata.
         multimodal_context = {}
+        task_context = {**context, "analysis": analysis}
         if context.get("attachments"):
-            multimodal_context = await self._multimodal.process_attachments(
+            processed = await self._multimodal.process_attachments(
                 context["attachments"], profile
             )
-        
+            multimodal_context = {
+                "ocr_text": processed.get("ocr_text", ""),
+                "files": [
+                    {
+                        "filename": f.filename,
+                        "mime_type": f.mime_type,
+                        "size_bytes": f.size_bytes,
+                        "content": f.content[:5000],
+                        "error": f.error,
+                    } if isinstance(f, ProcessedFile) else f
+                    for f in processed.get("files", [])
+                ],
+            }
+            # Do not retain raw attachments in the task registry/history.
+            task_context.pop("attachments", None)
+            task_context["multimodal"] = multimodal_context
+            task_context["multimodal_processed"] = True
+
         # 4. Execução orquestrada
         result = await self._orchestrator.execute_task(
-            task=analysis["task"],
+            task=analysis.get("task") or message,
             profile=profile,
-            context={**context, **multimodal_context},
+            context=task_context,
             message=message,
         )
         
