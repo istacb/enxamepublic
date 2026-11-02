@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -535,6 +535,17 @@ Retorne JSON:
             try:
                 with open(sprint_file) as f:
                     data = json.load(f)
+                data["status"] = SprintStatus(data.get("status", "planning"))
+                for key in ("start_date", "end_date"):
+                    if isinstance(data.get(key), str):
+                        data[key] = datetime.fromisoformat(data[key])
+                tasks = []
+                for raw_task in data.get("tasks", []):
+                    for key in ("created_at", "started_at", "completed_at"):
+                        if isinstance(raw_task.get(key), str):
+                            raw_task[key] = datetime.fromisoformat(raw_task[key])
+                    tasks.append(SprintTask(**raw_task))
+                data["tasks"] = tasks
                 sprint = Sprint(**data)
                 self._sprints[sprint.sprint_id] = sprint
             except Exception as e:
@@ -544,8 +555,18 @@ Retorne JSON:
         """Salva sprints no disco."""
         for sprint in self._sprints.values():
             file_path = self._sprint_dir / f"{sprint.sprint_id}.json"
-            with open(file_path, "w") as f:
-                json.dump(sprint.__dict__, f, indent=2, default=str)
+            data = asdict(sprint)
+            data["status"] = sprint.status.value
+            for key in ("start_date", "end_date"):
+                data[key] = getattr(sprint, key).isoformat()
+            for task in data["tasks"]:
+                for key in ("created_at", "started_at", "completed_at"):
+                    if isinstance(task.get(key), datetime):
+                        task[key] = task[key].isoformat()
+            tmp_path = file_path.with_suffix(".json.tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+            tmp_path.replace(file_path)
 
     def get_stats(self) -> dict[str, Any]:
         """Estatísticas do planejador."""

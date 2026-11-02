@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -245,6 +245,9 @@ class AgentProfileManager:
             try:
                 with open(profile_file) as f:
                     data = json.load(f)
+                for key in ("created_at", "updated_at"):
+                    if isinstance(data.get(key), str):
+                        data[key] = datetime.fromisoformat(data[key])
                 profile = AgentProfile(**data)
                 self._profiles[profile.profile_id] = profile
                 self._performance[profile.profile_id] = ProfilePerformance(profile_id=profile.profile_id)
@@ -258,8 +261,14 @@ class AgentProfileManager:
         for pid, profile in self._profiles.items():
             if pid not in base_ids:
                 file_path = self._profile_dir / f"{pid}.json"
-                with open(file_path, "w") as f:
-                    json.dump(profile.__dict__, f, indent=2, default=str)
+                data = asdict(profile)
+                data["created_at"] = profile.created_at.isoformat()
+                data["updated_at"] = profile.updated_at.isoformat()
+                # Write atomically: a crash cannot leave a truncated profile JSON.
+                tmp_path = file_path.with_suffix(".json.tmp")
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                tmp_path.replace(file_path)
 
     # =========================================================================
     # Seleção e Criação de Perfis
