@@ -9,6 +9,7 @@ auto-descoberta, perfis dinâmicos e execução por EIPs/Sprints.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
 import sys
@@ -79,6 +80,7 @@ class EnxameKernel:
         
         # Estado
         self.state = BeeState.STARTING
+        self.load = 0.0
         self._running = False
         self._tasks: list[asyncio.Task] = []
 
@@ -225,10 +227,6 @@ class EnxameKernel:
             return middleware_handler
         self._http_app.middlewares.append(cors_middleware)
 
-        # Health endpoint
-        async def health(request: Request) -> Response:
-            return web.json_response({"status": "ok", "node": self.node_id, "state": self.state.value})
-
         # Status completo
         async def status(request: Request) -> Response:
             return web.json_response(await self.get_system_status())
@@ -286,28 +284,7 @@ class EnxameKernel:
             result = await self.execute_sprint_task(data.get("sprint_id", ""), data.get("task", {}))
             return web.json_response(result)
 
-        # Peers
-        async def peers(request: Request) -> Response:
-            peers = self._discovery.get_active_peers() if self._discovery else []
-            return web.json_response({"peers": [
-                {
-                    "node_id": p.node_id,
-                    "role": p.role,
-                    "host": p.host,
-                    "port": p.port,
-                    "state": p.state.value,
-                    "load": p.load,
-                    "capabilities": p.capabilities,
-                    "models": p.models,
-                    "profiles": p.profiles,
-                    "latency_ms": p._latency_ms,
-                    "reliability": p._reliability_score,
-                }
-                for p in peers
-            ]})
-
         # Registrar rotas Enxame
-        self._http_app.router.add_get("/health", health)
         self._http_app.router.add_get("/api/v1/status", status)
         self._http_app.router.add_post("/api/v1/chat", chat)
         self._http_app.router.add_post("/api/v1/upload", upload)
@@ -315,7 +292,6 @@ class EnxameKernel:
         self._http_app.router.add_post("/api/v1/profiles", create_profile)
         self._http_app.router.add_get("/api/v1/sprint", sprint_status)
         self._http_app.router.add_post("/api/v1/sprint/execute", sprint_execute)
-        self._http_app.router.add_get("/api/v1/peers", peers)
 
         # WebSocket para tempo real
         self._http_app.router.add_get("/ws", self._handle_websocket)
