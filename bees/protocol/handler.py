@@ -388,7 +388,7 @@ class BeeProtocolHandler:
             target_node_id=target_node_id,
             msg_type=BeeMessageType.RESEARCH_REQUEST,
             payload=request.to_dict(),
-            timeout_ms=timeout_ms + 5000,
+            ttl_ms=timeout_ms + 5000,
         )
 
     def create_research_result(

@@ -493,7 +493,7 @@ class EnxameKernel:
         
         # 4. Execução orquestrada
         result = await self._orchestrator.execute_task(
-            task=analysis["task"],
+            task=analysis.get("task") or message,
             profile=profile,
             context={**context, **multimodal_context},
             message=message,

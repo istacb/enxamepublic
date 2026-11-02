@@ -157,10 +157,12 @@ class TaskOrchestrator:
             if self._is_result_sufficient(local_result, profile):
                 task_obj.result = local_result
                 task_obj.status = TaskStatus.COMPLETED
+                task_obj.completed_at = datetime.now(UTC)
                 await self._record_success(task_obj, local_result)
                 return local_result
             
             # 4. DELEGAÇÃO PARA PEERS (ENXAME)
+            peer_result = None
             if plan.delegation_targets:
                 task_obj.status = TaskStatus.DELEGATING
                 task_obj.execution_path.append("enxame")
@@ -169,6 +171,7 @@ class TaskOrchestrator:
                 if self._is_result_sufficient(peer_result, profile):
                     task_obj.result = peer_result
                     task_obj.status = TaskStatus.COMPLETED
+                    task_obj.completed_at = datetime.now(UTC)
                     await self._record_success(task_obj, peer_result)
                     return peer_result
             
@@ -178,6 +181,7 @@ class TaskOrchestrator:
                 web_result = await self.bee._librarian.search_web(task)
                 task_obj.result = web_result
                 task_obj.status = TaskStatus.COMPLETED
+                task_obj.completed_at = datetime.now(UTC)
                 await self._record_success(task_obj, web_result)
                 return web_result
             
@@ -199,6 +203,8 @@ class TaskOrchestrator:
             # Manter apenas últimas 1000
             if len(self._execution_history) > 1000:
                 self._execution_history = self._execution_history[-1000:]
+            # Keep only active work in the live task map.
+            self._tasks.pop(task_obj.task_id, None)
 
     async def _create_execution_plan(self, task: Task, profile: AgentProfile) -> ExecutionPlan:
         """Cria plano de execução baseado na tarefa e perfil."""
@@ -351,7 +357,9 @@ Refine a resposta mantendo a precisão factual mas aplicando sua especializaçã
         context: dict, 
         targets: list[str]
     ) -> dict[str, Any]:
-        """Delega tarefa para peers descobertos."""
+        """Delega tarefa para peers descobertos; never fabricate answers."""
+        from bees.protocol.messages import BeeMessageType, BeeResearchResult
+
         best_result = None
         best_confidence = 0.0
         
@@ -369,18 +377,28 @@ Refine a resposta mantendo a precisão factual mas aplicando sua especializaçã
                     timeout_ms=30000,
                 )
                 
-                # TODO: Implementar envio real via WebSocket/HTTP
-                # Por enquanto, simular
-                logger.info(f"Delegando para peer {peer_id}: {task.message[:50]}...")
-                
-                # Simular resultado do peer
+                reply = await self.bee._send_with_response(
+                    envelope, peer, timeout_ms=35000,
+                )
+                if (reply is None or reply.source_node_id != peer_id
+                        or reply.msg_type != BeeMessageType.RESEARCH_RESULT):
+                    continue
+
+                research = BeeResearchResult.from_dict(reply.payload)
+                items = [item for item in research.results if item.content.strip()]
+                if not items:
+                    continue
                 peer_result = {
-                    "answer": f"[Peer {peer_id[:8]}] Resultado simulado para: {task.message}",
-                    "confidence": 0.7,
+                    "answer": "\n\n".join(item.content for item in items[:3]),
+                    "confidence": max(item.confidence for item in items),
                     "source": f"peer:{peer_id}",
-                    "metadata": {"delegated_from": self.kernel.node_id},
+                    "metadata": {
+                        "delegated_from": self.kernel.node_id,
+                        "sources": [item.source for item in items if item.source],
+                        "total_results": research.total_results,
+                    },
                 }
-                
+
                 if peer_result["confidence"] > best_confidence:
                     best_confidence = peer_result["confidence"]
                     best_result = peer_result
