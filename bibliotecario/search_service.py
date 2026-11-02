@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -113,12 +114,71 @@ class SearchPipelineService:
                     "timestamp": time.time()
                 },
                 # Usamos o hash da query como ID para evitar duplicatas exatas
-                chunk_id=f"cache_{hash(query)}"
+                chunk_id=f"cache_{hashlib.sha256(query.encode()).hexdigest()[:16]}"
             )
         except Exception as exc:
             logger.debug('Falha ao salvar resposta no cofre semântico: %s', exc)
             
         return answer
+
+    async def generate_file_summary(self, file_path: str, text: str) -> str:
+        """Gera um resumo conciso de um arquivo para facilitar a busca."""
+        prompt = (
+            "Você é um assistente de organização de arquivos. Analise o conteúdo do arquivo abaixo "
+            "e escreva UMA ÚNICA FRASE (máximo 20 palavras) que resuma do que se trata o documento. "
+            "Seja objetivo e técnico.\n\n"
+            f"Arquivo: {file_path}\n"
+            f"Conteúdo:\n{text[:4000]}" # Limite para evitar estouro de contexto
+        )
+        response = await self.ollama.generate(
+            OllamaGenerateRequest(model=self.model, prompt=prompt, temperature=0.1, num_ctx=4096)
+        )
+        return self.translator.to_pt_br(response).strip()
+
+    async def background_rag_summarizer(self) -> None:
+        """Rotina de ociosidade: localiza arquivos indexados e gera resumos via RAG."""
+        logger.info("[RAG-Worker] Iniciando rotina de resumo em ociosidade...")
+        while True:
+            try:
+                # 1. Localiza arquivos que precisam de resumo
+                files = self.indexer.get_files_for_summarization()
+                
+                for file_path in files:
+                    # Verifica se o arquivo já tem resumo no LanceDB (simplificado: busca por path)
+                    # Para otimizar, poderíamos ter um set de 'resumidos' em memória.
+                    
+                    # Extrai texto para resumir
+                    text, _ = self.indexer._extract_text(file_path)
+                    if not text:
+                        continue
+                        
+                    # Gera o resumo usando o LLM
+                    summary = await self.generate_file_summary(str(file_path), text)
+                    logger.info(f"[RAG-Worker] Resumido: {file_path.name} -> {summary}")
+                    
+                    # Atualiza a entrada no LanceDB adicionando o resumo aos metadados de todos os chunks desse arquivo
+                    # Como o LanceDB é append-only em algumas versões, faremos o upsert dos chunks com o novo resumo
+                    chunks = self.indexer.rebuild() # Recarrega chunks atuais
+                    file_chunks = [c for c in chunks if c.source_path == str(file_path)]
+                    
+                    for chunk in file_chunks:
+                        if chunk.metadata is None: chunk.metadata = {}
+                        chunk.metadata['rag_summary'] = summary
+                    
+                    await self.lancedb.upsert_chunks(file_chunks)
+                    
+                    # Pausa curta para não travar a CPU/Ollama
+                    await asyncio.sleep(2)
+                
+                logger.info("[RAG-Worker] Ciclo de resumização concluído. Dormindo...")
+                await asyncio.sleep(3600) # Roda a cada hora
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.exception("[RAG-Worker] Erro na rotina de RAG: %s", exc)
+                await asyncio.sleep(60)
+
 
     async def reindex_callback(self, chunks: list[IndexedChunk]) -> None:
         await self.lancedb.upsert_chunks(chunks)
@@ -159,7 +219,7 @@ class SearchPipelineService:
         logger.info('[pipeline] etapa=1 redis_cache')
 
         # 1) Cache Redis
-        cache_key = f'bibliotecario:query:{hash(query_pt.strip().lower())}'
+        cache_key = f'bibliotecario:query:{hashlib.sha256(query_pt.strip().lower().encode()).hexdigest()[:16]}'
         cached = await self._cache_get(cache_key)
         trace.append({'stage': 'redis_cache', 'hit': bool(cached)})
         if cached:

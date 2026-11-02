@@ -78,6 +78,7 @@ async def startup_event() -> None:
     await pipeline.initialize()
     app.state.agent_task = asyncio.create_task(agent.run_forever())
     app.state.index_task = asyncio.create_task(pipeline.auto_reindex_loop())
+    app.state.rag_task = asyncio.create_task(pipeline.background_rag_summarizer())
     app.state.guardian_task = asyncio.create_task(guardian_patrol.run_forever())
     logger.info('Bibliotecário inicializado e conectado ao Juiz')
 
@@ -85,7 +86,7 @@ async def startup_event() -> None:
 @app.on_event('shutdown')
 async def shutdown_event() -> None:
     guardian_patrol.stop()
-    for key in ('agent_task', 'index_task', 'guardian_task'):
+    for key in ('agent_task', 'index_task', 'rag_task', 'guardian_task'):
         task = getattr(app.state, key, None)
         if task:
             task.cancel()

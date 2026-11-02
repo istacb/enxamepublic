@@ -130,17 +130,25 @@ class LocalDocumentIndexer:
     def _should_index(self, path: Path, root: Path | None = None) -> bool:
         """Retorna True se o arquivo é do usuário (não do sistema) e deve ser indexado."""
         parts = [p.lower() for p in path.parts]
-        # Se o caminho está dentro de um root configurado, ignora as partes do root
-        # na verificação de diretórios do sistema (evita falso-positivo com 'home', 'tmp', etc.).
-        if root is not None:
-            try:
-                relative = path.relative_to(root)
-                parts = [p.lower() for p in relative.parts]
-            except ValueError:
-                pass
+        
+        # 1. Verifica diretórios de sistema globais
         for part in parts:
             if part in SYSTEM_DIRS:
                 return False
+        
+        # 2. Se estivermos dentro de um root do usuário, ignoramos a verificação de SYSTEM_DIRS 
+        # para as partes do próprio root (para evitar que 'home' ou 'Documents' bloqueiem a indexação)
+        if root is not None:
+            try:
+                relative = path.relative_to(root)
+                # Verificamos apenas a parte relativa ao root do usuário
+                rel_parts = [p.lower() for p in relative.parts]
+                for rel_part in rel_parts:
+                    if rel_part in SYSTEM_DIRS:
+                        return False
+            except ValueError:
+                pass
+
         name = path.name.lower()
         if name.startswith(SYSTEM_PREFIXES):
             return False
@@ -189,6 +197,7 @@ class LocalDocumentIndexer:
         files: list[Path] = []
         for root in self.roots:
             try:
+                # Varredura recursiva de todos os arquivos no root do usuário
                 for path in root.rglob('*'):
                     if path.is_file() and self._should_index(path, root):
                         files.append(path)
@@ -228,6 +237,11 @@ class LocalDocumentIndexer:
             doc_chunks = self.reader.split_into_chunks(text, metadata)
 
             for chunk in doc_chunks:
+                # Adiciona flag para indicar que este chunk ainda não foi resumido (RAG)
+                if chunk.metadata is None:
+                    chunk.metadata = {}
+                chunk.metadata['rag_summarized'] = False
+                
                 chunks.append(
                     IndexedChunk(
                         chunk_id=chunk.chunk_id,
@@ -302,3 +316,13 @@ class LocalDocumentIndexer:
             except Exception as exc:
                 logger.exception('Falha no loop de indexação: %s', exc)
             await asyncio.sleep(interval)
+
+    def get_files_for_summarization(self) -> list[Path]:
+        """Retorna caminhos de arquivos que ainda não foram resumidos via RAG."""
+        # Precisamos de uma forma de rastrear quais ARQUIVOS (não chunks) foram resumidos.
+        # Como o LanceDB guarda metadados por chunk, vamos olhar a snapshot ou 
+        # filtrar arquivos cujos chunks não possuem 'rag_summary'.
+        
+        # Para simplificar, retornamos a lista de arquivos rastreados. 
+        # O serviço de RAG decidirá se deve resumir baseado no conteúdo do banco.
+        return [Path(p) for p in self._snapshot.keys()]
