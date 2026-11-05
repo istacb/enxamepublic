@@ -20,7 +20,7 @@ import logging
 import mimetypes
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -217,15 +217,24 @@ class MultimodalProcessor:
 
     async def _process_attachment(self, attachment: dict) -> ProcessedFile:
         """Processa um único anexo."""
-        filename = attachment.get("filename", "unknown")
-        content_b64 = attachment.get("content", "")
+        # Upload HTTP passes raw bytes; chat attachments may pass base64 strings.
+        raw_filename = str(attachment.get("filename", "unknown"))
+        filename = Path(raw_filename.replace("\\", "/")).name or "unknown"
+        content = attachment.get("content", "")
         content_type = attachment.get("content_type", "")
-        
-        # Decodificar base64
-        try:
-            content_bytes = base64.b64decode(content_b64)
-        except Exception:
-            content_bytes = content_b64.encode() if isinstance(content_b64, str) else b""
+
+        if isinstance(content, (bytes, bytearray)):
+            content_bytes = bytes(content)
+        elif isinstance(content, str):
+            try:
+                content_bytes = base64.b64decode(content, validate=True)
+            except (ValueError, base64.binascii.Error) as exc:
+                raise ValueError("String attachment content must be valid base64") from exc
+        else:
+            raise TypeError("Attachment content must be bytes or a base64 string")
+
+        if len(content_bytes) > 10 * 1024 * 1024:
+            raise ValueError("Attachment exceeds the 10 MiB processing limit")
         
         # Cache key
         file_hash = hashlib.sha256(content_bytes).hexdigest()[:16]
@@ -322,7 +331,7 @@ class MultimodalProcessor:
             mime_type=mime_type,
             size_bytes=len(content_bytes),
             content=ocr_text or (analysis.text_content if analysis else ""),
-            metadata={**metadata, "vision_analysis": analysis.__dict__ if analysis else None},
+            metadata={**metadata, "vision_analysis": asdict(analysis) if analysis else None},
             ocr_confidence=ocr_confidence,
             processing_time_ms=(asyncio.get_event_loop().time() - start) * 1000,
         )

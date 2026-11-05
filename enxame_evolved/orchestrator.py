@@ -145,7 +145,7 @@ class TaskOrchestrator:
             
             # 2. Processar multimodal se necessário
             multimodal_context = {}
-            if plan.requires_multimodal or context.get("attachments"):
+            if (plan.requires_multimodal or context.get("attachments")) and not context.get("multimodal_processed"):
                 task_obj.status = TaskStatus.EXECUTING
                 multimodal_context = await self._process_multimodal(context, profile)
                 context = {**context, **multimodal_context}
