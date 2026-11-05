@@ -233,7 +233,8 @@ def scan_hardware(enxame_data_path: str | None = None) -> HardwareCapabilities:
     if psutil:
         cpu_cores = psutil.cpu_count(logical=False) or 0
         cpu_logical = psutil.cpu_count(logical=True) or 0
-        cpu_freq = psutil.cpu_freq()
+        cpu_freq_fn = getattr(psutil, "cpu_freq", None)
+        cpu_freq = cpu_freq_fn() if callable(cpu_freq_fn) else None
         if cpu_freq:
             # psutil.cpu_freq() pode retornar diferentes atributos dependendo da plataforma
             cpu_freq_ghz = getattr(cpu_freq, 'base', getattr(cpu_freq, 'current', 0)) / 1000.0
