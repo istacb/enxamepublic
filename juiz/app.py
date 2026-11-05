@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
+from core.exp.admin_access import admin_access_allowed
 from core.exp.envelope import EXPEnvelope
 from core.exp.http import EXP_SIGNATURE_HEADER, EXP_TIMESTAMP_HEADER
 from core.exp.input_sanitizer import get_sanitizer
@@ -384,7 +385,13 @@ async def list_agents(request: Request) -> list[dict]:
 
 
 @app.post('/api/session')
-async def create_session() -> dict:
+async def create_session(request: Request) -> dict:
+    remote = request.client.host if request.client else None
+    if not admin_access_allowed(
+        remote, request.headers.get('X-Enxame-Admin-Token'),
+        os.getenv('ENXAME_ADMIN_TOKEN'),
+    ):
+        raise HTTPException(status_code=403, detail='Admin access denied')
     return {'token': _new_session()}
 
 

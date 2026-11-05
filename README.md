@@ -221,6 +221,13 @@ Recursos computacionais são finitos. Cada linha de código deve justificar seu 
 
 ## 🔐 Segurança
 
+Operações administrativas HTTP são locais por padrão. Para permitir acesso
+administrativo remoto à criação de sessões do Juiz ou à configuração da Abelha,
+configure `ENXAME_ADMIN_TOKEN` com um segredo forte e envie o cabeçalho
+`X-Enxame-Admin-Token`. O endereço do cliente deve ser validado pelo servidor,
+não por cabeçalhos `X-Forwarded-For` não confiáveis. Em instalações com
+reverse proxy, configure autenticação também no proxy.
+
 O módulo `guardian/` é responsável por:
 - Autenticação e autorização de usuários
 - Criptografia de dados sensíveis
