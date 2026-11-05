@@ -18,10 +18,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from enxame_evolved.agents.evolved_agent import AgentCapability, AgentProfile
-from enxame_evolved.profiles.profile_manager import ProfileManager, AgentProfileSpec
+from enxame_evolved.agent_models import AgentCapability, AgentProfile
+from enxame_evolved.agent_profile_manager import ProfileManager, AgentProfileSpec
 from agentes.plugin_manager import PluginManager
-from enxame_evolved.multimodal.multimodal_processor import MultiModalProcessor
+from enxame_evolved.agent_multimodal import MultiModalProcessor
 
 logger = logging.getLogger("enxame.tasks")
 

@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 from zeroconf import IPVersion, ServiceBrowser, ServiceInfo, ServiceStateChange, Zeroconf
 
-from enxame_evolved.agents.evolved_agent import AgentCapability
+from enxame_evolved.agent_models import AgentCapability
 
 logger = logging.getLogger("enxame.discovery")
 

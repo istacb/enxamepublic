@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from enxame_evolved.agents.evolved_agent import AgentProfile, AgentCapability
+from enxame_evolved.agent_models import AgentProfile, AgentCapability
 
 logger = logging.getLogger(__name__)
 

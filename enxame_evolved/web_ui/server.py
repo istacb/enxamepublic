@@ -117,7 +117,7 @@ def create_web_app(agent: EvolvedAgent) -> FastAPI:
     @app.post("/api/v1/profiles")
     async def create_profile(request: ProfileCreateRequest):
         """Cria novo perfil de agente."""
-        from enxame_evolved.profiles.profile_manager import AgentProfileSpec
+        from enxame_evolved.agent_profile_manager import AgentProfileSpec
         
         spec = AgentProfileSpec(
             agent_id=agent.agent_id,
