@@ -137,18 +137,11 @@ class BeeProtocolHandler:
                 envelope, BeeErrorCode.TIMEOUT, "Mensagem expirada"
             )
 
-        # Verifica assinatura se security habilitado
-        if self._security and envelope.signature:
-            try:
-                signable = envelope.as_signable_dict()
-                if not self._security.verify_payload(signable, envelope.signature):
-                    return self._create_error_response(
-                        envelope, BeeErrorCode.AUTH_FAILED, "Assinatura inválida"
-                    )
-            except Exception as e:
-                return self._create_error_response(
-                    envelope, BeeErrorCode.AUTH_FAILED, f"Erro validação: {e}"
-                )
+        # An authenticated cluster must reject unsigned messages as well.
+        if self._security and not self.verify_envelope(envelope):
+            return self._create_error_response(
+                envelope, BeeErrorCode.AUTH_FAILED, "Assinatura ausente ou inválida"
+            )
 
         # Atualiza info do peer
         self._update_peer_info(envelope)
@@ -388,7 +381,7 @@ class BeeProtocolHandler:
             target_node_id=target_node_id,
             msg_type=BeeMessageType.RESEARCH_REQUEST,
             payload=request.to_dict(),
-            timeout_ms=timeout_ms + 5000,
+            ttl_ms=timeout_ms + 5000,
         )
 
     def create_research_result(
@@ -506,7 +499,7 @@ class BeeProtocolHandler:
             target_node_id=target_node_id,
             msg_type=BeeMessageType.VISION_REQUEST,
             payload=request.to_dict(),
-            timeout_ms=timeout_ms + 10000,
+            ttl_ms=timeout_ms + 10000,
         )
 
     def create_vision_response(
@@ -723,8 +716,10 @@ class BeeProtocolHandler:
         Returns:
             True se válida ou se security não habilitado, False se inválida
         """
-        if not self._security or not envelope.signature:
-            return True  # Sem security ou sem signature = aceita
+        if not self._security:
+            return True  # Open mode is explicit when no shared secret is configured.
+        if not envelope.signature:
+            return False
 
         try:
             signable = envelope.as_signable_dict()

@@ -118,7 +118,8 @@ class GlobalIndex:
 async def query_peer_knowledge(
     peer: Any,
     subject: str,
-    timeout_ms: int = 2000
+    timeout_ms: int = 2000,
+    shared_secret: str | None = None,
 ) -> tuple[str, PeerKnowledge | None]:
     """
     Consulta um peer via KNOWLEDGE_QUERY.
@@ -130,7 +131,7 @@ async def query_peer_knowledge(
         from ..protocol.envelope import BeeEnvelope
         
         # Criar handler temporário para enviar query
-        handler = BeeProtocolHandler(node_id="global_index_query", shared_secret=None)
+        handler = BeeProtocolHandler(node_id="global_index_query", shared_secret=shared_secret)
         
         envelope = handler.create_knowledge_query(
             target_node_id=peer.node_id,
@@ -138,6 +139,7 @@ async def query_peer_knowledge(
             timeout_ms=timeout_ms,
         )
         
+        handler.sign_envelope(envelope)
         # Enviar via HTTP
         import aiohttp
         url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
@@ -150,6 +152,8 @@ async def query_peer_knowledge(
                 if resp.status == 200:
                     data = await resp.json()
                     response = BeeEnvelope.from_dict(data)
+                    if response.source_node_id != peer.node_id or not handler.verify_envelope(response):
+                        return peer.node_id, None
                     if response.msg_type == BeeMessageType.KNOWLEDGE_RESPONSE:
                         kq_resp = BeeKnowledgeResponse.from_dict(response.payload)
                         if not kq_resp.has_knowledge:
@@ -171,7 +175,8 @@ async def build_global_index(
     bibliotecario_peer: Any,
     peers: list[Any],
     domains: list[str] | None = None,
-    concurrency: int = 5
+    concurrency: int = 5,
+    shared_secret: str | None = None,
 ) -> GlobalIndex:
     """
     Constrói índice global consultando todos os peers.
@@ -193,7 +198,7 @@ async def build_global_index(
     
     async def query_domain_peer(domain: str, peer: Any):
         async with semaphore:
-            peer_id, knowledge = await query_peer_knowledge(peer, domain)
+            peer_id, knowledge = await query_peer_knowledge(peer, domain, shared_secret=shared_secret)
             if knowledge and knowledge.confidence > 0:
                 index.add_knowledge(domain, knowledge)
     
@@ -218,7 +223,8 @@ async def query_bibliotecario_where(
     bibliotecario_peer: Any,
     subject: str,
     global_index: GlobalIndex | None = None,
-    min_confidence: float = 0.5
+    min_confidence: float = 0.5,
+    shared_secret: str | None = None,
 ) -> list[str]:
     """
     Consulta o Bibliotecário para saber ONDE buscar um assunto.
@@ -236,13 +242,14 @@ async def query_bibliotecario_where(
         from ..protocol.messages import BeeMessageType
         from ..protocol.envelope import BeeEnvelope
         
-        handler = BeeProtocolHandler(node_id="query_where", shared_secret=None)
+        handler = BeeProtocolHandler(node_id="query_where", shared_secret=shared_secret)
         envelope = handler.create_knowledge_query(
             target_node_id=bibliotecario_peer.node_id,
             subject=subject,
             timeout_ms=3000,
         )
-        
+        handler.sign_envelope(envelope)
+
         import aiohttp
         url = f"http://{bibliotecario_peer.host}:{bibliotecario_peer.port}/api/v1/bee/message"
         async with aiohttp.ClientSession() as session:
@@ -254,6 +261,9 @@ async def query_bibliotecario_where(
                 if resp.status == 200:
                     data = await resp.json()
                     response = BeeEnvelope.from_dict(data)
+                    if (response.source_node_id != bibliotecario_peer.node_id
+                            or not handler.verify_envelope(response)):
+                        return []
                     if response.msg_type == BeeMessageType.KNOWLEDGE_RESPONSE:
                         # Bibliotecário retorna lista de peers com o conhecimento
                         # Assumindo formato estendido no payload
@@ -279,7 +289,10 @@ async def refresh_global_index_periodic(
             
             peers = bibliotecario_service._discovery.get_active_peers() if bibliotecario_service._discovery else []
             if len(peers) >= 2:  # Pelo menos 1 outro peer
-                index = await build_global_index(bibliotecario_service, peers)
+                index = await build_global_index(
+                    bibliotecario_service, peers,
+                    shared_secret=bibliotecario_service.config.shared_secret,
+                )
                 # Salvar no estado do cluster
                 if hasattr(bibliotecario_service, "cluster_state"):
                     bibliotecario_service.cluster_state.global_index = index.data
