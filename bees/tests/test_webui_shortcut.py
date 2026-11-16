@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -209,7 +210,10 @@ class TestRenderers:
 # ---------------------------------------------------------------------------
 
 class TestLocations:
-    def test_windows_locations(self, tmp_path):
+    def test_windows_locations(self, tmp_path, monkeypatch):
+        # Bloqueia o winreg real: no CI Windows ele devolveria o Desktop de
+        # verdade, quebrando o hermetismo (home injetado deve prevalecer).
+        monkeypatch.setitem(sys.modules, "winreg", None)
         home = tmp_path / "home"
         appdata = tmp_path / "appdata"
         locs = shortcut_locations("windows", home=home, env={"APPDATA": str(appdata)})
@@ -272,9 +276,12 @@ class TestInstallRemove:
             locations=locs,
         )
         assert [p.name for p in created] == [MACOS_COMMAND_NAME, MACOS_COMMAND_NAME]
-        for path in created:
-            mode = _os.stat(path).st_mode
-            assert mode & _stat.S_IXUSR, f"{path} deve ser executável"
+        if sys.platform != "win32":
+            # Bits POSIX de execução não existem no Windows (stat os emula só
+            # para .exe/.bat/.cmd); a criação dos arquivos já está coberta acima.
+            for path in created:
+                mode = _os.stat(path).st_mode
+                assert mode & _stat.S_IXUSR, f"{path} deve ser executável"
         remove_webui_shortcuts("darwin", locations=locs)
         assert not any(p.exists() for p in created)
 
