@@ -529,21 +529,25 @@ class AgentProfileManager:
 
     def get_stats(self) -> dict[str, Any]:
         """Estatísticas do gerenciador de perfis."""
+        profiles_payload = []
+        for pid, p in self._profiles.items():
+            perf = self._performance.get(pid) or ProfilePerformance(profile_id=pid)
+            total_exec = max(1, perf.total_executions)
+            profiles_payload.append(
+                {
+                    "profile_id": pid,
+                    "name": p.name,
+                    "domain": p.domain,
+                    "usage": p.usage_count,
+                    "success_rate": perf.successful / total_exec,
+                    "avg_latency_ms": perf.total_latency_ms / total_exec,
+                }
+            )
         return {
             "total_profiles": len(self._profiles),
             "base_profiles": len(self.BASE_PROFILES),
             "custom_profiles": len(self._profiles) - len(self.BASE_PROFILES),
             "dynamic_profiles": sum(1 for p in self._profiles.values() if p.metadata.get("dynamic")),
             "peer_delegation_profiles": sum(1 for p in self._profiles.values() if p.peer_delegation),
-            "profiles": [
-                {
-                    "profile_id": pid,
-                    "name": p.name,
-                    "domain": p.domain,
-                    "usage": p.usage_count,
-                    "success_rate": perf.successful / max(1, perf.total_executions),
-                    "avg_latency_ms": perf.total_latency_ms / max(1, perf.total_executions),
-                }
-                for pid, (p, perf) in zip(self._profiles.keys(), self._performance.items())
-            ],
+            "profiles": profiles_payload,
         }

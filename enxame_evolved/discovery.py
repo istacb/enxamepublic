@@ -417,8 +417,21 @@ class AutoDiscoveryService:
         if not self._zeroconf:
             return
 
-        self._evolved_info = self._create_evolved_service_info()
-        self._zeroconf.register_service(self._evolved_info)
+        try:
+            self._evolved_info = self._create_evolved_service_info()
+            try:
+                self._zeroconf.register_service(self._evolved_info)
+            except Exception:
+                # Serviço já registrado: apenas atualiza propriedades/carga.
+                self._zeroconf.update_service(self._evolved_info)
+            self._announce_failures = 0
+        except Exception as exc:
+            # Rede sem multicast (sandbox/VPN): reduz ruído após 1º aviso.
+            self._announce_failures = getattr(self, "_announce_failures", 0) + 1
+            if self._announce_failures <= 1:
+                logger.warning(f"Anúncio mDNS evoluído indisponível: {exc}")
+            else:
+                logger.debug(f"Anúncio mDNS evoluído indisponível: {exc}")
 
     def _create_evolved_service_info(self):
         """Cria ServiceInfo para anúncio evoluído."""
