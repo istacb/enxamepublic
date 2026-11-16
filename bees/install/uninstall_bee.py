@@ -141,6 +141,54 @@ def remove_binaries():
             except Exception as e:
                 warn(f"Erro ao remover {bin_path}: {e}")
 
+def remove_shortcuts():
+    """Remove atalhos criados pelo instalador (menu, desktop, WebUI)."""
+    system = platform.system().lower()
+    home = Path.home()
+
+    targets: list[Path] = []
+    if system == "windows":
+        start_menu = Path(os.getenv("APPDATA", home / "AppData" / "Roaming")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Enxame"
+        targets.extend([
+            start_menu / "Iniciar Abelha.bat",
+            start_menu / "Abrir Enxame WebUI.bat",
+            home / "Desktop" / "Iniciar Abelha.bat",
+            home / "Desktop" / "Abrir Enxame WebUI.bat",
+        ])
+    elif system == "darwin":
+        targets.extend([
+            Path("/Applications/Enxame") / "Iniciar Abelha.command",
+            Path("/Applications/Enxame") / "Abrir Enxame WebUI.command",
+            home / "Desktop" / "Abrir Enxame WebUI.command",
+        ])
+    else:
+        targets.extend([
+            home / ".local" / "share" / "applications" / "enxame-bee.desktop",
+            home / ".local" / "share" / "applications" / "enxame-webui.desktop",
+            home / "Desktop" / "enxame-bee.desktop",
+            home / "Desktop" / "enxame-webui.desktop",
+            home / ".local" / "share" / "icons" / "enxame-webui.svg",
+        ])
+
+    # Remove também via removedor canônico do módulo WebUI (cobre overrides).
+    os_name = "windows" if system == "windows" else ("darwin" if system == "darwin" else "linux")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from bees.webui_shortcut import remove_webui_shortcuts
+
+        for removed in remove_webui_shortcuts(os_name):
+            log(f"Removido: {removed}")
+    except Exception as e:
+        warn(f"Erro ao remover atalhos WebUI: {e}")
+
+    for target in targets:
+        if target.is_file():
+            try:
+                target.unlink()
+                log(f"Removido: {target}")
+            except Exception as e:
+                warn(f"Erro ao remover {target}: {e}")
+
 def remove_python_packages():
     """Remove pacotes Python instalados (opcional)"""
     # Cuidado: nao remover pacotes que outros apps precisam
@@ -235,6 +283,10 @@ def main():
     if not args.dry_run:
         remove_config_files()
     
+    step("Removendo atalhos...")
+    if not args.dry_run:
+        remove_shortcuts()
+
     step("Removendo dados...")
     if not args.dry_run:
         remove_data_dir(args.keep_data)

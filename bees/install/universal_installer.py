@@ -55,6 +55,16 @@ except ImportError:
     def run_post_install_checks(data_dir: Path, current_version: str, auto: bool = False):
         pass
 
+# Atalho pós-instalação "Abrir Enxame (WebUI)"
+try:
+    from bees.webui_shortcut import install_webui_shortcuts
+    WEBUI_SHORTCUT_AVAILABLE = True
+except ImportError:
+    WEBUI_SHORTCUT_AVAILABLE = False
+
+    def install_webui_shortcuts(*args, **kwargs):  # type: ignore[no-redef]
+        return []
+
 # ============================================================================
 # Configurações do Instalador
 # ============================================================================
@@ -874,7 +884,7 @@ def configure_bee(info: SystemInfo, model_name: str, vision_model: Optional[str]
 # Criação de Atalhos/Serviços
 # ============================================================================
 
-def create_shortcuts(info: SystemInfo, data_dir: Path, model_name: str, python_exe: str, is_embedded: bool) -> bool:
+def create_shortcuts(info: SystemInfo, data_dir: Path, model_name: str, python_exe: str, is_embedded: bool, port: int = DEFAULT_PORT) -> bool:
     """Cria atalhos no menu iniciar / Applications / .desktop."""
     log_info("Criando atalhos...")
     
@@ -967,12 +977,29 @@ WantedBy=default.target
             # Habilitar serviço
             run_command(["systemctl", "--user", "daemon-reload"], check=False)
             run_command(["systemctl", "--user", "enable", "enxame-bee"], check=False)
-            
+
             log_success("Arquivo .desktop e serviço systemd criados")
-    
+
+        # Atalho "Abrir Enxame (WebUI)": 1 clique abre a Colmeia no navegador
+        # (sobe o kernel local primeiro se ainda não estiver rodando).
+        if WEBUI_SHORTCUT_AVAILABLE:
+            repo_dir = Path(__file__).resolve().parents[2]
+            created = install_webui_shortcuts(
+                info.os,
+                repo_dir=repo_dir,
+                data_dir=data_dir,
+                port=port,
+                python_cmd=python_cmd,
+                icon_src=repo_dir / "web" / "icon.svg",
+            )
+            for shortcut_path in created:
+                log_success(f"Atalho WebUI criado: {shortcut_path}")
+        else:
+            log_warn("Módulo de atalho WebUI indisponível; pulando 'Abrir Enxame'.")
+
     except Exception as e:
         log_warn(f"Não foi possível criar todos os atalhos: {e}")
-    
+
     return True
 
 
@@ -990,21 +1017,25 @@ def print_final_instructions(info: SystemInfo, data_dir: Path, model_name: str, 
     print(f"  • Python:             {python_exe}")
     
     print(f"\n{Colors.BOLD}Como usar:{Colors.RESET}")
-    
+
     if info.os == "windows":
-        print(f"  1. Menu Iniciar → Enxame → 'Iniciar Abelha'")
-        print(f"  2. Ou terminal: {python_exe} -m bees.cli start")
-        print(f"  3. Como serviço: net start enxame-bee (após instalar como serviço)")
+        print(f"  1. Duplo clique em 'Abrir Enxame (WebUI)' (Desktop ou Menu Iniciar → Enxame)")
+        print(f"  2. Ou Menu Iniciar → Enxame → 'Iniciar Abelha'")
+        print(f"  3. Ou terminal: {python_exe} -m bees.cli start")
+        print(f"  4. Como serviço: net start enxame-bee (após instalar como serviço)")
     elif info.os == "darwin":
-        print(f"  1. Finder → Applications → Enxame → 'Iniciar Abelha'")
-        print(f"  2. Ou terminal: python3 -m bees.cli start")
-        print(f"  3. Como serviço: brew services start enxame-bee")
+        print(f"  1. Duplo clique em 'Abrir Enxame (WebUI)' (Desktop ou Applications → Enxame)")
+        print(f"  2. Ou Finder → Applications → Enxame → 'Iniciar Abelha'")
+        print(f"  3. Ou terminal: python3 -m bees.cli start")
+        print(f"  4. Como serviço: brew services start enxame-bee")
     else:
-        print(f"  1. Menu de aplicações → 'Enxame Abelha'")
-        print(f"  2. Ou terminal: python3 -m bees.cli start")
-        print(f"  3. Como serviço: systemctl --user start enxame-bee")
-    
+        print(f"  1. Duplo clique em 'Abrir Enxame (WebUI)' (Desktop ou menu de aplicações)")
+        print(f"  2. Ou menu de aplicações → 'Enxame Abelha'")
+        print(f"  3. Ou terminal: python3 -m bees.cli start")
+        print(f"  4. Como serviço: systemctl --user start enxame-bee")
+
     print(f"\n{Colors.BOLD}Endpoints úteis:{Colors.RESET}")
+    print(f"  • Web UI:     http://localhost:{DEFAULT_PORT}/")
     print(f"  • Health:     http://localhost:{DEFAULT_PORT}/health")
     print(f"  • Status:     http://localhost:{DEFAULT_PORT}/api/v1/status")
     print(f"  • Query:      POST http://localhost:{DEFAULT_PORT}/api/v1/query")
@@ -1238,7 +1269,7 @@ def main():
     # 11. Criar atalhos
     if not args.no_shortcuts:
         log_info("Criando atalhos...")
-        create_shortcuts(info, data_dir, model_name, python_exe, python_info.is_embedded)
+        create_shortcuts(info, data_dir, model_name, python_exe, python_info.is_embedded, port=args.port)
     
     # Sucesso!
     print_final_instructions(info, data_dir, model_name, vision_model, python_exe)

@@ -48,6 +48,8 @@ Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\bee.exe"; WorkingDir: "{app}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\bee.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\Abrir Enxame (WebUI)"; Filename: "{app}\Abrir Enxame WebUI.bat"; WorkingDir: "{app}"
+Name: "{commondesktop}\Abrir Enxame (WebUI)"; Filename: "{app}\Abrir Enxame WebUI.bat"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\install_ollama.bat"; Description: "Instalar Ollama"; Flags: runhidden waituntilterminated; StatusMsg: "Instalando Ollama..."; Check: not IsOllamaInstalled()
@@ -105,5 +107,28 @@ begin
      not FileExists(ExpandConstant('{pf}\Python310\python.exe')) then
   begin
     MsgBox('Python 3.10+ não encontrado. Por favor, instale Python de python.org antes de continuar.', mbError, MB_OK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  BatFile: String;
+  BatLines: AnsiString;
+begin
+  { Gera o launcher "Abrir Enxame (WebUI)" em {app} (removido com {app} no uninstall). }
+  if CurStep = ssPostInstall then
+  begin
+    BatFile := ExpandConstant('{app}\Abrir Enxame WebUI.bat');
+    BatLines := '@echo off' + #13#10
+      + 'title Abrir Enxame (WebUI)' + #13#10
+      + 'cd /d "%~dp0"' + #13#10
+      + 'where py >nul 2>&1' + #13#10
+      + 'if %errorlevel%==0 (' + #13#10
+      + '  py -3 run_enxame.py --ensure-running --data-dir "%LOCALAPPDATA%\enxame\bee" --port 8765' + #13#10
+      + ') else (' + #13#10
+      + '  python run_enxame.py --ensure-running --data-dir "%LOCALAPPDATA%\enxame\bee" --port 8765' + #13#10
+      + ')' + #13#10
+      + 'if errorlevel 1 pause' + #13#10;
+    SaveStringToFile(BatFile, BatLines, False);
   end;
 end;
