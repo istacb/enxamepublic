@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS — Painel Remoto</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --panel: #12121c;
+    --panel-hover: #181826;
+    --border: #222233;
+    --accent: #00d4ff;
+    --accent-dim: #006a8a;
+    --text: #e8eaf2;
+    --text-dim: #888ca0;
+    --success: #00ff88;
+    --warn: #ffb300;
+    --error: #ff4444;
+    --font-mono: 'Consolas', 'Monaco', monospace;
+    --font-ui: 'Segoe UI', system-ui, sans-serif;
+    --radius: 8px;
+    --space: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-ui);
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+  .app {
+    display: grid;
+    grid-template-rows: 60px 1fr 40px;
+    grid-template-columns: 1fr;
+    height: 100vh;
+    max-height: 100vh;
+  }
+  /* Topbar */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space);
+    height: 60px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+  }
+  .brand-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text-dim);
+  }
+  .chip.online { color: var(--success); border-color: var(--success); }
+  .clock { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-dim); }
+  /* Main */
+  .main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    grid-template-rows: 1fr;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: var(--space);
+  }
+  .sidebar h2 {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    margin-bottom: var(--space);
+  }
+  .panel {
+    margin-bottom: var(--space);
+    padding: 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .panel:last-child { margin-bottom: 0; }
+  .panel h3 {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  /* Machines grid */
+  .machines { display: grid; gap: 10px; }
+  .machine {
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .machine-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .machine-name {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .machine-status {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border: 1px solid var(--success);
+    border-radius: 10px;
+    color: var(--success);
+  }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .metric {
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .metric-label { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; }
+  .metric-value { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; margin-top: 4px; }
+  .metric-value.high { color: var(--error); }
+  .metric-value.med { color: var(--warn); }
+  .metric-value.ok { color: var(--success); }
+  .progress {
+    height: 6px;
+    background: #1a1a26;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .progress > span {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-dim));
+    transition: width 0.5s;
+  }
+  /* Content area */
+  .content {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .content-header {
+    padding: var(--space);
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .content-title {
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .content-body { flex: 1; overflow-y: auto; padding: var(--space); }
+  /* Bottom bar */
+  .bottombar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space);
+    height: 40px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+  .nav {
+    display: flex;
+    gap: 30px;
+  }
+  .nav-item {
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .nav-item.active { color: var(--accent); border: 1px solid var(--accent); }
+  /* Buttons */
+  .btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .btn.primary:hover { background: #00a8cc; }
+  input, select, textarea {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th, td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { font-family: var(--font-mono); color: var(--text-dim); text-transform: uppercase; }
+  tr:hover { background: var(--panel); }
+  .tag { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-dim); }
+  .tag.ok { color: var(--success); border-color: var(--success); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      JARVIS
+    </div>
+    <div class="topbar-right">
+      <span class="chip online">orquestador nas</span>
+      <span class="chip">lider: nas · ativo</span>
+      <span class="clock" id="clock">19:40</span>
+    </div>
+  </div>
+
+  <div class="main">
+    <aside class="sidebar">
+      <h2>Painel das Máquinas</h2>
+      <div class="machines" id="machines"></div>
+    </aside>
+
+    <div class="content">
+      <div class="content-header">
+        <div class="content-title" id="view-title">PAINEL DAS MÁQUINAS</div>
+      </div>
+      <div class="content-body" id="view-body"></div>
+    </div>
+  </div>
+
+  <div class="bottombar">
+    <div>v1.0.0 · Painel Remoto</div>
+    <div class="nav">
+      <a href="#" class="nav-item active" onclick="showView('machines', event)">Painel</a>
+      <a href="#" class="nav-item" onclick="showView('media', event)">Mídia</a>
+      <a href="#" class="nav-item" onclick="showView('inventory', event)">Inventário</a>
+      <a href="#" class="nav-item" onclick="showView('tunnels', event)">Túneis</a>
+      <a href="#" class="nav-item" onclick="showView('request', event)">Pedido</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  let machines = [];
+  let ws = null;
+  const API_BASE = '/api/v1';
+
+  function clsFor(v, invert) {
+    if (invert) {
+      if (v < 30) return 'ok';
+      if (v < 70) return 'med';
+      return 'high';
+    }
+    if (v > 70) return 'high';
+    if (v > 40) return 'med';
+    return 'ok';
+  }
+
+  async function api(path, options = {}) {
+    const token = localStorage.getItem('enxame_token') || '';
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['X-Painel-Token'] = token;
+    if (options.headers) Object.assign(headers, options.headers);
+    const res = await fetch(API_BASE + path, { ...options, headers });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  function clsFor(v, invert) {
+    if (invert) {
+      if (v < 30) return 'ok';
+      if (v < 70) return 'med';
+      return 'high';
+    }
+    if (v > 70) return 'high';
+    if (v > 40) return 'med';
+    return 'ok';
+  }
+
+  function renderMachines() {
+    const el = document.getElementById('machines');
+    if (!machines.length) {
+      el.innerHTML = '<div class="panel" style="padding:20px;text-align:center;color:var(--text-dim)">Carregando máquinas…</div>';
+      return;
+    }
+    el.innerHTML = machines.map(m => {
+      const cpu = m.cpu ?? m.cpu_percent ?? 0;
+      const ram = m.ram ?? m.memoria ?? m.memory_percent ?? 0;
+      const disco = m.disco ?? m.disk_percent ?? m.disco_percent ?? 0;
+      const temp = m.temp ?? m.temperature ?? m.temp_celsius ?? 0;
+      const online = m.online ?? m.alive ?? m.status === 'online';
+      return `
+      <div class="machine">
+        <div class="machine-header">
+          <div class="machine-name">${m.nome ?? m.id ?? m.name}</div>
+          <div class="machine-status">${online ? 'vivo' : 'offline'}</div>
+        </div>
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-label">CPU</div>
+            <div class="metric-value ${clsFor(cpu)}">${cpu}%</div>
+            <div class="progress"><span style="width:${cpu}%"></span></div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">RAM</div>
+            <div class="metric-value ${clsFor(ram,true)}">${ram}%</div>
+            <div class="progress"><span style="width:${ram}%" style="background:linear-gradient(90deg,var(--warn),var(--error))"></span></div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">DISCO</div>
+            <div class="metric-value ${clsFor(disco,true)}">${disco}%</div>
+            <div class="progress"><span style="width:${disco}%" style="background:linear-gradient(90deg,var(--info),var(--accent))"></span></div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">TEMP.</div>
+            <div class="metric-value ${clsFor(temp)}">${temp} °C</div>
+            <div class="progress"><span style="width:${Math.min(temp*2,100)}%" style="background:linear-gradient(90deg,var(--accent),var(--error))"></span></div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function loadMachines() {
+    try {
+      const data = await api('/status');
+      machines = Object.entries(data.estado || {}).map(([nome, estado]) => ({
+        id: estado.maquina || nome,
+        nome: estado.maquina || nome,
+        papel: estado.papel || (data.orquestracao?.lider === estado.maquina ? 'líder' : 'reserva'),
+        plataforma: estado.plataforma,
+        cpu: estado.cpu,
+        ram: estado.memoria,
+        disco: estado.disco?.percentual,
+        temp: estado.temperatura ?? estado.temp,
+        online: estado.ok === true
+      }));
+      // Adiciona o líder se não estiver na lista
+      if (data.orquestracao?.lider && !machines.some(m => m.id === data.orquestracao.lider)) {
+        machines.unshift({ id: data.orquestracao.lider, nome: data.orquestracao.lider, papel: 'líder', online: true });
+      }
+      renderMachines();
+      updateHeader(data);
+    } catch (e) {
+      console.error('Erro ao carregar máquinas:', e);
+      document.getElementById('machines').innerHTML = '<div class="panel" style="padding:20px;text-align:center;color:var(--error)">Erro ao carregar: ' + e.message + '</div>';
+    }
+  }
+
+  function updateHeader(data) {
+    const total = data.total || machines.length;
+    const respondido = data.respondido || machines.filter(m => m.online).length;
+    document.querySelector('.chip.online').textContent = 'orquestador ' + (data.orquestracao?.lider || '—');
+    document.querySelector('.chip:not(.online)').textContent = 'lider: ' + (data.orquestracao?.lider || '—') + ' · ' + (data.orquestracao?.papel === 'ativo' ? 'ativo' : 'reserva');
+  }
+
+  function connectWS() {
+    const token = localStorage.getItem('enxame_token') || '';
+    const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws' + (token ? '?token=' + token : '');
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => console.log('WebSocket conectado');
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'status' && msg.data) {
+          updateHeader(msg.data);
+          machines = Object.entries(msg.data.estado || {}).map(([nome, estado]) => ({
+            id: estado.maquina || nome,
+            nome: estado.maquina || nome,
+            papel: estado.papel,
+            plataforma: estado.plataforma,
+            cpu: estado.cpu,
+            ram: estado.memoria,
+            disco: estado.disco?.percentual,
+            temp: estado.temperatura ?? estado.temp,
+            online: estado.ok === true
+          }));
+          renderMachines();
+        }
+      } catch (e) { console.error('WS parse error:', e); }
+    };
+    ws.onclose = () => { console.log('WebSocket fechado, reconectando em 5s'); setTimeout(connectWS, 5000); };
+    ws.onerror = (e) => console.error('WebSocket error:', e);
+  }
+
+  function showView(id, ev) {
+    if (ev) ev.preventDefault();
+    document.querySelectorAll('.nav-item').forEach(a => a.classList.remove('active'));
+    if (ev && ev.target) ev.target.classList.add('active');
+    document.getElementById('view-title').textContent = {
+      machines: 'PAINEL DAS MÁQUINAS',
+      media: 'CRIAR MÍDIA',
+      inventory: 'INVENTÁRIO',
+      tunnels: 'TÚNEIS',
+      request: 'NOVO PEDIDO'
+    }[id];
+    const body = document.getElementById('view-body');
+    if (id === 'machines') {
+      body.innerHTML = '<p style="color:var(--text-dim);font-size:0.85rem">Use o painel lateral para ver o estado detalhado de cada máquina.</p>';
+    } else if (id === 'media') {
+      body.innerHTML = `
+        <div class="panel">
+          <label style="display:block;margin-bottom:8px;font-family:var(--font-mono);font-size:0.8rem;color:var(--text-dim)">Ex.: cartaz 1080x1920 com título Laboratório</label>
+          <textarea id="media-text" rows="3" placeholder="Descreva a mídia…"></textarea>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim)">tipo</div>
+            <select style="width:140px"><option>imagem</option><option>vídeo</option></select>
+            <div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim)">máquina</div>
+            <select style="width:160px"><option>orquestrador</option><option>ubuntu2</option><option>ubuntu3</option></select>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" checked> revisão por visão</label>
+          </div>
+          <button class="btn primary" style="margin-top:12px">Criar</button>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim);margin-bottom:8px">AUTO-REVISÕES</div>
+          <div style="padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:0.8rem;color:var(--text-dim)">sem revisão</div>
+          <div style="margin-top:12px;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim)">Critérios de reprovação · regra 13 do manual</div>
+          <table style="margin-top:8px">
+            <tr><th style="width:55%">DEFEITO</th><th>LIMITE</th></tr>
+            <tr><td>imagem escura</td><td>brilho médio &lt; 60</td></tr>
+            <tr><td>imagem estourada</td><td>brilho médio &gt; 210</td></tr>
+            <tr><td>contraste baixo</td><td>desvio &lt; 20</td></tr>
+            <tr><td>fora de foco</td><td>Laplaciano &lt; 8</td></tr>
+            <tr><td>legenda sobreposta</td><td>área &gt; 45% da faixa</td></tr>
+            <tr><td>conteúdo na borda</td><td>variação &gt; 40</td></tr>
+            <tr><td>vídeo congelado</td><td>movimento 0 e 0 cortes</td></tr>
+            <tr><td>áudio ausente</td><td>sem trilha</td></tr>
+            <tr><td>geometria errada</td><td>difere do pedido</td></tr>
+          </table>
+        </div>
+      `;
+    } else if (id === 'inventory') {
+      body.innerHTML = `
+        <div style="margin-bottom:20px">
+          <div style="font-family:var(--font-mono);font-size:0.85rem;font-weight:700;color:var(--accent)">nas · nas</div>
+          <table style="margin-top:8px">
+            <tr><th style="width:30%">FUNÇÃO</th><td>Infraestrutura: NAS, serviços e armazenamento (Dell T140)</td></tr>
+            <tr><th>HARDWARE</th><td>PowerEdge T140 · 4 threads</td></tr>
+            <tr><th>BIOS</th><td>2.3.5 de 09/27/2018</td></tr>
+            <tr><th>GRÁFICOS</th><td>04:00.0 VGA compatible controller: Matrox Electronics Systems Ltd. Integrated Matrox G200eW3 Graphics Controller (rev 04)</td></tr>
+            <tr><th>SISTEMA</th><td>Ubuntu 26.04.1 · kernel 7.0.0-43-generic</td></tr>
+            <tr><th>REDE</th><td>usuário nas · Tailscale nas</td></tr>
+            <tr><th>OPENCODE</th><td>v2.2.5 em /home/nas/.opencode/bin/opencode</td></tr>
+            <tr><th>HERMES</th><td>{"caminho":"/DATA/AppData/hermes","state_db":"1.9 MB","arquivos":["config.yaml","SOUL.md","auth.json","state_db"],"pastas":["memory","sessions","skills","logs","plans","workspace"]}</td></tr>
+            <tr><th>HABILIDADES</th><td><details><summary>discos</summary><pre style="margin-top:6px;font-size:0.75rem;color:var(--text-dim)">/dev/sda1 · 500 GB · ext4 · montado em /</pre></details></td></tr>
+          </table>
+        </div>
+        <div>
+          <div style="font-family:var(--font-mono);font-size:0.85rem;font-weight:700;color:var(--accent);margin-bottom:8px">user-Pc · user-Pc</div>
+          <table style="margin-top:8px">
+            <tr><th style="width:30%">FUNÇÃO</th><td>Desenvolvimento principal — Ubuntu 2 (16 GB)</td></tr>
+            <tr><th>HARDWARE</th><td>System Product Name · 2 threads</td></tr>
+            <tr><th>BIOS</th><td>1203 de 12/17/2012</td></tr>
+            <tr><th>GRÁFICOS</th><td>00:02.0 VGA compatible controller: Intel Corporation Xeon E3-1200 v2/3rd Gen Core processor Graphics Controller (rev 09)</td></tr>
+            <tr><th>SISTEMA</th><td>Ubuntu 26.04.1 · kernel 7.0.0-43-generic</td></tr>
+            <tr><th>REDE</th><td>usuário user · Tailscale user-pc</td></tr>
+            <tr><th>OPENCODE</th><td>v2.2.5 em /home/user/.opencode/bin/opencode</td></tr>
+          </table>
+        </div>
+      `;
+    } else if (id === 'tunnels') {
+      body.innerHTML = `
+        <div style="margin-bottom:16px;padding:12px;background:var(--panel);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;color:var(--text-dim)">
+          Todo acesso usa Tailscale e túnel SSH. Nenhuma porta fica exposta à internet.
+        </div>
+        <table>
+          <tr><th style="width:22%">DESTINO</th><th>MÁQUINA</th><th>PORTA REMOTA</th><th>PORTA LOCAL</th><th>ENDEREÇO NO TABLET</th></tr>
+          <tr><td>Jarvis líder</td><td><span class="tag ok">nas</span></td><td>8790</td><td>8790</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:8790</code></td></tr>
+          <tr><td>Jarvis reserva 1</td><td><span class="tag ok">ubuntu2</span></td><td>8790</td><td>8793</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:8793</code></td></tr>
+          <tr><td>Jarvis reserva 2</td><td><span class="tag ok">ubuntu3</span></td><td>8790</td><td>8794</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:8794</code></td></tr>
+          <tr><td>Cockpit nas</td><td><span class="tag ok">nas</span></td><td>9090</td><td>9091</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:9091</code></td></tr>
+          <tr><td>Cockpit ubuntu2</td><td><span class="tag ok">ubuntu2</span></td><td>9090</td><td>9092</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:9092</code></td></tr>
+          <tr><td>Cockpit ubuntu3</td><td><span class="tag ok">ubuntu3</span></td><td>9090</td><td>9093</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:9093</code></td></tr>
+          <tr><td>OpenCode nas</td><td><span class="tag ok">nas</span></td><td>4096</td><td>4091</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:4091</code></td></tr>
+          <tr><td>OpenCode ubuntu2</td><td><span class="tag ok">ubuntu2</span></td><td>4096</td><td>4092</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:4092</code></td></tr>
+          <tr><td>OpenCode ubuntu3</td><td><span class="tag ok">ubuntu3</span></td><td>4096</td><td>4093</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:4093</code></td></tr>
+          <tr><td>Hermes nas</td><td><span class="tag ok">nas</span></td><td>8642</td><td>8642</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:8642</code></td></tr>
+          <tr><td>Obsidian nas</td><td><span class="tag ok">nas</span></td><td>15323</td><td>15323</td><td><code style="font-family:var(--font-mono);font-size:0.75rem">http://127.0.0.1:15323</code></td></tr>
+        </table>
+        <div class="panel" style="margin-top:20px">
+          <div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim);margin-bottom:8px">RESERVA DO ORQUESTRADOR</div>
+          <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;color:var(--text-dim)">
+            As três máquinas rodam o orquestrador. A prioridade decide o líder. Sem o líder, a reserva assume em cerca de 45 s e a interface troca de endereço sozinha.
+          </div>
+        </div>
+      `;
+    } else if (id === 'request') {
+      body.innerHTML = `
+        <div class="panel">
+          <label style="display:block;margin-bottom:8px;font-family:var(--font-mono);font-size:0.8rem;color:var(--text-dim)">Ex.: qual máquina tem menos espaço livre em disco?</label>
+          <textarea id="req-text" rows="4" placeholder="Escreva seu pedido…"></textarea>
+          <div style="margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" checked> cruzar com API</label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox"> salvar no Obsidian</label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox"> falar resposta</label>
+          </div>
+          <div style="margin-top:10px;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim)">agente</div>
+          <select style="width:260px;margin-top:4px"><option>Jarvis (Ollama + OpenCode)</option></select>
+          <button class="btn primary" style="margin-top:12px">Enviar</button>
+          <button class="btn" style="margin-top:8px;margin-left:8px">Ouvir exemplo de resposta</button>
+        </div>
+        <div class="panel" style="margin-top:16px;padding:14px;background:#0b0e16;border-left:3px solid var(--accent)">
+          <div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--accent);margin-bottom:8px">Resposta</div>
+          <pre style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim);white-space:pre-wrap;line-height:1.5">
+1. Verifique os microfones nas máquinas:
+   - nas: 'arecord -l'
+   - ubuntu2: 'arecord -l'
+   - ubuntu3: 'arecord -l'
+
+2. Instale ou verifique a instalação do software de reconhecimento de voz:
+   - 'sudo apt-get install python3-pip'
+   - 'pip3 install SpeechRecognition'
+
+3. Verifique a configuração do microfone no sistema:
+   - 'alsamixer' para ajustar o volume do microfone
+
+4. Teste o reconhecimento de voz:
+   - 'python3 -m speech_recognition'
+
+5. Verifique os serviços necessários:
+   - 'sudo systemctl status pulseaudio'
+   - 'sudo systemctl status speak'
+          </pre>
+        </div>
+      `;
+    }
+  }
+
+  function tick() {
+    const now = new Date();
+    document.getElementById('clock').textContent = now.toLocaleTimeString('pt-BR', {hour12:false});
+  }
+
+  // Inicialização
+  loadMachines();
+  connectWS();
+  showView('machines');
+  setInterval(tick, 1000);
+  setInterval(loadMachines, 30000); // Poll a cada 30s como fallback
+  tick();
+</script>
+</body>
+</html>
