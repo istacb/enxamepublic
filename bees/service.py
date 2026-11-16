@@ -24,32 +24,37 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-
 from core.exp.admin_access import admin_access_allowed
 from core.exp.security import EXPSecurity
 
-from .protocol.envelope import BeeEnvelope
-from .protocol.handler import BeeProtocolHandler
-from .protocol.messages import BeeMessageType, BeeState, BeeVisionRequest, BeeVisionResponse, BeeStateChange, BeePeerLost
-from .librarian import LocalBeeLibrarian
-from .memory import BeeMemory
-from .discovery import BeeDiscoveryService
-from .config import BeeConfig, load_config
 from .capabilities.discovery import discover_capabilities
 from .capabilities.selector import recommend_model
 from .cluster import (
     ClusterMonitor,
-    ClusterState,
     ClusterRole,
-    load_cluster_state,
-    save_cluster_state,
-    elect_roles,
+    ClusterState,
+    GlobalIndex,
     InternetGate,
     InternetPurpose,
-    GlobalIndex,
     build_global_index,
+    elect_roles,
+    load_cluster_state,
+    save_cluster_state,
     start_monitoring,
     stop_monitoring,
+)
+from .config import BeeConfig, load_config
+from .discovery import BeeDiscoveryService
+from .librarian import LocalBeeLibrarian
+from .memory import BeeMemory
+from .protocol.envelope import BeeEnvelope
+from .protocol.handler import BeeProtocolHandler
+from .protocol.messages import (
+    BeeMessageType,
+    BeePeerLost,
+    BeeState,
+    BeeStateChange,
+    BeeVisionRequest,
 )
 
 logging.basicConfig(
@@ -98,21 +103,6 @@ class BeeService:
 
     def _register_protocol_handlers(self) -> None:
         """Registra handlers para mensagens do protocolo BEE."""
-        from .protocol.messages import (
-            BeeHello,
-            BeeHelloAck,
-            BeeHeartbeat,
-            BeeKnowledgeQuery,
-            BeeKnowledgeResponse,
-            BeeResearchRequest,
-            BeeResearchResult,
-            BeeModelRequest,
-            BeeModelResponse,
-            BeeCapabilityQuery,
-            BeeCapabilityResponse,
-            BeeStateChange,
-            BeePeerLost,
-        )
 
         self._handler.register_handler(BeeMessageType.HELLO, self._handle_hello)
         self._handler.register_handler(BeeMessageType.HELLO_ACK, self._handle_hello_ack)
@@ -166,7 +156,7 @@ class BeeService:
             await asyncio.sleep(60)
             self._chat_tasks.pop(task_id, None)
 
-    async def start(self, *, start_http: bool = True, http_app: "web.Application | None" = None) -> None:
+    async def start(self, *, start_http: bool = True, http_app: web.Application | None = None) -> None:
         """
         Inicializa todos os componentes da Abelha.
         
@@ -189,7 +179,7 @@ class BeeService:
             enxame_data_path=str(self.config.data_dir),
             ollama_base_url=self.config.ollama_base_url,
         )
-        
+
         # Selecionar melhor modelo baseado no hardware (BEE-0003 §9)
         if self._capabilities and self._capabilities.ollama and self._capabilities.ollama.available:
             hw = self._capabilities.hardware
@@ -331,40 +321,40 @@ class BeeService:
         """Inicializa cluster: carrega estado, elege papéis se 3+ peers, inicia monitoramento."""
         # Carregar estado persistido
         self.cluster_state = load_cluster_state(self.config.data_dir)
-        
+
         # Aguardar descoberta inicial de peers (2s)
         await asyncio.sleep(2)
-        
+
         peers = []
         if self._discovery:
             peers = self._discovery.get_active_peers()
-        
+
         logger.info(f"Peers descobertos para cluster: {len(peers)}")
-        
+
         if len(peers) >= 3:
             # Eleger papéis
             self.cluster_state = elect_roles(peers, self.cluster_state)
             self.cluster_role = self.cluster_state.get_role(self.node_id) or ClusterRole.WORKER
-            
+
             # Determinar se é Worker Artist
             if self.cluster_role == ClusterRole.WORKER and self.node_id in self.cluster_state.artist_workers:
                 self.cluster_role = ClusterRole.WORKER_ARTIST
-            
+
             logger.info(f"Cluster eleito: Juiz={self.cluster_state.juiz_id}, Bib={self.cluster_state.bibliotecario_id}, Guarda={self.cluster_state.guarda_id}, Workers={len(self.cluster_state.workers)}")
             logger.info(f"Meu papel: {self.cluster_role.value}")
-            
+
             # Salvar estado
             save_cluster_state(self.config.data_dir, self.cluster_state)
-            
+
             # Inicializar InternetGate
             self._internet_gate = InternetGate(self.cluster_state, self.node_id)
-            
+
             # Se sou Bibliotecário, construir índice global
             if self.cluster_role == ClusterRole.BIBLIOTECARIO:
                 self._global_index = await build_global_index(self, peers, shared_secret=self.config.shared_secret)
                 self.cluster_state.global_index = self._global_index.data
                 save_cluster_state(self.config.data_dir, self.cluster_state)
-            
+
             # Iniciar monitoramento de failover
             self._cluster_monitor = await start_monitoring(
                 self, self.cluster_state, save_cluster_state, check_interval=60.0
@@ -386,7 +376,7 @@ class BeeService:
             for base in ["rag", "vector_search", "embeddings", "query", "index", "memory"]:
                 if base not in caps:
                     caps.append(base)
-        
+
         if self._librarian and self._librarian.has_ocr():
             if "ocr" not in caps:
                 caps.append("ocr")
@@ -409,7 +399,7 @@ class BeeService:
             return self._librarian.get_available_models()
         return []
 
-    def _on_peer_discovered(self, peer: "DiscoveredPeer") -> None:
+    def _on_peer_discovered(self, peer: DiscoveredPeer) -> None:
         """Callback quando novo peer é descoberto."""
         logger.info(f"Peer descoberto: {peer.node_id} ({peer.role}) em {peer.host}:{peer.port}")
 
@@ -430,7 +420,7 @@ class BeeService:
             # Identidade já foi gerada no config
             logger.info(f"Nova identidade: {self.node_id}")
 
-    async def _handle_bee_http_message(self, request: "web.Request") -> "web.Response":
+    async def _handle_bee_http_message(self, request: web.Request) -> web.Response:
         """Receive a BEE envelope over HTTP (standalone and unified kernel)."""
         from aiohttp import web
 
@@ -455,9 +445,10 @@ class BeeService:
 
     async def _start_http_server(self) -> None:
         """Inicia servidor HTTP para API, WebSocket e UI estática."""
+        from pathlib import Path
+
         from aiohttp import web
         from aiohttp.web import Request, Response
-        from pathlib import Path
 
         app = web.Application()
 
@@ -547,7 +538,7 @@ class BeeService:
                     ollama_available = resp.status_code == 200
             except Exception:
                 pass
-            
+
             return web.json_response({
                 "kernel": "online" if self.state == BeeState.RUNNING else self.state.value,
                 "runtime": "online" if self.state == BeeState.RUNNING else self.state.value,
@@ -567,20 +558,20 @@ class BeeService:
                     if field.name == 'file':
                         file_field = field
                         break
-                
+
                 if not file_field:
                     return web.json_response({"error": "file required"}, status=400)
-                
+
                 filename = file_field.filename
                 content = await file_field.read()
-                
+
                 if self._librarian:
                     # Salvar arquivo temporário e processar
                     import tempfile
                     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
                         tmp.write(content)
                         tmp_path = tmp.name
-                    
+
                     try:
                         result = await self._librarian.indexer.index_file(tmp_path)
                         return web.json_response({
@@ -594,7 +585,7 @@ class BeeService:
                         os.unlink(tmp_path)
                 else:
                     return web.json_response({"error": "Librarian not available"}, status=503)
-                    
+
             except Exception as e:
                 logger.error(f"Erro no ingest: {e}")
                 return web.json_response({"error": str(e)}, status=500)
@@ -648,25 +639,9 @@ class BeeService:
         # Compatibilidade com Web UI do Enxame (espera endpoints do Kernel completo)
         # =========================================================================
 
-        # /api/status - formato esperado pela sidebar (agents array)
+        # /api/status - formato esperado pela sidebar (sempre inclui a máquina local + peers)
         async def api_status(request: Request) -> Response:
-            peer_count = len(self._discovery.get_active_peers()) if self._discovery else 0
-            agents = []
-            if self._discovery:
-                for p in self._discovery.get_active_peers():
-                    agents.append({
-                        "node_id": p.node_id,
-                        "cluster_role": p.role,
-                        "cpu_pct": p.load * 100 if p.load else 0,
-                        "free_ram_gb": 8.0,  # placeholder
-                        "active_tasks": 0,
-                        "max_concurrency": 4,
-                    })
-            return web.json_response({
-                "agents": agents,
-                "tasks_total": 0,
-                "node": self.node_id,
-            })
+            return web.json_response(await self._build_ui_status_payload())
 
         # /api/cluster/models - formato esperado pela sidebar
         async def api_cluster_models(request: Request) -> Response:
@@ -695,17 +670,17 @@ class BeeService:
                     elif ":1.8b" in model_name: size_mb = 1800
                     elif ":2b" in model_name: size_mb = 2000
                     else: size_mb = 4000
-                
+
                 models_data.append({
                     "name": model_name,
                     "size_mb": size_mb,
                     "is_embedding": is_embedding,
                 })
-            
+
             # Encontrar o melhor (maior não-embedding)
             non_embed = [m for m in models_data if not m["is_embedding"]]
             best = max(non_embed, key=lambda m: m["size_mb"]) if non_embed else None
-            
+
             return web.json_response({
                 "models": models_data,
                 "best": best,
@@ -752,7 +727,7 @@ class BeeService:
                 try:
                     while True:
                         event = await queue.get()
-                        data = f"data: {json.dumps(event)}\n\n".encode('utf-8')
+                        data = f"data: {json.dumps(event)}\n\n".encode()
                         if event.get("event") == "end":
                             yield data
                             break
@@ -761,7 +736,7 @@ class BeeService:
                     pass
                 except Exception as e:
                     logger.error(f"Erro no SSE stream: {e}")
-                    yield f"data: {json.dumps({'event': 'error', 'task_id': task_id, 'message': str(e)})}\n\n".encode('utf-8')
+                    yield f"data: {json.dumps({'event': 'error', 'task_id': task_id, 'message': str(e)})}\n\n".encode()
 
             return web.Response(
                 body=stream_response(),
@@ -786,7 +761,7 @@ class BeeService:
             # Rota principal para index.html
             async def index_html(request):
                 return web.FileResponse(web_dir / "index.html")
-            
+
             app.router.add_get('/', index_html)
             # Arquivos estáticos na raiz (css, js, etc.) - serve index.html para /
             app.router.add_static('/', web_dir, show_index=False)
@@ -802,7 +777,7 @@ class BeeService:
         base_port = self.config.port
         runner = None
         site = None
-        
+
         for attempt in range(max_port_attempts):
             port = base_port + attempt
             try:
@@ -829,8 +804,9 @@ class BeeService:
 
         self._http_runner = runner
 
-    async def _add_routes_to_app(self, app: "web.Application") -> None:
+    async def _add_routes_to_app(self, app: web.Application) -> None:
         """Adiciona rotas da Abelha a uma aplicação aiohttp externa (para EnxameKernel)."""
+        from aiohttp import web
         from aiohttp.web import Request, Response
 
         # Health check
@@ -875,7 +851,7 @@ class BeeService:
                     "cluster": False,
                     "message": "Operando como standalone (menos de 3 peers)"
                 })
-            
+
             return web.json_response({
                 "cluster": True,
                 "epoch": self.cluster_state.epoch,
@@ -943,26 +919,10 @@ class BeeService:
         app.router.add_get("/api/cluster/discover", discover)
         app.router.add_post("/api/v1/bee/message", self._handle_bee_http_message)
 
-        # Compatibilidade com Web UI
-        # /api/status - formato esperado pela sidebar
+        # Compatibilidade com Web UI Unificada
         async def api_status(request: Request) -> Response:
-            peer_count = len(self._discovery.get_active_peers()) if self._discovery else 0
-            agents = []
-            if self._discovery:
-                for p in self._discovery.get_active_peers():
-                    agents.append({
-                        "node_id": p.node_id,
-                        "cluster_role": p.role,
-                        "cpu_pct": p.load * 100 if p.load else 0,
-                        "free_ram_gb": 8.0,
-                        "active_tasks": 0,
-                        "max_concurrency": 4,
-                    })
-            return web.json_response({
-                "agents": agents,
-                "tasks_total": 0,
-                "node": self.node_id,
-            })
+            kernel = app.get("enxame_kernel")
+            return web.json_response(await self._build_ui_status_payload(kernel=kernel))
 
         # /api/cluster/models - formato esperado pela sidebar
         async def api_cluster_models(request: Request) -> Response:
@@ -973,82 +933,227 @@ class BeeService:
                 is_embedding = "embed" in model_name.lower()
                 try:
                     import httpx
-                    async with httpx.AsyncClient(timeout=2.0) as client:
+                    async with httpx.AsyncClient(timeout=1.5) as client:
                         resp = await client.post(
                             f"{self.config.ollama_base_url}/api/show",
                             json={"name": model_name}
                         )
                         if resp.status_code == 200:
                             data = resp.json()
-                            size_mb = data.get("details", {}).get("parameter_size", 0)
-                            if size_mb == 0:
-                                size_mb = data.get("details", {}).get("size", 0) // (1024 * 1024)
+                            size_mb = data.get("details", {}).get("size", 0) // (1024 * 1024)
                 except Exception:
-                    if ":3b" in model_name: size_mb = 3000
-                    elif ":7b" in model_name: size_mb = 7000
-                    elif ":1.8b" in model_name: size_mb = 1800
-                    elif ":2b" in model_name: size_mb = 2000
-                    else: size_mb = 4000
-                
+                    if ":0.5b" in model_name:
+                        size_mb = 450
+                    elif ":1.5b" in model_name or ":1.8b" in model_name:
+                        size_mb = 1500
+                    elif ":2b" in model_name:
+                        size_mb = 2000
+                    elif ":3b" in model_name:
+                        size_mb = 3000
+                    elif ":7b" in model_name:
+                        size_mb = 4700
+                    else:
+                        size_mb = 3500
+
+                if not size_mb:
+                    size_mb = 2000
+
                 models_data.append({
                     "name": model_name,
-                    "size_mb": size_mb,
+                    "size_mb": int(size_mb),
                     "is_embedding": is_embedding,
                 })
-            
+
             non_embed = [m for m in models_data if not m["is_embedding"]]
             best = max(non_embed, key=lambda m: m["size_mb"]) if non_embed else None
-            
+
             return web.json_response({
                 "models": models_data,
                 "best": best,
             })
 
-        # /api/session - sessão simples sem auth (standalone)
+        # /api/session - sessão unificada
         async def api_session(request: Request) -> Response:
             import secrets
             token = secrets.token_urlsafe(32)
             return web.json_response({"token": token})
 
-        # /api/chat - endpoint de chat usando pipeline LOCAL -> ENXAME -> WEB
+        # /api/chat - enfileira execução com streaming real token-a-token
         async def api_chat(request: Request) -> Response:
             try:
                 data = await request.json()
-                prompt = data.get("prompt", "").strip()
+                prompt = (data.get("prompt") or data.get("message") or "").strip()
                 if not prompt:
                     return web.json_response({"error": "prompt required"}, status=400)
 
-                result = await self.process_query(prompt)
-                return web.json_response({
-                    "task_id": f"task-{id(prompt)}",
-                    "answer": result.get("answer", ""),
-                    "source": result.get("source", "local"),
-                    "confidence": result.get("confidence", 0.0),
-                })
+                kernel = app.get("enxame_kernel")
+                if kernel is not None:
+                    queued = kernel.enqueue_ui_chat_stream(
+                        prompt=prompt,
+                        conversation_id=data.get("conversation_id"),
+                        forced_profile=data.get("profile"),
+                        target_node=data.get("target_node"),
+                        client_ip=request.remote or "local",
+                    )
+                    return web.json_response(queued)
+
+                task_id = str(uuid.uuid4())
+                queue: asyncio.Queue = asyncio.Queue()
+                self._chat_tasks[task_id] = queue
+                asyncio.create_task(self._process_chat_task(task_id, prompt, queue))
+                return web.json_response({"task_id": task_id})
             except Exception as e:
                 logger.error(f"Erro no chat: {e}")
                 return web.json_response({"error": str(e)}, status=500)
 
-        # /api/chat/stream/{taskId} - SSE streaming simplificado
+        # /api/chat/stream/{task_id} - SSE streaming real (EnxameKernel ou BeeService standalone)
         async def api_chat_stream(request: Request) -> Response:
             task_id = request.match_info.get("task_id", "")
-            async def stream_response():
-                yield b'data: {"type": "start", "task_id": "' + task_id.encode() + b'"}\n\n'
-                yield b'data: {"type": "end", "task_id": "' + task_id.encode() + b'"}\n\n'
-            
-            return web.Response(
-                body=stream_response(),
-                content_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+            kernel = app.get("enxame_kernel")
+            kernel_queue = kernel._chat_streams.get(task_id) if kernel is not None else None
+            queue = kernel_queue or self._chat_tasks.get(task_id)
+
+            if not queue:
+                return web.json_response({"error": "task not found"}, status=404)
+
+            resp = web.StreamResponse(
+                status=200,
+                reason="OK",
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
             )
+            await resp.prepare(request)
+            try:
+                while True:
+                    event = await queue.get()
+                    payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode()
+                    await resp.write(payload)
+                    if event.get("event") == "end":
+                        break
+            except (asyncio.CancelledError, ConnectionResetError):
+                pass
+            except Exception as e:
+                logger.error(f"Erro no SSE stream: {e}")
+                err_event = {"event": "error", "task_id": task_id, "message": str(e)}
+                err_payload = f"data: {json.dumps(err_event)}\n\n".encode()
+                with suppress(Exception):
+                    await resp.write(err_payload)
+            return resp
+
+        async def api_node_pause(request: Request) -> Response:
+            data = await request.json() if request.can_read_body else {}
+            paused = bool(data.get("paused", False))
+            node_id = request.match_info.get("node_id", self.node_id)
+            if node_id == self.node_id:
+                self._paused = paused
+            return web.json_response({"ok": True, "node_id": node_id, "paused": paused})
+
+        async def api_pause_all(request: Request) -> Response:
+            data = await request.json() if request.can_read_body else {}
+            paused = bool(data.get("paused", False))
+            self._paused = paused
+            return web.json_response({"ok": True, "paused": paused})
 
         app.router.add_get("/api/status", api_status)
         app.router.add_get("/api/cluster/models", api_cluster_models)
         app.router.add_post("/api/session", api_session)
         app.router.add_post("/api/chat", api_chat)
         app.router.add_get("/api/chat/stream/{task_id}", api_chat_stream)
+        app.router.add_post("/api/node/{node_id}/pause", api_node_pause)
+        app.router.add_post("/api/cluster/pause-all", api_pause_all)
 
         logger.info("Rotas da Abelha registradas na aplicação externa")
+
+    async def _build_ui_status_payload(self, kernel: Any = None) -> dict[str, Any]:
+        """Monta status completo do cluster incluindo SEMPRE a máquina local + peers + Ollama."""
+        import psutil
+
+        vm = psutil.virtual_memory()
+        cpu_pct = round(psutil.cpu_percent(interval=None), 1)
+        free_ram_gb = round(vm.available / (1024 ** 3), 2)
+        total_ram_gb = round(vm.total / (1024 ** 3), 2)
+
+        hw = getattr(kernel, "hardware_profile", None) if kernel is not None else None
+        if kernel is not None:
+            roles_info = kernel.get_roles_matrix()
+        else:
+            roles_info = {"local_roles": ["rainha", "worker_general"]}
+        local_roles = roles_info.get("local_roles") or ["worker_general"]
+        primary_role = local_roles[0] if local_roles else "worker_general"
+
+        orchestrator = getattr(kernel, "_orchestrator", None) if kernel else None
+        active_tasks = len(orchestrator._tasks) if orchestrator else 0
+        tasks_total = len(orchestrator._execution_history) if orchestrator else 0
+
+        ollama_online = False
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=1.2) as client:
+                r = await client.get(f"{self.config.ollama_base_url}/api/tags")
+                ollama_online = r.status_code == 200
+        except Exception:
+            ollama_online = False
+
+        local_agent = {
+            "node_id": self.node_id,
+            "alias": getattr(hw, "machine_alias", self.node_id),
+            "is_local": True,
+            "paused": bool(getattr(self, "_paused", False)),
+            "cluster_role": primary_role,
+            "active_roles": local_roles,
+            "cpu_pct": cpu_pct,
+            "free_ram_gb": free_ram_gb,
+            "ram_total_gb": total_ram_gb,
+            "cpu_model": getattr(hw, "cpu_model", ""),
+            "cores_physical": getattr(
+                hw, "cores_physical", psutil.cpu_count(logical=False) or 1
+            ),
+            "hardware_tier": getattr(hw, "tier", "padrao"),
+            "hardware_tier_label": getattr(hw, "tier_label", "CPU Padrão"),
+            "pacing_notice": getattr(hw, "pacing_notice", ""),
+            "est_tokens_per_sec": getattr(hw, "est_tokens_per_sec", 10.0),
+            "est_image_seconds": getattr(hw, "est_image_seconds", 45),
+            "active_tasks": active_tasks,
+            "max_concurrency": 2 if getattr(hw, "tier", "") == "legado" else 4,
+            "models": self._get_models_list(),
+        }
+
+        agents = [local_agent]
+        if self._discovery:
+            for p in self._discovery.get_active_peers():
+                agents.append({
+                    "node_id": p.node_id,
+                    "alias": p.node_id,
+                    "is_local": False,
+                    "paused": False,
+                    "cluster_role": p.role or "worker_general",
+                    "active_roles": [p.role or "worker_general"],
+                    "cpu_pct": round((p.load or 0.0) * 100.0, 1),
+                    "free_ram_gb": 8.0,
+                    "ram_total_gb": 16.0,
+                    "hardware_tier": "padrao",
+                    "hardware_tier_label": "Peer LAN",
+                    "active_tasks": 0,
+                    "max_concurrency": 4,
+                    "models": p.models,
+                })
+
+        return {
+            "agents": agents,
+            "tasks_total": tasks_total,
+            "node": self.node_id,
+            "alias": local_agent["alias"],
+            "ollama_online": ollama_online,
+            "offline_mode": self.config.offline_mode,
+            "allow_web": self.config.allow_web,
+            "hardware": hw.to_dict() if hw else {},
+            "rag_documents": kernel.rag_engine.get_stats()["documents"] if kernel else 0,
+            "guardian_stats": kernel.store.get_guardian_stats() if kernel else {},
+        }
 
     def _calculate_load(self) -> float:
         """Calcula carga atual da Abelha (0.0 a 1.0)."""
@@ -1063,8 +1168,9 @@ class BeeService:
 
     async def _handle_hello(self, envelope: BeeEnvelope) -> BeeEnvelope:
         """Handler para HELLO - handshake inicial."""
-        from .protocol.messages import BeeHello, BeeHelloAck, BeeIdentity, BeeManifesto
         import secrets
+
+        from .protocol.messages import BeeHello, BeeHelloAck, BeeIdentity, BeeManifesto
 
         hello = BeeHello.from_dict(envelope.payload)
         logger.info(f"HELLO recebido de {hello.identity.node_id}")
@@ -1214,7 +1320,6 @@ class BeeService:
 
     async def _handle_vision_request(self, envelope: BeeEnvelope) -> BeeEnvelope:
         """Handler para VISION_REQUEST - análise de imagem usando modelo de visão."""
-        from .protocol.messages import BeeVisionRequest
         request = BeeVisionRequest.from_dict(envelope.payload)
 
         description = ""
@@ -1270,10 +1375,10 @@ class BeeService:
 
     async def _handle_state_change(self, envelope: BeeEnvelope) -> BeeEnvelope | None:
         """Handler para STATE_CHANGE - notificação de mudança de estado de peer."""
-        from .protocol.messages import BeeStateChange, BeeState
+        from .protocol.messages import BeeState
         state_change = BeeStateChange.from_dict(envelope.payload)
         logger.info(f"Peer {state_change.node_id} mudou para estado: {state_change.new_state.value} - {state_change.reason}")
-        
+
         # Atualizar peer no discovery
         if self._discovery and state_change.node_id in self._discovery._peers:
             peer = self._discovery._peers[state_change.node_id]
@@ -1281,7 +1386,7 @@ class BeeService:
             if state_change.new_state == BeeState.STOPPING:
                 # Peer vai parar, remover após timeout estimado
                 pass
-        
+
         # Cluster-specific handling (EIP-0009)
         if self.cluster_state and state_change.reason in ("juiz_failover", "juiz_restored", "new_election"):
             if state_change.reason == "juiz_failover":
@@ -1290,18 +1395,17 @@ class BeeService:
             elif state_change.reason == "juiz_restored":
                 logger.info(f"Juiz original restaurado: {state_change.node_id}")
             elif state_change.reason == "new_election":
-                logger.info(f"Nova eleição no cluster detectada")
+                logger.info("Nova eleição no cluster detectada")
                 # Forçar re-eleição local na próxima verificação
                 self.cluster_state.epoch = 0  # Marcar para re-eleição
-        
+
         return None
 
     async def _handle_peer_lost(self, envelope: BeeEnvelope) -> BeeEnvelope | None:
         """Handler para PEER_LOST - notificação de peer perdido."""
-        from .protocol.messages import BeePeerLost
         peer_lost = BeePeerLost.from_dict(envelope.payload)
         logger.warning(f"Peer perdido notificado: {peer_lost.node_id} - {peer_lost.reason}")
-        
+
         # Remover peer do discovery se estiver lá
         if self._discovery:
             self._discovery._remove_peer(peer_lost.node_id)
@@ -1349,7 +1453,7 @@ class BeeService:
                 logger.error(f"Erro no load metrics: {e}")
             await asyncio.sleep(60)
 
-    async def _send_to_peer(self, peer: "DiscoveredPeer", envelope: BeeEnvelope) -> None:
+    async def _send_to_peer(self, peer: DiscoveredPeer, envelope: BeeEnvelope) -> None:
         """Envia envelope para peer via HTTP."""
         if not self._http_session:
             return
@@ -1474,7 +1578,7 @@ class BeeService:
                 target_ids = await query_bibliotecario_where(bib_peer, query, self._global_index, shared_secret=self.config.shared_secret)
                 target_peers = [p for p in peers if p.node_id in target_ids]
                 logger.debug(f"Roteando via Bibliotecário: {len(target_peers)} peers alvo para '{query}'")
-        
+
         # Se não temos roteamento, consultar todos
         if not target_peers:
             target_peers = peers
@@ -1530,7 +1634,7 @@ class BeeService:
 
         return {"answer": "", "confidence": best_confidence}
 
-    async def _send_with_response(self, envelope: BeeEnvelope, peer: "DiscoveredPeer", timeout_ms: int = 5000) -> BeeEnvelope | None:
+    async def _send_with_response(self, envelope: BeeEnvelope, peer: DiscoveredPeer, timeout_ms: int = 5000) -> BeeEnvelope | None:
         """Envia envelope para peer e aguarda resposta via HTTP/WebSocket."""
         if not self._http_session:
             return None
@@ -1538,8 +1642,8 @@ class BeeService:
             url = f"http://{peer.host}:{peer.port}/api/v1/bee/message"
             self._handler.sign_envelope(envelope)
             async with self._http_session.post(
-                url, 
-                json=envelope.to_dict(), 
+                url,
+                json=envelope.to_dict(),
                 timeout=aiohttp.ClientTimeout(total=timeout_ms / 1000)
             ) as resp:
                 if resp.status == 200:
@@ -1577,10 +1681,10 @@ async def main() -> int:
 
     # Cross-platform shutdown handling
     shutdown_event = asyncio.Event()
-    
+
     def _signal_handler():
         shutdown_event.set()
-    
+
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
@@ -1593,7 +1697,7 @@ async def main() -> int:
         await bee.start()
         print(f"\nAbelha {config.node_id} ONLINE em http://{config.host}:{config.port}")
         print("Pressione Ctrl+C para parar\n")
-        
+
         # Wait for shutdown signal or KeyboardInterrupt
         await shutdown_event.wait()
     except KeyboardInterrupt:

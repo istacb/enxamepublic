@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Enxame — Hive</title>
+<title>Enxame — Colmeia Soberana CPU-First</title>
+<meta name="description" content="Enxame unificado: chat multi-nó 100% local em CPU, RAG offline, estúdio de imagens gratuito e telemetria STE-100.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 </head>
 <body>
 <div class="shell">
@@ -16,7 +18,7 @@
     <div class="topbar-center">
       <div class="search-wrap" role="search">
         <label for="global-search" class="sr-only">Buscar na rede</label>
-        <input type="search" id="global-search" placeholder="Buscar peers, modelos, docs…" aria-label="Busca global">
+        <input type="search" id="global-search" placeholder="Buscar peers, modelos, docs…  (Ctrl+K = histórico)" aria-label="Busca global">
         <span class="search-icon" aria-hidden="true">🔍</span>
       </div>
     </div>
@@ -31,7 +33,7 @@
     <aside class="sidebar" id="sidebar" role="complementary" aria-label="Painel de controle da colmeia">
       <div class="sidebar-header">
         <h2>COLMEIA</h2>
-        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Fechar painel lateral" aria-expanded="true" hidden>◀</button>
+        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Fechar painel lateral" aria-expanded="true">◀</button>
       </div>
 
       <section class="panel" aria-labelledby="health-title">
@@ -74,38 +76,197 @@
       </section>
     </aside>
 
-    <div class="chat-area" role="region" aria-label="Chat com o enxame">
-      <div class="chat-header">
-        <div class="chat-status" id="chat-status" aria-live="polite">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span>Conectado</span>
-        </div>
-        <div class="chat-actions">
-          <button id="clear-chat" class="btn btn-ghost btn-sm" aria-label="Limpar conversa">🗑️</button>
-          <button id="export-chat" class="btn btn-ghost btn-sm" aria-label="Exportar conversa">📥</button>
-        </div>
-      </div>
+    <div class="content-col">
+      <nav class="tabs" role="tablist" aria-label="Seções do enxame">
+        <button class="tab active" id="tab-colmeia" role="tab" aria-selected="true" aria-controls="panel-colmeia">🐝 Colmeia &amp; Prompt</button>
+        <button class="tab" id="tab-controle" role="tab" aria-selected="false" aria-controls="panel-controle">🎛️ Controle &amp; Máquinas</button>
+        <button class="tab" id="tab-galeria" role="tab" aria-selected="false" aria-controls="panel-galeria">🎨 Galeria &amp; Estúdio CPU</button>
+        <button class="tab" id="tab-inventario" role="tab" aria-selected="false" aria-controls="panel-inventario">🖥️ Inventário &amp; Saúde</button>
+        <button class="tab" id="tab-memoria" role="tab" aria-selected="false" aria-controls="panel-memoria">🧠 Memória &amp; Conhecimento</button>
+      </nav>
 
-      <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="Histórico de mensagens">
-        <div class="msg system welcome">
-          <span class="msg-icon" aria-hidden="true">🐝</span>
-          <span>Bem-vindo ao Enxame. Pergunte o que quiser.</span>
-        </div>
-      </div>
+      <section class="tabpanel" id="panel-colmeia" role="tabpanel" aria-labelledby="tab-colmeia">
+        <div class="chat-area" role="region" aria-label="Chat com o enxame">
+          <div class="chat-header">
+            <div class="chat-status" id="chat-status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>Conectado</span>
+            </div>
+            <div class="chat-actions">
+              <button id="clear-chat" class="btn btn-ghost btn-sm" aria-label="Limpar conversa">🗑️</button>
+              <button id="export-chat" class="btn btn-ghost btn-sm" aria-label="Exportar conversa">📥</button>
+            </div>
+          </div>
 
-      <form class="input-row" id="chat-form" role="form" aria-label="Enviar mensagem">
-        <label for="msg" class="sr-only">Sua pergunta</label>
-        <input type="text" id="msg" placeholder="Pergunte ao enxame…" autocomplete="off" aria-describedby="msg-hint">
-        <span id="msg-hint" class="sr-only">Pressione Enter para enviar</span>
-        <button type="submit" id="send" class="btn btn-primary" aria-label="Enviar">ENVIAR</button>
-      </form>
+          <div class="chat-filters" role="group" aria-label="Contexto da conversa">
+            <label class="filter" title="Conversa persistente">
+              💬
+              <select id="conversation-select" aria-label="Conversa ativa">
+                <option value="">Nova conversa</option>
+              </select>
+            </label>
+            <button id="new-conversation" class="btn btn-ghost btn-sm" title="Iniciar nova conversa" aria-label="Nova conversa">＋</button>
+            <label class="filter" title="Perfil especialista (auto = roteador CPU)">
+              🎭
+              <select id="profile-select" aria-label="Perfil especialista">
+                <option value="auto">Perfil: auto</option>
+                <option value="generalist">generalist</option>
+                <option value="coder">coder</option>
+                <option value="researcher">researcher</option>
+                <option value="analyst">analyst</option>
+                <option value="creative">creative</option>
+                <option value="legal">legal</option>
+                <option value="medical">medical</option>
+                <option value="architect">architect</option>
+              </select>
+            </label>
+            <label class="filter" title="Máquina alvo (auto = Juiz decide)">
+              🖥️
+              <select id="target-node" aria-label="Máquina alvo">
+                <option value="auto">Máquina: auto</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="pacing-notice" id="pacing-notice" role="status" hidden></div>
+
+          <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="Histórico de mensagens">
+            <div class="msg system welcome">
+              <span class="msg-icon" aria-hidden="true">🐝</span>
+              <span>Bem-vindo ao Enxame. 100% local em CPU — pergunte o que quiser.</span>
+            </div>
+          </div>
+
+          <form class="input-row" id="chat-form" role="form" aria-label="Enviar mensagem">
+            <label for="msg" class="sr-only">Sua pergunta</label>
+            <input type="text" id="msg" placeholder="Pergunte ao enxame…  (/img descreva = gerar imagem)" autocomplete="off" aria-describedby="msg-hint">
+            <span id="msg-hint" class="sr-only">Pressione Enter para enviar</span>
+            <button type="button" id="attach-btn" class="btn btn-ghost btn-sm" title="Anexar arquivo ao RAG" aria-label="Anexar arquivo">📎</button>
+            <input type="file" id="file-input" hidden multiple>
+            <button type="button" id="voice-record" class="btn btn-ghost btn-sm" title="Ditar por voz (STT local)" aria-label="Gravar voz">🎙️</button>
+            <button type="button" id="voice-speak" class="btn btn-ghost btn-sm" title="Ouvir última resposta (TTS local)" aria-label="Ouvir resposta">🔊</button>
+            <button type="submit" id="send" class="btn btn-primary" aria-label="Enviar">ENVIAR</button>
+          </form>
+          <div class="voice-state" id="voice-rec-state" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="tabpanel" id="panel-controle" role="tabpanel" aria-labelledby="tab-controle" hidden>
+        <div class="panel-card">
+          <h3>Matriz de Papéis do Enxame</h3>
+          <p class="hint">Fixe papéis por máquina (requer token admin). Sem fixação, o Juiz elege automaticamente.</p>
+          <div class="table-wrap">
+            <table class="data-table" id="roles-table" aria-label="Papéis por nó">
+              <thead><tr><th>Máquina</th><th>Tier CPU</th><th>Papéis ativos</th><th>Fixar</th></tr></thead>
+              <tbody id="roles-tbody"><tr><td colspan="4">Carregando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-card">
+          <h3>Máquinas Remotas (LAN / SSH)</h3>
+          <form class="form-row" id="probe-form">
+            <input type="text" id="probe-alias" placeholder="apelido (ex.: sala)" aria-label="Apelido">
+            <select id="probe-mode" aria-label="Modo"><option value="http">HTTP/LAN</option><option value="ssh">SSH</option></select>
+            <input type="text" id="probe-endpoint" placeholder=http://IP:8765 ou host SSH" aria-label="Endpoint" size="28">
+            <button type="submit" class="btn btn-primary btn-sm" id="probe-btn">SONDAR</button>
+          </form>
+          <div class="hint">Requer token admin (defina <code>ENXAME_ADMIN_TOKEN</code> no servidor e informe em Configurações → Admin).</div>
+          <div id="machines-list" class="cards-grid"></div>
+        </div>
+        <div class="panel-card">
+          <h3>Guardião — Auditoria de Segurança</h3>
+          <div id="guardian-stats" class="stats-line">—</div>
+          <ul id="guardian-events" class="event-list"></ul>
+        </div>
+      </section>
+
+      <section class="tabpanel" id="panel-galeria" role="tabpanel" aria-labelledby="tab-galeria" hidden>
+        <div class="panel-card">
+          <h3>Estúdio CPU — Geração Local Gratuita</h3>
+          <p class="hint" id="img-engines-hint">Motores 100% locais em CPU. Fila única: 1 imagem por vez para nunca travar o chat.</p>
+          <form class="form-grid" id="img-form">
+            <input type="text" id="img-prompt" placeholder="Descreva a imagem… (ex.: favo de mel ao pôr do sol)" aria-label="Prompt da imagem">
+            <div class="form-row">
+              <select id="img-engine" aria-label="Motor"><option value="auto">Motor: auto</option></select>
+              <select id="img-size" aria-label="Tamanho">
+                <option value="512x512">512×512</option>
+                <option value="768x512">768×512</option>
+                <option value="512x768">512×768</option>
+              </select>
+              <label class="filter" title="Passos de difusão">passos <input type="number" id="img-steps" value="4" min="1" max="20" aria-label="Passos"></label>
+              <button type="submit" class="btn btn-primary btn-sm" id="img-generate">GERAR</button>
+            </div>
+          </form>
+          <div id="img-status" class="status-line" role="status"></div>
+        </div>
+        <div class="panel-card">
+          <h3>Galeria Persistente</h3>
+          <div id="gallery-grid" class="gallery-grid"></div>
+        </div>
+      </section>
+
+      <section class="tabpanel" id="panel-inventario" role="tabpanel" aria-labelledby="tab-inventario" hidden>
+        <div class="panel-card">
+          <h3>Inventário STE-100 — Todas as Máquinas</h3>
+          <div class="form-row">
+            <button class="btn btn-ghost btn-sm" id="inventory-refresh">🔄 ATUALIZAR</button>
+            <span class="hint" id="inventory-updated">—</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="inventory-table" aria-label="Inventário de máquinas">
+              <thead><tr><th>Máquina</th><th>SO/Arch</th><th>CPU</th><th>RAM livre</th><th>Disco</th><th>Tier</th><th>~tok/s</th><th>Saúde</th><th>Papéis</th></tr></thead>
+              <tbody id="inventory-tbody"><tr><td colspan="9">Carregando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-card">
+          <h3>Saúde Local (/saude)</h3>
+          <div id="health-cards" class="cards-grid"></div>
+        </div>
+      </section>
+
+      <section class="tabpanel" id="panel-memoria" role="tabpanel" aria-labelledby="tab-memoria" hidden>
+        <div class="panel-card">
+          <h3>Histórico de Conversas <span class="kbd-hint">Ctrl+K</span></h3>
+          <input type="search" id="history-search" placeholder="Buscar no histórico (FTS5)…  Ctrl+K" aria-label="Buscar histórico">
+          <ul id="history-results" class="event-list"></ul>
+          <h4>Conversas</h4>
+          <ul id="memory-conversations" class="event-list"></ul>
+        </div>
+        <div class="panel-card">
+          <h3>Memória de Longo Prazo</h3>
+          <div id="memory-profile" class="stats-line">—</div>
+          <form class="form-row" id="memory-form">
+            <input type="text" id="memory-fact" placeholder="Lembre-se que… (fato durável)" aria-label="Novo fato" size="40">
+            <button type="submit" class="btn btn-primary btn-sm">MEMORIZAR</button>
+          </form>
+          <ul id="memory-list" class="event-list"></ul>
+        </div>
+        <div class="panel-card">
+          <h3>Base de Conhecimento (RAG local → Bibliotecário)</h3>
+          <div id="rag-stats" class="stats-line">—</div>
+          <form class="form-row" id="rag-search-form">
+            <input type="search" id="rag-search" placeholder="Buscar nos documentos…" aria-label="Buscar documentos">
+            <button type="submit" class="btn btn-ghost btn-sm">BUSCAR</button>
+          </form>
+          <ul id="rag-results" class="event-list"></ul>
+          <form class="form-grid" id="rag-ingest-form">
+            <input type="text" id="rag-ingest-title" placeholder="Título da nota" aria-label="Título">
+            <textarea id="rag-ingest-text" rows="3" placeholder="Cole o texto/documento para indexar no RAG local…" aria-label="Texto"></textarea>
+            <div class="form-row"><button type="submit" class="btn btn-primary btn-sm">INDEXAR NO RAG</button></div>
+          </form>
+          <h4>Documentos indexados</h4>
+          <ul id="rag-docs" class="event-list"></ul>
+        </div>
+      </section>
     </div>
   </main>
 
   <footer class="bottombar" role="contentinfo">
     <div class="bottombar-left">
-      <span id="version-badge">v1.0.0</span>
+      <span id="version-badge">v2.1.0-cpu</span>
       <span id="ollama-status" class="status-badge" aria-label="Status do Ollama">Ollama: —</span>
+      <span id="tier-badge" class="status-badge" aria-label="Tier de CPU">CPU: —</span>
     </div>
     <div class="bottombar-right">
       <a href="https://github.com/istacb/enxamepublic" target="_blank" rel="noopener" class="github-link" aria-label="GitHub">⌘</a>
@@ -177,6 +338,10 @@
           <input type="checkbox" id="setting-sounds" checked aria-label="Habilitar sons">
           <span>Efeitos sonoros (bzz, notificações)</span>
         </label>
+      </div>
+      <div class="setting-group">
+        <label class="setting-label" for="setting-admin-token">Token Admin (papéis/máquinas)</label>
+        <input type="password" id="setting-admin-token" class="setting-select" placeholder="ENXAME_ADMIN_TOKEN" autocomplete="off">
       </div>
     </div>
     <div class="modal-footer">

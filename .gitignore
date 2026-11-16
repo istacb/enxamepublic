@@ -3,3 +3,10 @@ __pycache__/
 *.log
 .env
 *.db
+
+# Ambiente local / dados de execução (EIP-0010)
+.venv/
+.preview-data/
+enxame_data/
+*.db-wal
+*.db-shm

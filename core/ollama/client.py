@@ -16,6 +16,18 @@ class OllamaGenerateRequest:
     num_ctx: int = 4096
     stream: bool = False
     images: list[str] | None = None
+    num_thread: int | None = None
+    keep_alive: str = "30m"
+
+
+@dataclass(slots=True)
+class OllamaChatRequest:
+    model: str
+    messages: list[dict[str, Any]]
+    temperature: float = 0.3
+    num_ctx: int = 4096
+    num_thread: int | None = None
+    keep_alive: str = "30m"
 
 
 @dataclass(slots=True)
@@ -141,14 +153,19 @@ class OllamaClient:
     async def generate(self, req: OllamaGenerateRequest) -> str:
         import httpx
 
-        payload = {
+        options: dict[str, Any] = {
+            'temperature': req.temperature,
+            'num_ctx': req.num_ctx,
+        }
+        if req.num_thread is not None and req.num_thread > 0:
+            options['num_thread'] = req.num_thread
+
+        payload: dict[str, Any] = {
             'model': req.model,
             'prompt': req.prompt,
             'stream': req.stream,
-            'options': {
-                'temperature': req.temperature,
-                'num_ctx': req.num_ctx,
-            },
+            'keep_alive': req.keep_alive,
+            'options': options,
         }
         if req.images is not None:
             payload['images'] = req.images
@@ -158,6 +175,88 @@ class OllamaClient:
                 raise OllamaError(f'Falha Ollama: HTTP {resp.status_code} - {resp.text}')
             data: dict[str, Any] = resp.json()
             return str(data.get('response', '')).strip()
+
+    async def chat(self, req: OllamaChatRequest) -> str:
+        """Executa `/api/chat` multi-turno mantendo o modelo aquecido na RAM (`keep_alive`)."""
+        import httpx
+
+        options: dict[str, Any] = {
+            'temperature': req.temperature,
+            'num_ctx': req.num_ctx,
+        }
+        if req.num_thread is not None and req.num_thread > 0:
+            options['num_thread'] = req.num_thread
+
+        payload: dict[str, Any] = {
+            'model': req.model,
+            'messages': req.messages,
+            'stream': False,
+            'keep_alive': req.keep_alive,
+            'options': options,
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(f'{self.base_url}/api/chat', json=payload)
+            if resp.status_code != 200:
+                raise OllamaError(f'Falha Ollama chat: HTTP {resp.status_code} - {resp.text}')
+            data: dict[str, Any] = resp.json()
+            msg = data.get('message') or {}
+            return str(msg.get('content', '')).strip()
+
+    async def chat_stream(self, req: OllamaChatRequest):
+        """Faz streaming real token-a-token via `/api/chat` em CPU com baixa latência percebida."""
+        import json as _json
+        import httpx
+
+        options: dict[str, Any] = {
+            'temperature': req.temperature,
+            'num_ctx': req.num_ctx,
+        }
+        if req.num_thread is not None and req.num_thread > 0:
+            options['num_thread'] = req.num_thread
+
+        payload: dict[str, Any] = {
+            'model': req.model,
+            'messages': req.messages,
+            'stream': True,
+            'keep_alive': req.keep_alive,
+            'options': options,
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream('POST', f'{self.base_url}/api/chat', json=payload) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    raise OllamaError(
+                        f"Falha Ollama stream: HTTP {resp.status_code} - {body.decode('utf-8', errors='replace')}"
+                    )
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = _json.loads(line)
+                    except Exception:
+                        continue
+                    token = (chunk.get('message') or {}).get('content', '')
+                    if token:
+                        yield token
+                    if chunk.get('done'):
+                        break
+
+    async def warmup(self, model: str, num_thread: int | None = None) -> bool:
+        """Carrega os pesos do modelo na RAM em background sem gerar tokens."""
+        import httpx
+
+        options: dict[str, Any] = {'num_predict': 0}
+        if num_thread:
+            options['num_thread'] = num_thread
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                r = await client.post(
+                    f'{self.base_url}/api/generate',
+                    json={'model': model, 'prompt': '', 'keep_alive': '30m', 'options': options},
+                )
+                return r.status_code == 200
+        except Exception:
+            return False
 
     async def pull(self, model: str) -> dict[str, Any]:
         import httpx
